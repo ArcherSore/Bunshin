@@ -19,11 +19,12 @@ internal static partial class SelfTestRunner
         project.SetSelectedCase("Mode", "Minimal");
         Require(Recipient().Inputs.Single().Error == "Fill in the recipient"
             && Recipient().StartBlocker == "Fill in the recipient"
-            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt())
+            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(project.ActiveConfigurationId))
             && project.CheckInputValue("Recipient", "recipient", " ") is not null,
             "默认值未通过 verify 时项目仍应加载、其他参数可保存，但不能开始运行，也不能保存空白值。");
         project.SetInputValue("Recipient", "recipient", "Kakashi");
-        Require(Recipient().StartBlocker is null && project.CreateRunStartAttempt().Plan.Items.Single()
+        Require(Recipient().StartBlocker is null
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single()
             .PipelineOverride.GetRawText().Contains("\"to\":\"Kakashi\"", StringComparison.Ordinal),
             "填写合法值后必须可以开始运行，并替换进 pipeline_override。");
 
@@ -40,13 +41,13 @@ internal static partial class SelfTestRunner
                 .Single(panel => ConfigurationDescendants(panel).Contains(editor));
             bool Note() => ConfigurationDescendants(Row()).OfType<System.Windows.Controls.TextBlock>()
                 .Any(text => text.Text == "Fill in the recipient");
-            Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error")
-                && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
+            bool Reveal() => (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!;
+            Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error") && Reveal(),
                 "未填写的必填输入必须标红、显示 pattern_msg，并阻止开始。");
 
             var activeProject = ProjectOf(window);
             activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", false);
-            Require(!(bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
+            Require(!Reveal(),
                 "取消勾选后，任务的必填参数不得阻止其他任务开始。");
             activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", true);
             editor.Text = "Kakashi";

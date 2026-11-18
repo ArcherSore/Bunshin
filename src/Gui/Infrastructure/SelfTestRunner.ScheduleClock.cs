@@ -93,21 +93,21 @@ internal static partial class SelfTestRunner
             var project = ProjectOf(window);
             var a = project.ActiveConfigurationId;
             var task = project.SelectedTaskNames.First();
-            project.RemoveTask(task);
+            project.RemoveItem(Protocol.PlanItemKind.MaaTask, task);
             project.RenameConfiguration(a, "无任务");
             project.AddSchedulePolicy(a, "早班");
             var b = project.CreateConfiguration();
             project.RenameConfiguration(b, "第一班");
-            project.AddTask(task);
+            project.AddItem(Protocol.PlanItemKind.MaaTask, task);
             project.AddSchedulePolicy(b, "早班");
             var c = project.CreateConfiguration();
             project.RenameConfiguration(c, "第二班");
-            project.AddTask(task);
+            project.AddItem(Protocol.PlanItemKind.MaaTask, task);
             var policy = project.AddSchedulePolicy(c, "连续两分钟");
             project.UpdateSchedulePolicy(c, policy with { Times = [new(8, 0), new(8, 1)] });
             var d = project.CreateConfiguration();
             project.RenameConfiguration(d, "新启用");
-            project.AddTask(task);
+            project.AddItem(Protocol.PlanItemKind.MaaTask, task);
             project.ActivateConfiguration(c);
             ClickOnboarding(window, "ScheduleNavigationItem");
             var failures = new List<string>();
@@ -173,7 +173,7 @@ internal static partial class SelfTestRunner
                 var task = project.SelectedTaskNames.First();
                 boot = project.CreateConfiguration();
                 project.RenameConfiguration(boot, "登录配置");
-                project.AddTask(task);
+                project.AddItem(Protocol.PlanItemKind.MaaTask, task);
             }, scheduleClock: clock);
             if (clockFirst) {
                 clock.Advance(TimeSpan.FromMinutes(1));

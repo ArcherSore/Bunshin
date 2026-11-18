@@ -124,7 +124,8 @@ internal static partial class SelfTestRunner
             Require(Enumerable.Range(0, 3).All(index => Selection(index).IsChecked == true),
                 "所有计划项默认勾选。");
             Select(0, false);
-            Require(project.CreateRunStartAttempt().Plan.Items.Select(item => (item.Kind, item.TaskName))
+            Require(project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items
+                .Select(item => (item.Kind, item.TaskName))
                 .SequenceEqual(new[] { (PlanItemKind.Pretask, "SecondBoot"), (PlanItemKind.MaaTask, "RealTask") })
                 && File.ReadAllText(configPath) != saved && project.SelectedItemCount == 3,
                 "关闭启动项应保存配置，且不能跳过同名普通任务。");
@@ -136,7 +137,7 @@ internal static partial class SelfTestRunner
                 "LoadProject 重载应保留勾选状态和过滤后的计划。");
             var originalConfiguration = project.ActiveConfigurationId;
             project.CreateConfiguration();
-            project.AddPretask("RealTask");
+            project.AddItem(PlanItemKind.Pretask, "RealTask");
             Require(project.IsItemEnabled(PlanItemKind.Pretask, "RealTask"), "新配置不继承其他配置的勾选状态。");
             project.ActivateConfiguration(originalConfiguration);
             Require(project.SelectedPretaskNames.Contains("RealTask"), "切换配置应保留各自的启动选择。");
@@ -159,7 +160,7 @@ internal static partial class SelfTestRunner
             Require(project.EnabledItems.Count == 0 && !Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
                 "全部取消后不得启动空计划。");
             try {
-                project.CreateRunStartAttempt();
+                project.CreateRunStartAttempt(project.ActiveConfigurationId);
                 throw new InvalidDataException("全部取消后仍生成了运行计划。");
             } catch (InvalidOperationException) {
             }
@@ -168,7 +169,7 @@ internal static partial class SelfTestRunner
             }
 
             var started = DateTime.UtcNow.AddSeconds(-5);
-            var plan = project.CreateRunStartAttempt().Plan;
+            var plan = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan;
             var states = new[] { PlanItemState.Succeeded, PlanItemState.Running, PlanItemState.Pending };
             PlanItemSnapshot Snapshot(RunPlanItem item, PlanItemState state, DateTime? startedAt, DateTime? endedAt) =>
                 new(item.PlanItemId, item.TaskName, item.TaskLabel, item.Entry, item.ResolvedOptions,
@@ -204,7 +205,7 @@ internal static partial class SelfTestRunner
 
             Observe(idle);
             Select(0, false);
-            var filtered = project.CreateRunStartAttempt().Plan;
+            var filtered = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan;
             var filteredRun = run with {
                 Plan = filtered, CurrentPlanItemId = filtered.Items[0].PlanItemId, CurrentPlanItemIndex = 0,
                 Items = filtered.Items.Select((item, index) => Snapshot(item,
@@ -221,7 +222,7 @@ internal static partial class SelfTestRunner
             Require(project.SelectedTaskNames.Count == 0 && project.SelectedItemCount == 2
                 && Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
                 "只选择前置任务时仍可开始，移除普通同名任务不得影响前置任务。");
-            var onlyPre = project.CreateRunStartAttempt().Plan;
+            var onlyPre = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan;
             var starting = run with {
                 State = RunState.Starting, CurrentPlanItemId = onlyPre.Items[0].PlanItemId, CurrentPlanItemIndex = 0,
                 Plan = onlyPre, Items = onlyPre.Items.Select((item, index) => index == 0

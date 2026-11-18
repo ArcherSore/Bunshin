@@ -29,6 +29,9 @@ public sealed record TaskConfiguration
     } = [];
     public IReadOnlyDictionary<string, JsonElement> ExplicitOptions { get; init; } =
         new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+    public IReadOnlyList<string> SelectedNames(Protocol.PlanItemKind kind) =>
+        kind == Protocol.PlanItemKind.Pretask ? SelectedPretasks : SelectedTasks;
 }
 
 internal sealed class ConfigurationSetStore
@@ -182,8 +185,7 @@ internal sealed class ConfigurationSetStore
             }
             if (item.DisabledItems is null || item.DisabledItems.Distinct().Count() != item.DisabledItems.Count
                 || item.DisabledItems.Any(key => key is null || !Enum.IsDefined(key.Kind)
-                    || !(key.Kind == Protocol.PlanItemKind.Pretask ? item.SelectedPretasks : item.SelectedTasks)
-                        .Contains(key.Name))) {
+                    || !item.SelectedNames(key.Kind).Contains(key.Name))) {
                 throw new InvalidDataException("未勾选的任务必须属于配置且不能重复。");
             }
             var policyIds = new HashSet<Guid>();

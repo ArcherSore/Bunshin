@@ -42,7 +42,7 @@ public sealed partial class ProjectPlanModule
         _config = configStore.Load();
         if (configStore.WasMissing) {
             try {
-                AddTask(Tasks[0].Name);
+                AddItem(PlanItemKind.MaaTask, Tasks[0].Name);
                 InitializedTaskName = Tasks[0].Name;
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
                 _initializationWarning = $"无法保存首次默认任务，已提供空配置。{exception.Message}";
@@ -98,12 +98,12 @@ public sealed partial class ProjectPlanModule
 
     public void SetItemEnabled(PlanItemKind kind, string name, bool enabled)
     {
-        if (!SelectedItems.Any(item => item.Kind == kind && item.Name == name)) {
+        var config = LoadConfig();
+        if (!config.SelectedNames(kind).Contains(name)) {
             throw new ArgumentException("任务不在当前执行计划中。", nameof(name));
         }
-        var config = LoadConfig();
         var key = new TaskKey(kind, name);
-        if (IsItemEnabled(kind, name) != enabled) {
+        if (config.DisabledItems.Contains(key) == enabled) {
             SaveConfiguration(config with {
                 DisabledItems = enabled ? config.DisabledItems.Where(item => item != key).ToArray()
                     : config.DisabledItems.Append(key).ToArray()
@@ -164,18 +164,13 @@ public sealed partial class ProjectPlanModule
         return true;
     }
 
-    public void ValidateConfiguration() => ValidateActiveConfiguration(ExecutionConfiguration(LoadConfig()));
+    public void ValidateConfiguration() => ValidateActiveConfiguration(LoadConfig());
 
     public static ProjectPlanModule Open(string projectDirectory, string configPath, Action<string>? log = null)
     {
         var project = ProjectInterfaceLoader.Load(projectDirectory);
         return new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log));
     }
-
-    public bool AddTask(string name) => AddItem(PlanItemKind.MaaTask, name);
-    public bool AddPretask(string name) => AddItem(PlanItemKind.Pretask, name);
-    public bool RemoveTask(string name) => RemoveItem(PlanItemKind.MaaTask, name);
-    public bool RemovePretask(string name) => RemoveItem(PlanItemKind.Pretask, name);
 
     public bool AddItem(PlanItemKind kind, string name)
     {
@@ -187,12 +182,12 @@ public sealed partial class ProjectPlanModule
             _ = FindTask(name);
         }
         var config = LoadConfig();
-        var names = kind == PlanItemKind.Pretask ? config.SelectedPretasks : config.SelectedTasks;
+        var names = config.SelectedNames(kind);
         if (names.Contains(name)) {
             return false;
         }
         var updated = WithSelection(config, kind, names.Append(name).ToArray());
-        ValidateActiveConfiguration(ExecutionConfiguration(updated));
+        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return true;
     }
@@ -200,7 +195,7 @@ public sealed partial class ProjectPlanModule
     public bool RemoveItem(PlanItemKind kind, string name)
     {
         var config = LoadConfig();
-        var names = kind == PlanItemKind.Pretask ? config.SelectedPretasks : config.SelectedTasks;
+        var names = config.SelectedNames(kind);
         if (!names.Contains(name)) {
             return false;
         }
@@ -218,7 +213,7 @@ public sealed partial class ProjectPlanModule
     public bool MoveTask(string taskName, int targetIndex, PlanItemKind kind = PlanItemKind.MaaTask)
     {
         var config = LoadConfig();
-        var selected = (kind == PlanItemKind.Pretask ? config.SelectedPretasks : config.SelectedTasks).ToList();
+        var selected = config.SelectedNames(kind).ToList();
         var currentIndex = selected.IndexOf(taskName);
         if (currentIndex < 0) {
             throw new ArgumentException($"执行计划中不存在 task：{taskName}。", nameof(taskName));
@@ -233,7 +228,7 @@ public sealed partial class ProjectPlanModule
         selected.RemoveAt(currentIndex);
         selected.Insert(targetIndex, taskName);
         var updated = WithSelection(config, kind, selected);
-        ValidateActiveConfiguration(ExecutionConfiguration(updated));
+        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return true;
     }
@@ -241,8 +236,7 @@ public sealed partial class ProjectPlanModule
     public ProjectConfigurationView GetConfiguration(string taskName, PlanItemKind kind = PlanItemKind.MaaTask)
     {
         var config = LoadConfig();
-        var selected = kind == PlanItemKind.Pretask ? config.SelectedPretasks : config.SelectedTasks;
-        if (!selected.Contains(taskName, StringComparer.Ordinal)) {
+        if (!config.SelectedNames(kind).Contains(taskName, StringComparer.Ordinal)) {
             throw new InvalidOperationException($"{kind} {taskName} 不在当前执行计划中。");
         }
         return kind == PlanItemKind.Pretask ? BuildPretaskConfiguration(config, FindPretask(taskName))
@@ -254,7 +248,7 @@ public sealed partial class ProjectPlanModule
     {
         var input = FindOption(optionName).Inputs.SingleOrDefault(item => item.Name == inputName)
             ?? throw new ArgumentException($"option {optionName} 不包含 input {inputName}。", nameof(inputName));
-        var typed = IsTypedOption(ExecutionConfiguration(LoadConfig()), optionName);
+        var typed = IsTypedOption(LoadConfig(), optionName);
         try {
             _ = ProjectInputValue.Parse(input, value, $"option {optionName} input {inputName} 的值", typed);
             return null;
@@ -284,7 +278,7 @@ public sealed partial class ProjectPlanModule
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         values[inputName] = value;
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateInputs(option, values));
-        ValidateActiveConfiguration(ExecutionConfiguration(updated));
+        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return BuildConfiguration(updated);
     }
@@ -308,7 +302,7 @@ public sealed partial class ProjectPlanModule
 
         var config = FindConfiguration(configurationId);
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCase(selectedCase));
-        ValidateActiveConfiguration(ExecutionConfiguration(updated));
+        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return BuildConfiguration(updated);
     }
@@ -331,7 +325,7 @@ public sealed partial class ProjectPlanModule
 
         var config = FindConfiguration(configurationId);
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCases(ordered));
-        ValidateActiveConfiguration(ExecutionConfiguration(updated));
+        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return BuildConfiguration(updated);
     }
@@ -340,9 +334,6 @@ public sealed partial class ProjectPlanModule
         ProtocolConstants.LaunchContextVersion, workerInstanceId,
         _project.RuntimeProfileDigest, _project.ProjectRoot, _project.Provenance,
         _project.Controller, _project.Resources, _project.Agent);
-
-    public RunStartAttempt CreateRunStartAttempt() =>
-        CreateRunStartAttempt(ActiveConfigurationId);
 
     public RunStartAttempt CreateRunStartAttempt(Guid configurationId,
         IReadOnlyDictionary<(string Option, string Input), string>? inputErrors = null)
@@ -422,8 +413,10 @@ public sealed partial class ProjectPlanModule
         _initializationWarning = null;
     }
 
+    // Only what a Run would execute is checked, so a disabled item never blocks edits or Start.
     private void ValidateActiveConfiguration(TaskConfiguration config)
     {
+        config = ExecutionConfiguration(config);
         ValidateSelectedTasks(config);
         foreach (var taskName in config.SelectedTasks) {
             _ = ProjectOptionResolver.Resolve(_project, FindTask(taskName), config);
@@ -440,6 +433,7 @@ public sealed partial class ProjectPlanModule
     // Only enabled MaaTasks resolve typed pipeline inputs, including active children and global options.
     private bool IsTypedOption(TaskConfiguration config, string optionName)
     {
+        config = ExecutionConfiguration(config);
         IEnumerable<string> roots = config.SelectedTasks.Count == 0 ? []
             : _project.GlobalOptions.Concat(_project.Tasks
                 .Where(task => config.SelectedTasks.Contains(task.Name, StringComparer.Ordinal))

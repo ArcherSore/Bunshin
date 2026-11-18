@@ -820,12 +820,11 @@ public partial class MainWindow : FluentWindow
             new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
     }
 
+    // A rejected value kept as a visible draft is left to RevealInvalidParameter instead of silently blocking Start.
     private bool CommitRunInput()
     {
-        if (Keyboard.FocusedElement is WpfTextBox { Tag: OptionInputTag tag }) {
-            return CommitFocusedConfigurationInput() || _invalidInputDrafts.ContainsKey(tag.Key);
-        }
-        return CommitFocusedConfigurationInput();
+        var tag = (Keyboard.FocusedElement as WpfTextBox)?.Tag as OptionInputTag;
+        return CommitFocusedConfigurationInput() || tag is not null && _invalidInputDrafts.ContainsKey(tag.Key);
     }
 
     private bool RevealInvalidParameter()
@@ -1931,14 +1930,15 @@ public partial class MainWindow : FluentWindow
             }
             boundary++;
         }
-        var pretask = task.Kind == PlanItemKind.Pretask;
-        var names = pretask ? project.SelectedPretaskNames : project.SelectedTaskNames;
-        var localBoundary = boundary - (pretask ? 0 : project.SelectedPretaskNames.Count);
-        var current = names.ToList().IndexOf(name);
-        if (current < 0 || localBoundary < 0 || localBoundary > names.Count) {
+        // Each kind is a contiguous block; an item can only move within its own block.
+        var start = items.TakeWhile(item => item.Kind != task.Kind).Count();
+        var group = items.Skip(start).TakeWhile(item => item.Kind == task.Kind).Select(item => item.Name).ToList();
+        var current = group.IndexOf(name);
+        var local = boundary - start;
+        if (current < 0 || local < 0 || local > group.Count) {
             return null;
         }
-        return (boundary, localBoundary > current ? localBoundary - 1 : localBoundary);
+        return (boundary, local > current ? local - 1 : local);
     }
 
     private void ShowDropIndicator(int boundary)
