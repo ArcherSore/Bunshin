@@ -28,7 +28,9 @@ internal sealed record TimelinePin(Guid ConfigurationId, Guid PolicyId, DayOfWee
 // a time in 15-minute steps; dragging an active point moves it in 5-minute steps; exact minutes go through the editor.
 internal sealed class ScheduleTimeline : FrameworkElement
 {
-    private const double Gutter = 66, AxisHeight = 22, RowHeight = 40, TrackInset = 3, RightPad = 12;
+    private const double Gutter = 66, AxisHeight = 22, RightPad = 12, Bottom = 4;
+    // Rows share whatever height the page gives the timeline; tracks grow slower than rows so tall rows keep a gap.
+    private const double MinRow = 40;
     private const int AddStep = 15, DragStep = 5;
     private static readonly WpfColor GridColor = WpfColor.FromRgb(0xE9, 0xEE, 0xF4);
     private static readonly WpfColor GridStrongColor = WpfColor.FromRgb(0xDC, 0xE3, 0xEC);
@@ -69,12 +71,19 @@ internal sealed class ScheduleTimeline : FrameworkElement
     internal (Guid PolicyId, TimeOnly Time)? Selected { get; set; }
     internal DateTime Clock { get; set; } = DateTime.Now;
 
-    protected override WpfSize MeasureOverride(WpfSize available) =>
-        new(double.IsInfinity(available.Width) ? 640 : available.Width, AxisHeight + 7 * RowHeight + 4);
+    // A scrolling page measures with unlimited height and then stretches the timeline into the space left over.
+    protected override WpfSize MeasureOverride(WpfSize available) => new(
+        double.IsInfinity(available.Width) ? 640 : available.Width,
+        double.IsInfinity(available.Height) ? AxisHeight + 7 * MinRow + Bottom
+            : Math.Max(available.Height, AxisHeight + 7 * MinRow + Bottom));
+
+    private double RowHeight => Math.Max(MinRow, (ActualHeight - AxisHeight - Bottom) / 7);
+    private double TrackHeight => Math.Min(RowHeight - 6, 8 + RowHeight * 0.7);
+    private double TrackTop(DayOfWeek day) => RowTop(day) + (RowHeight - TrackHeight) / 2;
 
     private double TrackWidth => Math.Max(1, ActualWidth - Gutter - RightPad);
     private double X(int minutes) => Gutter + minutes / 1440.0 * TrackWidth;
-    private static double RowTop(DayOfWeek day) =>
+    private double RowTop(DayOfWeek day) =>
         AxisHeight + Array.IndexOf(SchedulePreview.WeekOrder, day) * RowHeight;
     private static int Minutes(TimeOnly time) => time.Hour * 60 + time.Minute;
     private static TimeOnly FromMinutes(int minutes) => new(minutes / 60, minutes % 60);
@@ -108,13 +117,13 @@ internal sealed class ScheduleTimeline : FrameworkElement
         var now = Clock.Hour * 60 + Clock.Minute;
         foreach (var day in SchedulePreview.WeekOrder) {
             var top = RowTop(day);
-            var track = new Rect(Gutter, top + TrackInset, TrackWidth, RowHeight - 2 * TrackInset);
+            var track = new Rect(Gutter, TrackTop(day), TrackWidth, TrackHeight);
             var active = ActiveDays.Contains(day);
             var label = Text(SchedulePreview.DayName(day), 12, active ? ActiveColor : MutedColor, active);
             dc.DrawText(label, new WpfPoint(Gutter - 14 - label.Width, top + (RowHeight - label.Height) / 2));
             if (active) {
                 dc.DrawRoundedRectangle(new SolidColorBrush(ActiveColor), null,
-                    new Rect(6, top + 12, 3, RowHeight - 24), 1.5, 1.5);
+                    new Rect(6, top + RowHeight / 2 - 8, 3, 16), 1.5, 1.5);
             }
 
             dc.PushClip(new RectangleGeometry(track, 6, 6));
@@ -154,18 +163,18 @@ internal sealed class ScheduleTimeline : FrameworkElement
 
         var primary = (TryFindResource("Brush.Primary") as SolidColorBrush)?.Color ?? ActiveColor;
         if (_hover is { } hover && _dragging is null) {
-            var top = RowTop(hover.Day);
+            var top = TrackTop(hover.Day);
             var x = Math.Round(X(hover.Minutes)) + 0.5;
-            dc.DrawLine(new WpfPen(new SolidColorBrush(primary), 1), new WpfPoint(x, top + 5),
-                new WpfPoint(x, top + RowHeight - 5));
+            dc.DrawLine(new WpfPen(new SolidColorBrush(primary), 1), new WpfPoint(x, top + 2),
+                new WpfPoint(x, top + TrackHeight - 2));
             DrawTag(dc, Text("+ " + SchedulePreview.TimeText(FromMinutes(hover.Minutes)), 10, WpfColors.White, true),
                 x, top - 10, primary);
         }
 
         var nowX = Math.Round(X(now)) + 0.5;
-        var todayTop = RowTop(today);
+        var todayTop = TrackTop(today) - 3;
         dc.DrawLine(new WpfPen(new SolidColorBrush(NowColor), 2), new WpfPoint(nowX, todayTop),
-            new WpfPoint(nowX, todayTop + RowHeight));
+            new WpfPoint(nowX, todayTop + TrackHeight + 6));
         DrawTag(dc, Text("现在 " + Clock.ToString("HH\\:mm"), 10, WpfColors.White, true), nowX, todayTop - 10,
             NowColor);
     }
@@ -235,7 +244,7 @@ internal sealed class ScheduleTimeline : FrameworkElement
         .OrderBy(item => item.Pin.Role == TimelinePinRole.Active ? 0 : 1).ThenBy(item => item.Distance)
         .Select(item => item.Pin).FirstOrDefault();
 
-    private static DayOfWeek? DayAt(WpfPoint point)
+    private DayOfWeek? DayAt(WpfPoint point)
     {
         var row = (int)Math.Floor((point.Y - AxisHeight) / RowHeight);
         return row is >= 0 and < 7 ? SchedulePreview.WeekOrder[row] : null;

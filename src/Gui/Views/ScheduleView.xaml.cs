@@ -238,7 +238,8 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                         var tip = (role == TimelinePinRole.Other ? $"{configuration.Name} · " : string.Empty)
                             + $"{policy.Name} {SchedulePreview.TimeText(time)}"
                             + (policy.Enabled ? "" : "（已停用）")
-                            + (winner is null ? "" : $"\n与「{winner.Name}」同时到点，将跳过");
+                            + (winner is null ? "" : $"\n与「{winner.Name}」同时到点，将跳过")
+                            + (role == TimelinePinRole.Active ? "\n拖动调整 · 双击删除" : "");
                         pins.Add(new(configuration.Id, policy.Id, day, time, ColorOf(index), role, policy.Enabled,
                             winner is not null, offset, tip));
                     }
@@ -321,10 +322,12 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         if (!PolicyName.IsKeyboardFocusWithin) {
             PolicyName.Text = policy.Name;
         }
-        PolicySummary.Text = SchedulePreview.Summary(policy);
+        var days = policy.Days.ToHashSet();
+        PresetWeekdays.IsChecked = days.SetEquals(SchedulePreview.WeekOrder[..5]);
+        PresetWeekend.IsChecked = days.SetEquals(SchedulePreview.WeekOrder[5..]);
+        PresetEveryDay.IsChecked = days.Count == 7;
         var selected = _selected is { } s && s.PolicyId == policy.Id ? s.Time : (TimeOnly?)null;
         SelectedTimeRow.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
-        EditHint.Visibility = selected is null ? Visibility.Visible : Visibility.Collapsed;
         if (selected is { } time) {
             SelectedTimeText.Text = "● " + SchedulePreview.TimeText(time);
             SelectedTimeText.Foreground = Inspector.BorderBrush;
@@ -470,7 +473,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
 
     private void QuickDays_Click(object sender, RoutedEventArgs e)
     {
-        if (EditedPolicy is not { } policy || sender is not WpfButton { Tag: string which }) {
+        if (EditedPolicy is not { } policy || sender is not FrameworkElement { Tag: string which }) {
             return;
         }
         DayOfWeek[] days = which switch {
