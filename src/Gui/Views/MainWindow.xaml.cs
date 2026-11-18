@@ -70,6 +70,7 @@ public partial class MainWindow : FluentWindow
     private ChildSessionSnapshot _sessionSnapshot = ChildSessionSnapshot.Empty;
     private WorkerCoordinatorSnapshot _workerSnapshot = WorkerCoordinatorSnapshot.Empty;
     private ProjectPlanModule? _projectPlan;
+    private ProjectPlanModule? _projectBeforeLoadFailure;
     private RunStartAttempt? _pendingStartAttempt;
     private ScrollViewer? _homeLogScrollViewer;
     private readonly RunLogFeed _runLog;
@@ -244,10 +245,6 @@ public partial class MainWindow : FluentWindow
         } catch (Exception exception) {
             _logger.Warn(
                 $"加载 Project Interface 失败。AppContext.BaseDirectory={AppContext.BaseDirectory}", exception);
-            ShowProjectUnavailableState(
-                "项目无法加载",
-                $"请使用完整发布包，确保 {AppIdentity.Name}.exe 同级目录直接包含 interface.json。");
-            ShowProjectValidationError(exception);
             RefreshRuntimeControls();
         }
         ShowWelcomeIfChanged();
@@ -817,8 +814,14 @@ public partial class MainWindow : FluentWindow
         }
         var option = match.Row.Option.Name;
         var field = match.Row.Inputs.FirstOrDefault(input => input.Error is not null);
-        FrameworkElement? Target() => field is null ? _inspectorRows.GetValueOrDefault(option)?.Row
-            : _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
+        FrameworkElement? Target()
+        {
+            if (field is not null) {
+                return _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
+            }
+            return _inspectorRows.TryGetValue(option, out var view)
+                ? FindVisualChild<System.Windows.Controls.ListBox>(view.Row) : null;
+        }
         if (!IsExpanded(match.Task) || Target() is null) {
             _expandedTaskName = match.Task.Name;
             _expandedTaskKind = match.Task.Kind;
@@ -1046,7 +1049,8 @@ public partial class MainWindow : FluentWindow
         var error = ValidationError(startupOnly: false);
         _projectConfigurationValid = error is null;
         _startupConfigurationValid = _projectConfigurationValid || ValidationError(startupOnly: true) is null;
-        if (error is null) {
+        RetryProjectLoadButton.Visibility = project.LoadWarning is null ? Visibility.Collapsed : Visibility.Visible;
+        if (error is null || project.LoadWarning is not null) {
             ProjectValidationText.Text = project.LoadWarning ?? string.Empty;
             ProjectValidationBorder.Visibility = project.LoadWarning is null
                 ? Visibility.Collapsed : Visibility.Visible;
@@ -1758,11 +1762,11 @@ public partial class MainWindow : FluentWindow
             }
             segments.SelectionChanged += (_, e) => {
                 var selected = segments.SelectedItems.Cast<ProjectCaseEditor>().ToArray();
-                if (selected.Length > option.MaxCount) {
-                    // At max_count 1 a new pick replaces the old one; a wider limit refuses the extra pick. Either
-                    // removal raises SelectionChanged again, which saves.
-                    var extra = option.MaxCount == 1 ? selected.Except(e.AddedItems.Cast<ProjectCaseEditor>())
-                        : e.AddedItems.Cast<ProjectCaseEditor>();
+                if (selected.Length > option.MaxCount && e.AddedItems.Count > 0) {
+                    // Allow one-for-one replacement. If already over the new limit, undo only the new picks.
+                    var added = e.AddedItems.Cast<ProjectCaseEditor>();
+                    var extra = option.MaxCount == 1 && selected.Length == 2 && e.AddedItems.Count == 1
+                        ? selected.Except(added) : added;
                     extra.ToList().ForEach(segments.SelectedItems.Remove);
                     return;
                 }
@@ -1817,9 +1821,8 @@ public partial class MainWindow : FluentWindow
         if (row.CaseDescription is { } caseDescription) {
             view.CaseNotes.Children.Add(CreateInspectorNote(caseDescription, "Inspector.Note"));
         }
-        if (row.Option.IsBelowMinimum) {
-            view.CaseNotes.Children.Add(CreateInspectorNote(
-                $"至少选择 {row.Option.MinCount} 项，否则不能开始任务", "Inspector.Error"));
+        if (row.Option.SelectionCountError is { } countError) {
+            view.CaseNotes.Children.Add(CreateInspectorNote(countError, "Inspector.Error"));
         } else if (row.Option.Cases.Count > 1 && ParameterInspector.DescribeLimits(row.Option) is { } limits) {
             view.CaseNotes.Children.Add(CreateInspectorNote(limits, "Inspector.Note"));
         }
@@ -2092,17 +2095,40 @@ public partial class MainWindow : FluentWindow
         return "请检查当前配置和系统状态后重试。";
     }
 
+    private void RetryProjectLoadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (OperationOrExitInProgress || CurrentControls.ConfigurationLock is not null) {
+            return;
+        }
+        try {
+            LoadProject();
+        } catch (Exception exception) {
+            _logger.Warn("重新加载项目失败。", exception);
+        }
+    }
+
     private void LoadProject()
     {
-        var configPath = Path.Combine(_applicationDirectory, "config", "configurations.json");
-        LegacyConfigFile.Migrate(configPath);
-        if (_onboardingPreferences is null) {
-            _onboardingPreferences = new OnboardingPreferences(Path.GetDirectoryName(configPath)!, _logger);
-            _onboardingPreferences.CaptureBeforeProjectLoad(configPath);
+        var previous = _projectPlan ?? _projectBeforeLoadFailure;
+        ProjectPlanModule project;
+        try {
+            var configPath = Path.Combine(_applicationDirectory, "config", "configurations.json");
+            LegacyConfigFile.Migrate(configPath);
+            if (_onboardingPreferences is null) {
+                _onboardingPreferences = new OnboardingPreferences(Path.GetDirectoryName(configPath)!, _logger);
+                _onboardingPreferences.CaptureBeforeProjectLoad(configPath);
+            }
+            project = ProjectPlanModule.Open(_applicationDirectory, configPath, previous,
+                message => _logger.Info(message));
+        } catch {
+            _projectBeforeLoadFailure = previous;
+            ShowProjectUnavailableState("项目无法加载", "请确认安装的是与任务配置对应的完整资源包，再重新加载。");
+            ProjectValidationText.Text = "任务无法运行，原配置已保留。详细原因已记录到日志。";
+            ProjectValidationBorder.Visibility = RetryProjectLoadButton.Visibility = Visibility.Visible;
+            RefreshRuntimeControls();
+            throw;
         }
-        var previous = _projectPlan;
-        var project = ProjectPlanModule.Open(_applicationDirectory, configPath, previous,
-            message => _logger.Info(message));
+        _projectBeforeLoadFailure = null;
         _projectPlan = project;
         _settings.ViewWelcome.IsVisible = project.HasWelcome;
         ShowProjectIdentity(project);
@@ -2119,7 +2145,7 @@ public partial class MainWindow : FluentWindow
 
         RenderTaskPlan();
         if (project.LoadWarning is not null) {
-            _logger.Warn(project.LoadWarning);
+            _logger.Warn(project.LoadWarning, project.LoadException);
         }
         // Every prepare reloads the project; the log only needs it the first time and when it has changed.
         if (previous?.SourceInterfaceDigest != project.SourceInterfaceDigest
@@ -2141,7 +2167,6 @@ public partial class MainWindow : FluentWindow
         _projectPlan = null;
         _settings.ViewWelcome.IsVisible = false;
         ShowProjectIdentity(null);
-        _inputDrafts.Clear();
         _pendingStartAttempt = null;
         _projectConfigurationValid = _startupConfigurationValid = false;
         _expandedTaskName = null;

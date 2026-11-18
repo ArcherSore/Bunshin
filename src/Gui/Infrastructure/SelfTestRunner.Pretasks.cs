@@ -371,16 +371,9 @@ internal static partial class SelfTestRunner
             var failures = 0;
             window.AutoRunFailed += (_, _) => failures++;
             var full = window.AutoRunOnLaunchAsync();
-            PumpUntil(() => full.IsCompleted, "普通任务的旧选项失效时，完整运行必须报告失败。");
-            Require(full.GetAwaiter().GetResult() && failures == 1 && preparations == 0,
-                "完整运行必须在准备环境、向 Worker 提交之前拒绝已删除的普通任务选项。");
-
-            var panel = Named<Panel>(window, "PlanItemsPanel");
-            var startup = ConfigurationDescendants(panel).OfType<Button>()
-                .Single(button => AutomationProperties.GetName(button) == "仅执行启动");
-            Require(startup.IsEnabled, "普通任务的旧选项失效时，仍应允许单独执行有效的启动阶段。");
-            startup.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            PumpUntil(() => preparations == 1, "单独执行有效的启动阶段必须进入环境准备。");
+            PumpUntil(() => full.IsCompleted, "普通任务的旧选项恢复后，完整运行应进入准备。");
+            Require(full.GetAwaiter().GetResult() && failures == 0 && preparations == 1,
+                "已移除的普通任务选项按当前默认恢复，无人值守启动应继续。");
         }, beforeLoad: directory => {
             var path = Path.Combine(directory, "interface.json");
             var root = JsonNode.Parse(File.ReadAllText(path))!;

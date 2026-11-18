@@ -9,6 +9,7 @@ public sealed record ConfigurationSet
     public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
+    public string? ProjectName { get; init; }
     public Guid ActiveConfigurationId { get; init; }
     public required IReadOnlyList<TaskConfiguration> Configurations { get; init; }
 }
@@ -38,6 +39,8 @@ internal sealed class ConfigurationSetStore
     private bool _protectOriginal;
     private bool _originalBackedUp;
     internal string? LoadWarning { get; private set; }
+    internal Exception? LoadException { get; private set; }
+    private string? _pendingChanges;
     internal bool Unreadable => _protectOriginal;
     internal bool WasMissing { get; private set; }
 
@@ -47,9 +50,10 @@ internal sealed class ConfigurationSetStore
         _log = log;
     }
 
-    internal ConfigurationSet Load()
+    internal ConfigurationSet Load(ProjectDefinition project)
     {
         ConfigurationSet config;
+        string? savedProject = null;
         var changes = new List<string>();
         try {
             using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -78,6 +82,7 @@ internal sealed class ConfigurationSetStore
                 node["SchemaVersion"] = ConfigurationSet.CurrentSchemaVersion;
                 config = node.Deserialize<ConfigurationSet>(JsonOptions)
                     ?? throw new InvalidDataException("任务配置为空。");
+                savedProject = config.ProjectName;
                 Validate(config, requireActive: false);
                 if (config.Configurations.Count == 0) {
                     config = CreateEmpty();
@@ -93,19 +98,48 @@ internal sealed class ConfigurationSetStore
         } catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException) {
             WasMissing = true;
             _log?.Invoke("任务配置文件不存在，使用默认配置。");
-            return CreateEmpty();
+            return CreateEmpty() with { ProjectName = project.Provenance.Name };
         } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or JsonException or InvalidDataException or ArgumentException) {
             _protectOriginal = true;
-            LoadWarning = $"无法读取任务配置，已提供空配置。首次保存前将保留原文件。{exception.Message}";
-            return CreateEmpty();
+            LoadException = exception;
+            LoadWarning = "无法读取任务配置，已显示临时空配置。原文件已保留，请检查配置文件后重新加载。";
+            return CreateEmpty() with { ProjectName = project.Provenance.Name };
         }
+        if (savedProject is not null && savedProject != project.Provenance.Name) {
+            throw new InvalidDataException("任务配置属于其他项目。请恢复对应的资源包后重试，原配置已保留。");
+        }
+        var tasks = project.Tasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        var pretasks = project.Pretasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        var removed = new List<string>();
+        string[] KeepDefined(IReadOnlyList<string> selected, HashSet<string> defined, string kind, string owner)
+        {
+            foreach (var name in selected.Where(name => !defined.Contains(name))) {
+                removed.Add($"{owner} 的{kind} {name} 已从项目定义中移除");
+            }
+            return selected.Where(defined.Contains).ToArray();
+        }
+        var recovered = config with {
+            ProjectName = project.Provenance.Name,
+            Configurations = config.Configurations.Select(item => item with {
+                SelectedTasks = KeepDefined(item.SelectedTasks, tasks, "任务", item.Name),
+                SelectedPretasks = KeepDefined(item.SelectedPretasks, pretasks, "前置任务", item.Name)
+            }).ToArray()
+        };
+        // Older Bunshin releases shipped only with MaaNOP and recorded no project identity. An unbound file
+        // opened with another PI can still be edited, but missing names alone cannot authorize deletion.
+        if (removed.Count != 0 && savedProject is null && project.Provenance.Name != "MaaNOP") {
+            return config;
+        }
+        config = recovered;
+        changes.AddRange(removed);
         if (changes.Count != 0) {
+            _pendingChanges = $"已更新任务配置文件 [reason={string.Join("；", changes)}]";
             try {
                 Save(config);
-                _log?.Invoke($"已更新任务配置文件 [reason={string.Join("；", changes)}]");
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
-                LoadWarning = $"配置已加载，但未能保存迁移或激活位置，原文件保持不变。{exception.Message}";
+                LoadException = exception;
+                LoadWarning = "任务配置已加载，更新结果未保存。请检查文件占用和目录写入权限后重新加载。";
             }
         }
         return config;
@@ -141,6 +175,11 @@ internal sealed class ConfigurationSetStore
             File.Move(tempPath, _path, overwrite: true);
             _protectOriginal = false;
             LoadWarning = null;
+            LoadException = null;
+            if (_pendingChanges is not null) {
+                _log?.Invoke(_pendingChanges);
+                _pendingChanges = null;
+            }
         } finally {
             if (File.Exists(tempPath)) {
                 File.Delete(tempPath);

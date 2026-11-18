@@ -21,12 +21,16 @@ public sealed partial class ProjectPlanModule
 {
     private readonly ProjectDefinition _project;
     private readonly ConfigurationSetStore _configStore;
+    private readonly HashSet<(Guid Configuration, string Message)> _reportedCaseRecoveries = [];
+    private readonly Action<string>? _log;
     private ConfigurationSet _config;
     private string? _initializationWarning;
+    private Exception? _initializationException;
     private readonly HashSet<(Guid Configuration, PlanItemKind Kind, string Name)> _disabledItems = [];
 
-    private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore)
+    private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore, Action<string>? log)
     {
+        _log = log;
         _project = project;
         _configStore = configStore;
         Tasks = project.Tasks
@@ -37,13 +41,14 @@ public sealed partial class ProjectPlanModule
             .Select(item => new ProjectTaskChoice(item.Name, item.Label, item.Description) {
                 Kind = PlanItemKind.Pretask
             }).ToArray();
-        _config = configStore.Load();
+        _config = configStore.Load(project);
         if (configStore.WasMissing) {
             try {
                 AddTask(Tasks[0].Name);
                 InitializedTaskName = Tasks[0].Name;
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
-                _initializationWarning = $"无法保存首次默认任务，已提供空配置。{exception.Message}";
+                _initializationWarning = "首次默认任务未保存，已显示空配置。请检查目录写入权限后重新加载。";
+                _initializationException = exception;
             }
         }
     }
@@ -111,6 +116,7 @@ public sealed partial class ProjectPlanModule
     }
     public IReadOnlyList<string> SelectedTaskNames => LoadConfig().SelectedTasks;
     public Guid ActiveConfigurationId => _config.ActiveConfigurationId;
+    public Exception? LoadException => _initializationException ?? _configStore.LoadException;
     public string? LoadWarning => _initializationWarning ?? _configStore.LoadWarning;
     // The file could not be read, so Configurations is a placeholder until the first save.
     public bool ConfigurationsUnreadable => _configStore.Unreadable;
@@ -163,8 +169,12 @@ public sealed partial class ProjectPlanModule
         Action<string>? log = null)
     {
         var project = ProjectInterfaceLoader.Load(projectDirectory);
-        var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log));
+        if (previous is not null && previous.ProjectName != project.Provenance.Name) {
+            throw new InvalidDataException("项目身份已改变。请恢复原项目的资源包后重试，原配置已保留。");
+        }
+        var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log), log);
         if (previous is not null) {
+            module._reportedCaseRecoveries.UnionWith(previous._reportedCaseRecoveries);
             module._disabledItems.UnionWith(previous._disabledItems.Where(item => module.Configurations.Any(config =>
                 config.Id == item.Configuration && (item.Kind == PlanItemKind.Pretask
                     ? config.SelectedPretasks : config.SelectedTasks).Contains(item.Name, StringComparer.Ordinal))));
@@ -356,12 +366,21 @@ public sealed partial class ProjectPlanModule
             throw new ArgumentException($"option {optionName} 不是 checkbox。", nameof(optionName));
         }
         var ordered = option.Cases.Select(item => item.Name).Where(selectedCases.Contains).ToArray();
-        if (ordered.Length != selectedCases.Count || ordered.Length > option.MaxCount) {
-            throw new ArgumentException(
-                $"option {optionName} 的勾选项不存在、重复或超过上限。", nameof(selectedCases));
+        if (ordered.Length != selectedCases.Count) {
+            throw new ArgumentException($"option {optionName} 的勾选项不存在或重复。", nameof(selectedCases));
+        }
+        var config = FindConfiguration(configurationId);
+        // A lower PI limit can leave several excess choices. Let the user remove them one at a time.
+        if (ordered.Length > option.MaxCount) {
+            var previous = ExplicitOptionIntent.ReadActiveCases(option, config).Select(item => item.Name).ToHashSet();
+            if (previous.SetEquals(ordered)) {
+                return BuildConfiguration(config);
+            }
+            if (!previous.IsSupersetOf(ordered)) {
+                throw new ArgumentException($"option {optionName} 的勾选项超过上限。", nameof(selectedCases));
+            }
         }
 
-        var config = FindConfiguration(configurationId);
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCases(ordered));
         ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
@@ -445,9 +464,11 @@ public sealed partial class ProjectPlanModule
 
     private void SaveConfig(ConfigurationSet config)
     {
+        config = config with { ProjectName = ProjectName };
         _configStore.Save(config);
         _config = config;
         _initializationWarning = null;
+        _initializationException = null;
     }
 
     private void ValidateActiveConfiguration(TaskConfiguration config)
@@ -541,7 +562,11 @@ public sealed partial class ProjectPlanModule
                 explicitInputs.Count != 0, null, null, [], inputs, []);
         }
 
-        var active = ExplicitOptionIntent.ReadActiveCases(option, config);
+        var active = ExplicitOptionIntent.ReadActiveCases(option, config, message => {
+            if (_log is not null && _reportedCaseRecoveries.Add((config.Id, message))) {
+                _log($"配置“{config.Name}”：{message}");
+            }
+        });
         var checkbox = option.Kind == OptionDefinitionKind.Checkbox;
         var children = BuildEditors(active.SelectMany(item => item.Options).ToArray(), config, typed);
         return new ProjectOptionEditor(
