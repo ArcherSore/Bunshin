@@ -391,7 +391,8 @@ internal static partial class SelfTestRunner
         ChildSessionManager? session = null, WorkerCoordinator? coordinator = null,
         Func<Func<Task>, Task>? runOperation = null, bool loadProject = true, RuntimeEnvironment? environment = null,
         Func<Task>? endEnvironment = null,
-        Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null)
+        Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
+        TimeProvider? scheduleClock = null, LaunchCommand? launchCommand = null)
     {
         var projectDirectory = CreateProjectFixture(directory);
         if (!loadProject) {
@@ -411,7 +412,8 @@ internal static partial class SelfTestRunner
         var window = new MainWindow(logger, windowSession, windowCoordinator,
             environment ?? WindowEnvironment(logger, windowSession, windowCoordinator, runOperation),
             () => Task.CompletedTask, endEnvironment ?? (() => Task.CompletedTask), _ => Task.CompletedTask,
-            projectDirectory, prepareEnvironment: prepareEnvironment, autostart: InertAutostart());
+            projectDirectory, prepareEnvironment: prepareEnvironment, autostart: InertAutostart(),
+            scheduleClock: scheduleClock, launchCommand: launchCommand);
         var application = System.Windows.Application.Current;
         var shutdown = application.ShutdownMode;
         application.ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -421,7 +423,11 @@ internal static partial class SelfTestRunner
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.Left = -32000;
             window.Top = -32000;
-            window.Show();
+            if (launchCommand?.AutoStart == true) {
+                window.StartInTray();
+            } else {
+                window.Show();
+            }
             PumpOnboarding();
             verify(window);
         } finally {

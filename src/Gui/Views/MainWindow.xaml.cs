@@ -131,9 +131,10 @@ public partial class MainWindow : FluentWindow
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
-        GuiTelemetry? telemetry = null)
+        GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null)
     {
         _launchCommand = launchCommand ?? new LaunchCommand();
+        _scheduleClock = scheduleClock ?? TimeProvider.System;
         InitializeComponent();
         _runLog = new RunLogFeed(LogLines, MaximumGuiLogEntries);
         DataContext = this;
@@ -219,6 +220,11 @@ public partial class MainWindow : FluentWindow
     {
         Loaded -= MainWindow_Loaded;
         await InitializeStartupAsync(RestoreExistingSessionAsync);
+        // Deliver launch on the dispatcher like the independent clock signal. The first arrival gets the gate.
+        await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.Normal);
+        if (_allowClose || _exitInProgress) {
+            return;
+        }
         try {
             AutoSessionMenuItem.IsChecked = File.Exists(AutoSessionPath)
                 && File.ReadAllText(AutoSessionPath).Trim() == "true";
@@ -251,7 +257,9 @@ public partial class MainWindow : FluentWindow
         ShowWelcomeIfChanged();
         InitializeUpdates();
         try {
-            await restoreExistingSession();
+            var restore = restoreExistingSession();
+            StartScheduleClock();
+            await restore;
         } finally {
             _onboardingStartupCompleted = true;
             ReevaluateOnboarding();
@@ -286,6 +294,8 @@ public partial class MainWindow : FluentWindow
             RemoveModalWindowHook();
             RemoveConfigurationWheelHook();
             _runTimer.Stop();
+            _scheduleTimer?.Dispose();
+            _scheduleTimer = null;
             RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;

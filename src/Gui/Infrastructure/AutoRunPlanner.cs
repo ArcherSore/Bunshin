@@ -32,15 +32,13 @@ internal static class AutoRunPlanner
         if (!command.AutoStart && !onManualLaunch) {
             return Skip(null);
         }
-        if (!canStart) {
-            return Skip("运行环境当前不能准备或开始任务");
-        }
         var byInstance = command.AutoStart && command.Instance is not null;
         var target = byInstance
             ? Resolve(command.Instance!, configurations)
             : configurations.FirstOrDefault(item => item.Id == configured);
         if (target is not null) {
-            return new AutoRunDecision(target.Id);
+            return canStart ? new AutoRunDecision(target.Id)
+                : Skip($"配置“{target.Name}”当前不能准备或开始任务，运行环境未就绪或正被占用");
         }
         return Skip(byInstance
             ? $"--instance \"{command.Instance}\" 没有匹配到唯一的配置"
