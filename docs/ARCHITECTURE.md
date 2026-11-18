@@ -56,7 +56,7 @@ Project Interface preset 作为新建配置的模板：ProjectModel 将预设的
 保存后不再关联预设。新配置只在项目默认值上应用预设声明的内容，不继承当前配置；执行顺序仍遵循项目声明。
 配置继续按选项名称共享显式值，预设中的冲突值会拒绝创建，不静默覆盖。
 
-每份 Task Configuration 在启动阶段选择 Project Interface 声明的 pretask。ProjectModel 对 pretask 和普通任务使用同一套字段与选择数量规则，按本次启用的任务及选项分支校验。前置项按项目声明顺序先执行，输入以原始字符串传给外部程序。普通任务按字段声明的类型生成 Pipeline Override。Worker 在 Child Session 中执行程序，工作目录为项目根目录；成功后才为普通任务创建 MaaFramework Controller。启动阶段可单独提交仅含 pretask 的 Run，不改变保存的普通任务列表。仅含 pretask 的 Run 不创建 Controller，成功启动的游戏进程保留。
+每份 Task Configuration 保存已添加的任务、各项勾选状态和显式参数。普通任务与 pretask 共用配置操作，开始时只校验本次勾选且适用的任务及其参数。ProjectModel 按项目声明顺序把选中的 pretask 放在普通任务之前；pretask 的选项只生成程序参数，不合并到 Pipeline Override。Worker 在 Child Session 中执行程序，工作目录为项目根目录；成功后才为普通任务创建 MaaFramework Controller。仅勾选 pretask 时也可开始。仅含 pretask 的 Run 不创建 Controller，成功启动的游戏进程保留。
 
 Worker 同时只执行一个 Run，逐项处理 Plan Item。pretask 非零退出、启动失败或超时均终止后续项；每项外层超时为 180 秒。停止或超时后，Worker 最多等待 30 秒确认程序及其受控后代已结束；无法确认时进入 Faulted 并保留 Active Run，不报告执行终态。停止请求先进入 Stopping，最终结果由 Worker、程序退出状态和 MaaFramework 的执行结果决定。Worker 是 Worker State、Run State 和 Plan Item 状态的权威来源。GUI 把连接、进程与 Session 状况作为独立的 GUI Observation；断线不伪造 Run 失败。
 

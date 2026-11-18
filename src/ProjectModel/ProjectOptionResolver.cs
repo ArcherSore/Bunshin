@@ -7,14 +7,15 @@ namespace ProjectModel;
 internal static class ProjectOptionResolver
 {
     internal static ResolvedProjectOptions Resolve(
-        ProjectDefinition project, TaskDefinition task, TaskConfiguration config, ISet<string> passwords)
+        ProjectDefinition project, TaskDefinition task, TaskConfiguration config, ISet<string> passwords,
+        IReadOnlyDictionary<(string Option, string Input), string>? inputDrafts)
     {
         var pipelineOverrides = new JsonArray { ParseObject(task.PipelineOverride) };
 
         var globalValues = new JsonObject();
         var taskValues = new JsonObject();
-        ResolveScope(project, project.GlobalOptions, config, globalValues, pipelineOverrides);
-        ResolveScope(project, task.Options, config, taskValues, pipelineOverrides);
+        ResolveScope(project, project.GlobalOptions, config, globalValues, pipelineOverrides, inputDrafts);
+        ResolveScope(project, task.Options, config, taskValues, pipelineOverrides, inputDrafts);
         return new ResolvedProjectOptions(ProtocolJson.ToElement(MaskPasswords(project, globalValues, passwords)),
             ProtocolJson.ToElement(MaskPasswords(project, taskValues, passwords)),
             ProtocolJson.ToElement(pipelineOverrides));
@@ -22,10 +23,11 @@ internal static class ProjectOptionResolver
 
     // The program receives validated inputs as entered. Mask passwords in the separate record that reaches logs.
     internal static (JsonElement Values, JsonElement Argument) ResolvePretask(
-        ProjectDefinition project, PretaskDefinition pretask, TaskConfiguration config, ISet<string> passwords)
+        ProjectDefinition project, PretaskDefinition pretask, TaskConfiguration config, ISet<string> passwords,
+        IReadOnlyDictionary<(string Option, string Input), string>? inputDrafts)
     {
         var values = new JsonObject();
-        ResolveScope(project, pretask.Options, config, values, null);
+        ResolveScope(project, pretask.Options, config, values, null, inputDrafts);
         var argument = ProtocolJson.ToElement(values);
         return (ProtocolJson.ToElement(MaskPasswords(project, values, passwords)), argument);
     }
@@ -51,7 +53,8 @@ internal static class ProjectOptionResolver
 
     private static void ResolveScope(
         ProjectDefinition project, IReadOnlyList<string> optionNames, TaskConfiguration config,
-        JsonObject resolvedValues, JsonArray? pipelineOverrides)
+        JsonObject resolvedValues, JsonArray? pipelineOverrides,
+        IReadOnlyDictionary<(string Option, string Input), string>? inputDrafts)
     {
         foreach (var optionName in optionNames) {
             var option = project.Options[optionName];
@@ -59,6 +62,10 @@ internal static class ProjectOptionResolver
                 var inputs = ExplicitOptionIntent.ReadInputs(option, config);
                 var values = new JsonObject();
                 foreach (var input in inputs) {
+                    if (inputDrafts is not null && inputDrafts.TryGetValue((option.Name, input.Name), out var draft)
+                        && input.CheckValue(draft) is { } draftError) {
+                        throw new InvalidOperationException($"参数“{option.Label} · {input.Label}”：{draftError}");
+                    }
                     if (input.Error is { } error) {
                         throw new InvalidOperationException($"参数“{option.Label}”：{error}");
                     }
@@ -78,7 +85,7 @@ internal static class ProjectOptionResolver
                 ? new JsonArray(active.Select(item => (JsonNode)item.Name).ToArray()) : (JsonNode)active[0].Name;
             foreach (var selected in active) {
                 pipelineOverrides?.Add(ParseObject(selected.PipelineOverride));
-                ResolveScope(project, selected.Options, config, resolvedValues, pipelineOverrides);
+                ResolveScope(project, selected.Options, config, resolvedValues, pipelineOverrides, inputDrafts);
             }
         }
     }

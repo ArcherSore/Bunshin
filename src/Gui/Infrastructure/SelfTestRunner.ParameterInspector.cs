@@ -26,8 +26,8 @@ internal static partial class SelfTestRunner
 
         var directory = CreateComplexInspectorFixture(testDirectory);
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        project.AddTask("StressTask");
-        project.AddTask("ThirdTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "ThirdTask");
         var others = new[] {
             ("Real task", project.GetConfiguration("RealTask")), ("Third task", project.GetConfiguration("ThirdTask"))
         };
@@ -87,7 +87,7 @@ internal static partial class SelfTestRunner
             """);
         File.WriteAllText(path, pi.ToJsonString());
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        project.AddTask("SecondTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "SecondTask");
         static string? Draft(string option, string input) => option == "ServerRange" && input == "server_range"
             || option == "Recipient" ? "invalid" : null;
         var rows = ParameterInspector.Derive(project.GetConfiguration("RealTask"), Draft, []);
@@ -121,8 +121,8 @@ internal static partial class SelfTestRunner
         json["task"]!.AsArray().Add(plain);
         File.WriteAllText(interfacePath, json.ToJsonString());
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        project.AddTask("StressTask");
-        project.AddTask("PlainTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
             SetOnboardingField(window, "_expandedTaskName", null!);
             InvokeOnboarding(window, "RenderTaskPlan");
@@ -148,7 +148,7 @@ internal static partial class SelfTestRunner
             Click("从执行计划移除 Plain task");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" })
                 && !project.SelectedTaskNames.Contains("PlainTask"), "拖动手柄与移除按钮不得切换展开。");
-            project.AddTask("PlainTask");
+            project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             Click("Plain task，没有可配置的参数");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" }), "无参数任务的标题区不得展开空白区域。");
@@ -180,8 +180,8 @@ internal static partial class SelfTestRunner
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "inspector-window"), (window, _) => {
             var project = ProjectOf(window);
-            project.AddTask("StressTask");
-            project.AddTask("ThirdTask");
+            project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
+            project.AddItem(Protocol.PlanItemKind.MaaTask, "ThirdTask");
             project.SetInputValue("ServerRange", "server_range", "979");
             project.SetInputValue("ServerRange", "retry_count", "5");
             EndTour(window);

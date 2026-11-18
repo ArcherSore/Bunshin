@@ -242,7 +242,7 @@ internal static partial class SelfTestRunner
             throw new InvalidOperationException("PI task catalog 验证失败。");
         }
 
-        _ = project.AddTask("RealTask");
+        _ = project.AddItem(PlanItemKind.MaaTask, "RealTask");
         using (var configDocument = JsonDocument.Parse(File.ReadAllBytes(configPath))) {
             var root = configDocument.RootElement;
             if (root.GetProperty("SchemaVersion").GetInt32() != ConfigurationSet.CurrentSchemaVersion
@@ -263,7 +263,7 @@ internal static partial class SelfTestRunner
             throw new InvalidOperationException("PI option editor 默认视图验证失败。");
         }
 
-        var defaultAttempt = project.CreateRunStartAttempt();
+        var defaultAttempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         var defaultPipeline = defaultAttempt.Plan.Items[0].PipelineOverride;
         if (defaultAttempt.Plan.Items.Count != 1
             || defaultAttempt.Plan.Items[0].TaskName != "RealTask"
@@ -300,7 +300,7 @@ internal static partial class SelfTestRunner
             }
         }
 
-        var explicitAttempt = project.CreateRunStartAttempt();
+        var explicitAttempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         var explicitPipeline = explicitAttempt.Plan.Items[0].PipelineOverride;
         var explicitServerRange = explicitPipeline[1]
             .GetProperty("ParseServer").GetProperty("recognition").GetProperty("param")
@@ -328,14 +328,14 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("任务配置dormant intent 保留验证失败。");
             }
         }
-        var dormantAttempt = project.CreateRunStartAttempt();
+        var dormantAttempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         if (dormantAttempt.Plan.Items[0].ResolvedOptions.TryGetProperty("Nested", out _)
             || dormantAttempt.Plan.Items[0].PipelineOverride.GetArrayLength() != 3) {
             throw new InvalidOperationException("Dormant option 不应进入 Run Plan。");
         }
 
         project.SetSelectedCase("Mode", "Default");
-        var restoredAttempt = project.CreateRunStartAttempt();
+        var restoredAttempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         if (restoredAttempt.Plan.Items[0].ResolvedOptions.GetProperty("Nested").GetString() != "Off"
             || restoredAttempt.Plan.Items[0].PipelineOverride[3]
                 .GetProperty("SelfTestEntry").GetProperty("nested").GetBoolean()) {
@@ -360,8 +360,8 @@ internal static partial class SelfTestRunner
 
         var resetProject = ProjectPlanModule.Open(
             projectDirectory, Path.Combine(testDirectory, "default-configurations.json"));
-        _ = resetProject.AddTask("RealTask");
-        var resetAttempt = resetProject.CreateRunStartAttempt();
+        _ = resetProject.AddItem(PlanItemKind.MaaTask, "RealTask");
+        var resetAttempt = resetProject.CreateRunStartAttempt(resetProject.ActiveConfigurationId);
         if (resetAttempt.Plan.ResolvedGlobalOptions.GetProperty("ServerRange")
                 .GetProperty("server_range").GetString() != "978-1012"
             || resetAttempt.Plan.Items[0].ResolvedOptions.GetProperty("Mode").GetString() != "Default"
@@ -412,23 +412,23 @@ internal static partial class SelfTestRunner
             throw new InvalidOperationException("PI task 顺序、长 label 或可选 description 验证失败。");
         }
 
-        _ = project.AddTask("RealTask");
+        _ = project.AddItem(PlanItemKind.MaaTask, "RealTask");
         project.SetSelectedCase("Mode", "Minimal");
-        _ = project.RemoveTask("RealTask");
-        _ = project.AddTask("LongLabelTask");
+        _ = project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
+        _ = project.AddItem(PlanItemKind.MaaTask, "LongLabelTask");
         if (project.GetConfiguration("LongLabelTask").TaskOptions.Count != 0) {
             throw new InvalidOperationException("无 option task 不应生成 task editor。");
         }
-        _ = project.RemoveTask("LongLabelTask");
-        _ = project.AddTask("RealTask");
+        _ = project.RemoveItem(PlanItemKind.MaaTask, "LongLabelTask");
+        _ = project.AddItem(PlanItemKind.MaaTask, "RealTask");
         if (project.GetConfiguration("RealTask").TaskOptions.Single().SelectedCase != "Minimal") {
             throw new InvalidOperationException("task selection 切换未保留显式 option intent。");
         }
 
-        if (!project.AddTask("LongLabelTask")
-            || !project.AddTask("MissingDescriptionTask")
-            || !project.AddTask("WhitespaceDescriptionTask")
-            || project.AddTask("RealTask")) {
+        if (!project.AddItem(PlanItemKind.MaaTask, "LongLabelTask")
+            || !project.AddItem(PlanItemKind.MaaTask, "MissingDescriptionTask")
+            || !project.AddItem(PlanItemKind.MaaTask, "WhitespaceDescriptionTask")
+            || project.AddItem(PlanItemKind.MaaTask, "RealTask")) {
             throw new InvalidOperationException("执行计划添加或重复任务约束验证失败。");
         }
         _ = project.MoveTask("WhitespaceDescriptionTask", 0);
@@ -439,7 +439,7 @@ internal static partial class SelfTestRunner
         if (!project.SelectedTaskNames.SequenceEqual(expected)) {
             throw new InvalidOperationException("执行计划 reorder 结果验证失败。");
         }
-        var attempt = project.CreateRunStartAttempt();
+        var attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         if (!attempt.Plan.Items.Select(item => item.TaskName).SequenceEqual(expected)) {
             throw new InvalidOperationException("Run Plan 未保持 SelectedTasks 执行顺序。");
         }
@@ -449,8 +449,8 @@ internal static partial class SelfTestRunner
             || restored.GetConfiguration("LongLabelTask").TaskOptions.Count != 0) {
             throw new InvalidOperationException("执行计划保存/恢复顺序验证失败。");
         }
-        if (!restored.RemoveTask("MissingDescriptionTask")
-            || restored.RemoveTask("MissingDescriptionTask")
+        if (!restored.RemoveItem(PlanItemKind.MaaTask, "MissingDescriptionTask")
+            || restored.RemoveItem(PlanItemKind.MaaTask, "MissingDescriptionTask")
             || !restored.SelectedTaskNames.SequenceEqual(
                 ["WhitespaceDescriptionTask", "RealTask", "LongLabelTask"])) {
             throw new InvalidOperationException("执行计划删除与顺序保持验证失败。");
@@ -475,7 +475,7 @@ internal static partial class SelfTestRunner
         if (baseline.Groups.Count != 0 || baseline.Tasks.Any(task => task.Groups.Count != 0)) {
             throw new InvalidOperationException("未声明 group 的 PI 应提供空分组。");
         }
-        var before = baseline.CreateRunStartAttempt().Plan;
+        var before = baseline.CreateRunStartAttempt(baseline.ActiveConfigurationId).Plan;
         var savedConfig = File.ReadAllText(configPath);
         var root = JsonNode.Parse(source)!.AsObject();
         root["group"] = new JsonArray(
@@ -495,7 +495,7 @@ internal static partial class SelfTestRunner
             || !grouped.Tasks[0].Groups.SequenceEqual(["daily", "battle", "unknown"])) {
             throw new InvalidOperationException("group 展示元数据、默认值、顺序或多组引用丢失。");
         }
-        var after = grouped.CreateRunStartAttempt().Plan;
+        var after = grouped.CreateRunStartAttempt(grouped.ActiveConfigurationId).Plan;
         if (before.RuntimeProfileDigest != after.RuntimeProfileDigest
             || before.Items[0].TaskName != after.Items[0].TaskName
             || before.Items[0].Entry != after.Items[0].Entry

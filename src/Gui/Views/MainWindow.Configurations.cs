@@ -311,7 +311,7 @@ public partial class MainWindow
         }
         InvalidatePendingStart();
         _expandedTaskName = null;
-        _dragTaskName = null;
+        _dragTask = null;
         EndConfigurationRename();
         CloseTaskDescriptionDrawer();
         RenderTaskPlan();

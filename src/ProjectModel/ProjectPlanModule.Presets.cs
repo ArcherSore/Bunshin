@@ -14,8 +14,7 @@ public sealed partial class ProjectPlanModule
     {
         var preset = _project.Presets.SingleOrDefault(item => item.Name == presetName)
             ?? throw new ArgumentException($"预设不存在：{presetName}。", nameof(presetName));
-        // A preset starts from project defaults; nothing is taken from the current configuration. A configuration
-        // cannot persist an unchecked item, so a disabled item is left out together with its options.
+        // Presets contribute enabled, applicable items and their options to the project defaults.
         var values = new PresetValues();
         var tasks = new List<string>();
         foreach (var item in preset.Tasks) {

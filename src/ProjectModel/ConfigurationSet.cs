@@ -7,7 +7,7 @@ namespace ProjectModel;
 
 public sealed record ConfigurationSet
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     [JsonRequired]
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
@@ -31,11 +31,15 @@ public sealed record ConfigurationSet
             Configurations = Configurations.Select(item => item with {
                 SelectedTasks = KeepDefined(item.SelectedTasks, tasks, "任务", item.Name),
                 SelectedPretasks = KeepDefined(item.SelectedPretasks, pretasks, "前置任务", item.Name),
+                DisabledItems = item.DisabledItems.Where(key => (key.Kind == Protocol.PlanItemKind.Pretask
+                    ? pretasks : tasks).Contains(key.Name)).ToArray(),
                 ExplicitOptions = ExplicitOptionIntent.Reconcile(item, project, previous, changes)
             }).ToArray()
         };
     }
 }
+
+public sealed record TaskKey(Protocol.PlanItemKind Kind, string Name);
 
 public sealed record TaskConfiguration
 {
@@ -43,6 +47,7 @@ public sealed record TaskConfiguration
     public required string Name { get; init; }
     public IReadOnlyList<string> SelectedTasks { get; init; } = [];
     public IReadOnlyList<string> SelectedPretasks { get; init; } = [];
+    public IReadOnlyList<TaskKey> DisabledItems { get; init; } = [];
     public IReadOnlyList<SchedulePolicy> SchedulePolicies
     {
         get;
@@ -50,6 +55,9 @@ public sealed record TaskConfiguration
     } = [];
     public IReadOnlyDictionary<string, JsonElement> ExplicitOptions { get; init; } =
         new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+    public IReadOnlyList<string> SelectedNames(Protocol.PlanItemKind kind) =>
+        kind == Protocol.PlanItemKind.Pretask ? SelectedPretasks : SelectedTasks;
 }
 
 public sealed class UnsupportedConfigurationVersionException(int version) : NotSupportedException(
@@ -179,7 +187,7 @@ internal sealed class ConfigurationSetStore
                 SelectedTasks = legacy.SelectedTasks, ExplicitOptions = legacy.ExplicitOptions
             };
             config = new ConfigurationSet { ActiveConfigurationId = migrated.Id, Configurations = [migrated] };
-        } else if (schema is 2 or ConfigurationSet.CurrentSchemaVersion) {
+        } else if (schema is 2 or 3 or ConfigurationSet.CurrentSchemaVersion) {
             if (root.TryGetProperty("ActiveConfigurationId", out var pointer)
                 && (pointer.ValueKind != JsonValueKind.String || !pointer.TryGetGuid(out _))) {
                 var node = root.Deserialize<JsonObject>()!;
@@ -188,7 +196,7 @@ internal sealed class ConfigurationSetStore
             } else {
                 config = root.Deserialize<ConfigurationSet>(JsonOptions)!;
             }
-            if (schema == 2) {
+            if (schema != ConfigurationSet.CurrentSchemaVersion) {
                 config = config with { SchemaVersion = ConfigurationSet.CurrentSchemaVersion };
             }
         } else {
@@ -204,6 +212,9 @@ internal sealed class ConfigurationSetStore
         try {
             var data = ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
             var config = JsonSerializer.Deserialize<ConfigurationSet>(data, JsonOptions);
+            if (config is { SchemaVersion: 3 }) {
+                config = config with { SchemaVersion = ConfigurationSet.CurrentSchemaVersion };
+            }
             return config is not null && config.ProjectName == projectName ? Validate(config) : null;
         } catch (Exception exception) when (IsReadFailure(exception)) {
             missing = exception is FileNotFoundException or DirectoryNotFoundException;
@@ -315,7 +326,7 @@ internal sealed class ConfigurationSetStore
     private static ConfigurationSet Validate(ConfigurationSet config, List<string>? repairs = null)
     {
         if (config.SchemaVersion != ConfigurationSet.CurrentSchemaVersion || config.Configurations is null) {
-            throw new InvalidDataException("任务配置必须包含有效的 V3 配置列表。");
+            throw new InvalidDataException("任务配置必须包含有效的 V4 配置列表。");
         }
         var ids = new HashSet<Guid>();
         foreach (var item in config.Configurations) {
@@ -327,6 +338,11 @@ internal sealed class ConfigurationSetStore
             }
             if (!IsNameList(item.SelectedPretasks)) {
                 throw new InvalidDataException("SelectedPretasks 必须为不重复的 pretask name 列表。");
+            }
+            if (item.DisabledItems is null || item.DisabledItems.Distinct().Count() != item.DisabledItems.Count
+                || item.DisabledItems.Any(key => key is null || !Enum.IsDefined(key.Kind)
+                    || !item.SelectedNames(key.Kind).Contains(key.Name))) {
+                throw new InvalidDataException("未勾选的任务必须属于配置且不能重复。");
             }
             var policyIds = new HashSet<Guid>();
             foreach (var policy in item.SchedulePolicies) {

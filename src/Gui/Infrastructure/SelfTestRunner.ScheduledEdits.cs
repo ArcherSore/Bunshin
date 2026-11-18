@@ -19,9 +19,9 @@ internal static partial class SelfTestRunner
             var project = ProjectOf(window);
             var id = project.ActiveConfigurationId;
             var other = project.CreateConfiguration();
-            project.AddTask("Plain");
+            project.AddItem(PlanItemKind.MaaTask, "Plain");
             project.ActivateConfiguration(id);
-            project.AddTask("Plain");
+            project.AddItem(PlanItemKind.MaaTask, "Plain");
             OpenScheduledTask(window);
             var editor = ConfigurationDescendants(Named<DependencyObject>(window, "PlanItemsPanel"))
                 .OfType<TextBox>().Single(box => AutomationProperties.GetName(box) == "Recipient");
@@ -46,7 +46,7 @@ internal static partial class SelfTestRunner
             project.SetSelectedCase("Mode", "Default");
             project.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
             Require(Start(id) == ScheduledRunDisposition.Admitted, "临时取消执行的任务中的草稿不得影响其他任务。");
-            project.RemoveTask("RealTask");
+            project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
             Require(Start(id) == ScheduledRunDisposition.Admitted, "被移除任务的草稿不得影响剩余任务。");
         }, beforeLoad: projectDirectory => {
             AddRequiredInput(projectDirectory);
@@ -70,7 +70,7 @@ internal static partial class SelfTestRunner
             var a = project.ActiveConfigurationId;
             project.SetInputValue("Recipient", "recipient", "old");
             var b = project.CreateConfiguration();
-            project.AddTask("RealTask");
+            project.AddItem(PlanItemKind.MaaTask, "RealTask");
             project.SetInputValue("Recipient", "recipient", "new");
             EditInterface(projectDirectory, root => {
                 root["option"]!["Recipient"]!["inputs"]![0]!["verify"] = "^new$";
@@ -93,12 +93,12 @@ internal static partial class SelfTestRunner
                 var project = ProjectOf(window);
                 var id = project.ActiveConfigurationId;
                 var target = project.CreateConfiguration();
-                project.AddTask("RealTask");
+                project.AddItem(PlanItemKind.MaaTask, "RealTask");
                 project.SetInputValue("Recipient", "recipient", "target");
                 project.RenameConfiguration(target, "目标");
                 project.AddSchedulePolicy(target, "工作日");
                 var second = project.CreateConfiguration();
-                project.AddTask("RealTask");
+                project.AddItem(PlanItemKind.MaaTask, "RealTask");
                 project.SetInputValue("Recipient", "recipient", "other");
                 project.AddSchedulePolicy(second, "同刻");
                 project.ActivateConfiguration(id);

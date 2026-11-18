@@ -11,7 +11,7 @@ public partial class MainWindow
             return "项目未加载";
         }
         try {
-            CreateScheduledAttempt(project, configurationId);
+            CreateConfigurationAttempt(project, configurationId);
             return null;
         } catch (Exception exception) {
             return exception.Message;
@@ -19,7 +19,7 @@ public partial class MainWindow
     }
 
     // Unfixed invalid drafts block the configuration like they block Start, without saving them.
-    private RunStartAttempt CreateScheduledAttempt(ProjectPlanModule project, Guid configurationId)
+    private RunStartAttempt CreateConfigurationAttempt(ProjectPlanModule project, Guid configurationId)
     {
         var drafts = _inputDrafts.Where(pair => pair.Key.Configuration == configurationId)
             .ToDictionary(pair => (pair.Key.Option, pair.Key.Input), pair => pair.Value);

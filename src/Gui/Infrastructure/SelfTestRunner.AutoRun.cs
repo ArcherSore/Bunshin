@@ -122,11 +122,11 @@ internal static partial class SelfTestRunner
             project.ActivateConfiguration(project.CreateConfiguration());
             project.RenameConfiguration(project.ActiveConfigurationId, "周常");
             if (weeklyHasTask) {
-                project.AddTask(task);
+                project.AddItem(PlanItemKind.MaaTask, task);
             }
             project.ActivateConfiguration(daily);
             if (!dailyHasTask) {
-                project.RemoveTask(task);
+                project.RemoveItem(PlanItemKind.MaaTask, task);
             }
         };
 
@@ -259,7 +259,7 @@ internal static partial class SelfTestRunner
                 });
                 var project = ProjectPlanModule.Open(directory, path);
                 project.SetInputValue("Login", "password", SecretInputValue);
-                project.AddTask("Collect");
+                project.AddItem(PlanItemKind.MaaTask, "Collect");
             });
         } finally {
             logger.EntryWritten -= Capture;

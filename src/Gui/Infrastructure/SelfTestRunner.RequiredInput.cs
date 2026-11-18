@@ -40,6 +40,12 @@ internal static partial class SelfTestRunner
             Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error"),
                 "未填写的必填输入必须标红并显示 pattern_msg。");
 
+            var activeProject = ProjectOf(window);
+            activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", false);
+            activeProject.AddItem(Protocol.PlanItemKind.MaaTask, "Plain");
+            Require(activeProject.CreateRunStartAttempt().Plan.Items is [{ TaskName: "Plain" }],
+                "取消勾选后，任务的必填参数不得阻止其他任务开始。");
+            activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", true);
             editor.Text = "Kakashi";
             editor.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, editor, null) {
@@ -49,7 +55,11 @@ internal static partial class SelfTestRunner
                 && editor.ReadLocalValue(System.Windows.Controls.Control.BorderBrushProperty)
                     == System.Windows.DependencyProperty.UnsetValue,
                 "保存合法值后红色标记、提示与边框必须消失。");
-        }, AddRequiredInput);
+        }, projectDirectory => {
+            AddRequiredInput(projectDirectory);
+            EditInterface(projectDirectory, root => root["task"]!.AsArray()
+                .Add(new JsonObject { ["name"] = "Plain", ["entry"] = "Plain" }));
+        });
     }
 
     private static void VerifyUpgradedInputEditors(AppLogger logger, string testDirectory)
@@ -165,8 +175,10 @@ internal static partial class SelfTestRunner
             task["option"] = new JsonArray("Profile", "Legacy");
             File.WriteAllText(path, pi.ToJsonString());
             Click(window, "RetryProjectLoadButton");
-            Require(!ConfigurationDescendants(panel).OfType<System.Windows.Documents.Run>()
-                .Any(run => run.Text.Contains(SecretInputValue)), "密码改为普通字段后，折叠摘要不能显示旧密码草稿。");
+            Require(!ConfigurationDescendants(panel).OfType<System.Windows.Controls.TextBlock>()
+                .Any(tag => tag.Text.Contains(SecretInputValue)
+                    || (tag.ToolTip as string)?.Contains(SecretInputValue) == true),
+                "密码改为普通字段后，折叠摘要不能显示旧密码草稿。");
             Expand();
             Require(Field("Profile · token") is not Wpf.Ui.Controls.PasswordBox
                 && Field("Profile · token").Text == "新版公开值" && Field("Profile · keep").Text == "sibling draft",

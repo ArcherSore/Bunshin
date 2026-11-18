@@ -35,7 +35,7 @@ internal static partial class SelfTestRunner
             var task = project.SelectedTaskNames.First();
             var original = project.ActiveConfigurationId;
             var target = project.CreateConfiguration();
-            project.AddTask(task);
+            project.AddItem(PlanItemKind.MaaTask, task);
             project.ActivateConfiguration(original);
             var failures = new List<string>();
             window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);

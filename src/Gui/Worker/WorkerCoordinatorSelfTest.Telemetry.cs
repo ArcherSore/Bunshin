@@ -57,7 +57,9 @@ internal static partial class WorkerCoordinatorSelfTest
             while (!coordinator.Snapshot.SnapshotFresh) {
                 await Task.Delay(20, timeout.Token);
             }
-            var attempt = project.CreateRunStartAttempt() with { RedactionValues = [RedactionValue] };
+            var attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId) with {
+                RedactionValues = [RedactionValue]
+            };
             var starting = coordinator.StartRunAsync(attempt, timeout.Token);
             var start = await ReadRequestAsync(worker, ProtocolOperations.RunStart, timeout.Token);
             await worker.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value,

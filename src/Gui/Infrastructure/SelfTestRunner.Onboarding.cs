@@ -106,7 +106,7 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("Replay 必须回到首页且保持配置、完成版本和资格不变。");
             }
             var project = ProjectPlanModule.Open(directory, path);
-            project.RemoveTask("RealTask");
+            project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
             SetOnboardingField(window, "_projectPlan", project);
             InvokeOnboarding(window, "RenderTaskPlan");
             before = File.ReadAllBytes(path);

@@ -40,7 +40,7 @@ internal static partial class SelfTestRunner
             && project.Presets[0].Description == "预设说明" && project.Presets[1].Label == "startup",
             "预设必须保留顺序、名称回退和展示信息。");
         var original = project.ActiveConfigurationId;
-        project.AddPretask("Launch");
+        project.AddItem(Protocol.PlanItemKind.Pretask, "Launch");
         project.SetSelectedCase(original, "Mode", "Minimal");
         var daily = project.CreateConfigurationFromPreset("daily");
         Require(project.ActiveConfigurationId == daily && project.Configurations.Count == 2
@@ -50,7 +50,7 @@ internal static partial class SelfTestRunner
         var config = project.Configurations.Single(item => item.Id == daily);
         Require(config.Name == "日常预设" && config.ExplicitOptions["Nested"].GetProperty("SelectedCase").GetString()
             == "Off" && config.ExplicitOptions["Mode"].GetProperty("SelectedCase").GetString() == "Default"
-            && project.CreateRunStartAttempt().Plan.Items.Count == 1,
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Count == 1,
             "预设嵌套 switch、select 和 input 必须转换为现有 intent，不继承当前配置的参数，并生成运行计划。");
         project = ProjectPlanModule.Open(directory, path);
         var inputs = project.Configurations[1].ExplicitOptions["ServerRange"].GetProperty("Inputs");
@@ -63,7 +63,7 @@ internal static partial class SelfTestRunner
             .GetProperty("Inputs").GetProperty("retry_count").GetString() == "5",
             "重复套用预设必须创建独立副本，不能覆盖用户编辑。");
         project.CreateConfigurationFromPreset("startup");
-        Require(project.CreateRunStartAttempt().Plan.Items.Select(item => item.TaskName)
+        Require(project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Select(item => item.TaskName)
             .SequenceEqual(["Launch", "Other"]),
             "preset.pretask 必须跳过不适用项，并按顶层声明顺序执行。");
         project.CreateConfigurationFromPreset("merge");

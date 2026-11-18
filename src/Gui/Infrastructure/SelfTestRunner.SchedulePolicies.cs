@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using ProjectModel;
 
 namespace Gui.Infrastructure;
@@ -44,10 +47,18 @@ internal static partial class SelfTestRunner
         }
         reopened.DeleteSchedulePolicy(a, weekend.Id);
         reopened.UpdateSchedulePolicy(a, policy with { Enabled = true });
+        var legacyBackup = JsonNode.Parse(File.ReadAllText(path))!;
+        legacyBackup["SchemaVersion"] = 3;
+        foreach (var configuration in legacyBackup["Configurations"]!.AsArray()) {
+            configuration!.AsObject().Remove("DisabledItems");
+        }
+        var bytes = Encoding.UTF8.GetBytes(legacyBackup.ToJsonString());
+        File.WriteAllBytes(path + ".bak", ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
         File.WriteAllText(path, "{");
         reopened = ProjectPlanModule.Open(projectDirectory, path);
         var remaining = reopened.GetSchedulePolicies(a).Single();
         Require(reopened.ActiveConfigurationId == b && reopened.LoadWarning is not null
+            && (int?)JsonNode.Parse(File.ReadAllText(path))!["SchemaVersion"] == ConfigurationSet.CurrentSchemaVersion
             && !reopened.ConfigurationsUnreadable && remaining.Name == "工作日早晚"
             && remaining.Days.ToHashSet().SetEquals(workdays) && remaining.Times.SequenceEqual([morning, night])
             && ProjectPlanModule.Open(projectDirectory, path).GetSchedulePolicies(a).Single().Id == added.Id,

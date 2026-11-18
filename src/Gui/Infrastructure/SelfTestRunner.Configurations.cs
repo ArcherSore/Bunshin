@@ -22,11 +22,11 @@ internal static partial class SelfTestRunner
         ProjectPlanModule Open(ProjectPlanModule? previous = null) =>
             ProjectPlanModule.Open(projectDirectory, path, previous, log.Add);
         var project = Open();
-        project.AddTask("Gone");
-        project.AddTask("Last");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "Gone");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "Last");
         project.MoveTask("Last", 0);
-        project.AddPretask("GoneBoot");
-        project.AddPretask("Boot");
+        project.AddItem(Protocol.PlanItemKind.Pretask, "GoneBoot");
+        project.AddItem(Protocol.PlanItemKind.Pretask, "Boot");
         project.SetInputValue("ServerRange", "server_range", "123");
         project.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "Last", false);
         EditInterface(projectDirectory, root => {
@@ -133,7 +133,7 @@ internal static partial class SelfTestRunner
             || !reopened.SelectedTaskNames.SequenceEqual(project.SelectedTaskNames)) {
             throw new InvalidOperationException("首次默认任务必须已保存，重开保持身份和任务。");
         }
-        project.RemoveTask("RealTask");
+        project.RemoveItem(Protocol.PlanItemKind.MaaTask, "RealTask");
         if (ProjectPlanModule.Open(projectDirectory, path).SelectedTaskNames.Count != 0) {
             throw new InvalidOperationException("已有空配置不得自动补入任务。");
         }
@@ -168,8 +168,8 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(projectDirectory, path);
         var invalid = project.ActiveConfigurationId;
         var valid = project.CreateConfiguration();
-        project.AddTask("RealTask");
-        _ = project.CreateRunStartAttempt();
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
+        _ = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         project.ActivateConfiguration(invalid);
         project.RenameConfiguration(invalid, "仍可管理");
         var editor = project.GetConfiguration("RealTask");
@@ -178,7 +178,7 @@ internal static partial class SelfTestRunner
         }
         Require(!project.SelectedTaskNames.Contains("RemovedTask"), "已知项目应清理迁移前已删除的任务。");
         project.SetInputValue(invalid, "ServerRange", "server_range", "978");
-        _ = project.CreateRunStartAttempt();
+        _ = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         project.DeleteConfiguration(invalid);
         if (project.ActiveConfigurationId != valid) {
             throw new InvalidOperationException("失效配置修正或删除不能影响其他配置。");
@@ -201,7 +201,7 @@ internal static partial class SelfTestRunner
             if (project.ActiveConfigurationId != project.Configurations[0].Id) {
                 throw new InvalidOperationException("Tab 选择必须保存 Active。");
             }
-            project.AddTask("RealTask");
+            project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
             SetOnboardingField(window, "_expandedTaskName", "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             var retry = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
@@ -419,7 +419,7 @@ internal static partial class SelfTestRunner
             json["task"]!.AsArray().Add(other);
         });
         var path = Path.Combine(projectDirectory, "config", "configurations.json");
-        ProjectPlanModule.Open(projectDirectory, path).AddTask("OtherTask");
+        ProjectPlanModule.Open(projectDirectory, path).AddItem(Protocol.PlanItemKind.MaaTask, "OtherTask");
         WithRuntimeControlWindow(logger, directory, window => {
             var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
             ToggleRealTask(items);
@@ -570,7 +570,7 @@ internal static partial class SelfTestRunner
         }
         using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) {
             try {
-                project.AddTask("RealTask");
+                project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
                 throw new InvalidOperationException("备份失败必须拒绝本次保存。");
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
                 if (project.SelectedTaskNames.Count != 0 || project.ActiveConfigurationId != id) {
@@ -580,7 +580,7 @@ internal static partial class SelfTestRunner
         }
         using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) {
             try {
-                project.AddTask("RealTask");
+                project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
                 throw new InvalidOperationException("备份成功后替换失败也必须报告保存失败。");
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
                 if (!File.ReadAllBytes(path).SequenceEqual(invalid) || project.SelectedTaskNames.Count != 0) {
@@ -588,7 +588,7 @@ internal static partial class SelfTestRunner
                 }
             }
         }
-        project.AddTask("RealTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
         var backup = Directory.GetFiles(directory, "configurations.invalid-*.dpapi").Single();
         if (!ReadProtectedOriginal(backup).SequenceEqual(invalid)) {
             throw new InvalidOperationException("异常备份必须保留原始 bytes。");
@@ -645,7 +645,7 @@ internal static partial class SelfTestRunner
 
         File.WriteAllText(path, """{"SchemaVersion":1,"SelectedTasks":["RealTask"],"ExplicitOptions":{}}""");
         _ = Open();
-        Expect("迁移应写明版本", "已更新任务配置文件 [reason=SchemaVersion 1 -> 3]");
+        Expect("迁移应写明版本", "已更新任务配置文件 [reason=SchemaVersion 1 -> 4]");
 
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
         json["ActiveConfigurationId"] = Guid.NewGuid().ToString();
@@ -655,7 +655,7 @@ internal static partial class SelfTestRunner
 
         File.WriteAllText(path, """{"SchemaVersion":2,"Configurations":[]}""");
         _ = Open();
-        Expect("多个原因都应写出", "已更新任务配置文件 [reason=SchemaVersion 2 -> 3；配置列表为空]");
+        Expect("多个原因都应写出", "已更新任务配置文件 [reason=SchemaVersion 2 -> 4；配置列表为空]");
 
         File.WriteAllText(path, """{"SchemaVersion":1,"SelectedTasks":[],"ExplicitOptions":{}}""");
         ProjectPlanModule locked;
@@ -670,7 +670,7 @@ internal static partial class SelfTestRunner
         var project = Open();
         Require(project.LoadWarning is not null, "读取回退应留下警告，由 GUI 写入日志。");
         Expect("回退时尚未备份，不应写备份");
-        project.AddTask("RealTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
         var backup = Path.GetFileName(Directory.GetFiles(directory, "without-backups.invalid-*.dpapi").Single());
         Expect("备份应只写文件名", $"已备份无法读取的任务配置 [backup={backup}]");
     }
@@ -680,25 +680,26 @@ internal static partial class SelfTestRunner
         var path = Path.Combine(testDirectory, "independent.json");
         var project = ProjectPlanModule.Open(projectDirectory, path);
         var first = project.ActiveConfigurationId;
-        project.AddTask("RealTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
         project.SetInputValue(first, "ServerRange", "server_range", "978");
         var second = project.CreateConfiguration();
         if (second == first || project.SelectedTaskNames.Count != 0
             || project.Configurations[1].ExplicitOptions.Count != 0) {
             throw new InvalidOperationException("新配置必须有新身份且没有继承任务或参数。");
         }
-        project.AddTask("RealTask");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
         project.SetInputValue(second, "ServerRange", "server_range", "1012");
         project.SetInputValue(first, "ServerRange", "server_range", "979");
-        if (project.CreateRunStartAttempt().Plan.ResolvedGlobalOptions.GetProperty("ServerRange")
-                .GetProperty("server_range").GetString() != "1012") {
+        if (project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.ResolvedGlobalOptions
+                .GetProperty("ServerRange").GetProperty("server_range").GetString() != "1012") {
             throw new InvalidOperationException("来源配置的迟到编辑不能修改当前配置。");
         }
         project.RenameConfiguration(first, "小号");
         project.RenameConfiguration(second, "小号");
         project.ActivateConfiguration(first);
-        if (project.CreateRunStartAttempt().Plan.ResolvedGlobalOptions.GetProperty("ServerRange")
-                .GetProperty("server_range").GetString() != "979" || project.AddTask("RealTask")) {
+        if (project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.ResolvedGlobalOptions
+                .GetProperty("ServerRange").GetProperty("server_range").GetString() != "979"
+            || project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask")) {
             throw new InvalidOperationException("配置必须隔离参数且同配置不能重复 task。");
         }
         project = ProjectPlanModule.Open(projectDirectory, path);

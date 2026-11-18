@@ -101,7 +101,7 @@ public partial class MainWindow
         name = project.Configurations.FirstOrDefault(item => item.Id == configurationId)?.Name ?? name;
         RunStartAttempt attempt;
         try {
-            attempt = CreateScheduledAttempt(project, configurationId);
+            attempt = CreateConfigurationAttempt(project, configurationId);
         } catch (Exception exception) {
             var reason = exception.Message.TrimEnd().TrimEnd('。')
                 .Replace("请先勾选要执行的任务或前置任务", "执行计划为空").Replace("Run Plan", "执行计划");
@@ -136,7 +136,7 @@ public partial class MainWindow
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
                     _scheduledSubmission = new(name, worker.WorkerInstanceId, attempt.RunId);
                     submitted = attempt.RunId;
-                    await SubmitRunAsync(attempt, name, startupOnly: false, onSending: () => sending = true);
+                    await SubmitRunAsync(attempt, name, onSending: () => sending = true);
                 }
             }
             return new(ScheduledRunDisposition.Admitted, submitted);

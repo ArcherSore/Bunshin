@@ -67,7 +67,7 @@ internal static partial class SelfTestRunner
         {
             var id = project.CreateConfiguration();
             project.ActivateConfiguration(id);
-            project.AddTask("RealTask");
+            project.AddItem(PlanItemKind.MaaTask, "RealTask");
             return id;
         }
         var retired = AddConfig();
@@ -139,7 +139,7 @@ internal static partial class SelfTestRunner
         File.WriteAllText(path, pi.ToJsonString());
         var configPath = Path.Combine(directory, "config", "configurations.json");
         var project = ProjectPlanModule.Open(directory, configPath);
-        project.AddPretask("Boot");
+        project.AddItem(PlanItemKind.Pretask, "Boot");
         project.SetSelectedCases("Features", ["Normal", "Charged", "Combo"]);
         project.SetInputValue("ServerRange", "server_range", "123");
         pi["option"]!["ServerRange"]!["inputs"]![0]!["verify"] = "^978-1012$";
@@ -158,14 +158,14 @@ internal static partial class SelfTestRunner
         Require(options.Single(item => item.Name == "Mode").SelectedCase == "Minimal"
             && options.Single(item => item.Name == "Features").SelectedCases.Count == 2,
             "临时禁用的普通任务中原有输入失效时，单选和多选仍应可独立保存。");
-        Require(Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(startupOnly: true)),
+        project.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
+        Require(Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
             "上限降低后，计划必须等到用户决定取消哪些有效选择。");
         var preparations = 0;
         WithRuntimeControlWindow(logger, testDirectory, window => {
             var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
             SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
-            var startup = ConfigurationDescendants(items).OfType<System.Windows.Controls.Button>()
-                .Single(button => AutomationProperties.GetName(button) == "仅执行启动");
+            var startup = Named<System.Windows.Controls.Button>(window, "PrepareEnvironmentButton");
             startup.RaiseEvent(new System.Windows.RoutedEventArgs(ButtonBase.ClickEvent));
             ListBox? Group() => ConfigurationDescendants(items).OfType<ListBox>()
                 .SingleOrDefault(list => AutomationProperties.GetName(list) == "奖励类型");
@@ -184,7 +184,7 @@ internal static partial class SelfTestRunner
             Require(Group()!.SelectedItems.Count == 2 && !Group()!.SelectedItems.Cast<ProjectCaseEditor>()
                 .Any(item => item.Name == "Normal"), "仍然超限时，新的勾选不能替用户取消已有选择。");
             Group()!.SelectedItems.RemoveAt(0);
-            Require(ProjectOf(window).CreateRunStartAttempt(true).Plan.Items.Single().ResolvedOptions
+            Require(ProjectOf(window).CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions
                 .GetProperty("Features").GetArrayLength() == 1, "修正数量后应能生成启动计划。");
         }, projectDirectory: directory, prepareEnvironment: (_, _, _) => {
             preparations++;
@@ -200,12 +200,13 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(directory, configPath);
         ProjectOptionEditor Option(ProjectPlanModule plan, string name) =>
             plan.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == name);
-        string[] MergeOrder() => project.CreateRunStartAttempt().Plan.Items.Single().PipelineOverride.EnumerateArray()
+        string[] MergeOrder() => project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single()
+            .PipelineOverride.EnumerateArray()
             .Where(item => item.TryGetProperty("FeatureOrder", out _))
             .Select(item => item.GetProperty("FeatureOrder").GetProperty("last").GetString()!).ToArray();
 
         var features = Option(project, "Features");
-        var resolved = project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions;
+        var resolved = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single().ResolvedOptions;
         Require(features is { Kind: ProjectOptionKind.Checkbox, MinCount: 1, MaxCount: 2, IsExplicit: false }
             && features.SelectedCases.SequenceEqual(["Normal", "Charged"])
             && features.ActiveChildren.Single().Name == "ChargeTime"
@@ -229,7 +230,7 @@ internal static partial class SelfTestRunner
         project.SetSelectedCases("Features", []);
         Require(Option(project, "Features").SelectionCountError is not null
             && Option(ProjectPlanModule.Open(directory, configPath), "Features").SelectedCases.Count == 0
-            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
+            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(project.ActiveConfigurationId)),
             "少于 min_count 的勾选可以保存，但不能开始运行。");
 
         var source = File.ReadAllText(Path.Combine(directory, "interface.json"));

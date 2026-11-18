@@ -23,10 +23,10 @@ internal sealed class RunResultLog(AppLogger logger)
     private readonly HashSet<Guid> _endedRuns = [];
 
     // What this Run was asked to do, written before it starts so a failure can be read against it.
-    internal static void WritePlan(AppLogger logger, RunStartAttempt attempt, string configuration, bool startupOnly)
+    internal static void WritePlan(AppLogger logger, RunStartAttempt attempt, string configuration)
     {
         var items = attempt.Plan.Items;
-        logger.Info($"Run 计划{Field("configuration", configuration)}{Field("startupOnly", startupOnly)}"
+        logger.Info($"Run 计划{Field("configuration", configuration)}"
             + $"{Field("runId", attempt.RunId)}{Field("planDigest", attempt.PlanDigest)}{Field("items", items.Count)}"
             + Field("globalOptions", Options(attempt.Plan.ResolvedGlobalOptions)));
         for (var index = 0; index < items.Count; index++) {
