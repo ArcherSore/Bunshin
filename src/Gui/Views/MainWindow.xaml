@@ -1018,12 +1018,19 @@
                                 BorderThickness="1"
                                 CornerRadius="{StaticResource Radius.Control}"
                                 Visibility="Collapsed">
-                            <TextBlock x:Name="ProjectValidationText"
-                                       TextWrapping="Wrap"
-                                       Foreground="{StaticResource Brush.Error.Foreground}"
-                                       Style="{StaticResource SecondaryTextStyle}"
-                                       AutomationProperties.Name="任务配置校验结果"
-                                       AutomationProperties.LiveSetting="Polite" />
+                            <DockPanel>
+                                <Button x:Name="RetryProjectLoadButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+                                        Content="重新加载" Click="RetryProjectLoadButton_Click" Visibility="Collapsed" />
+                                <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                    <TextBlock x:Name="ProjectValidationText"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource Brush.Error.Foreground}"
+                                               Style="{StaticResource SecondaryTextStyle}"
+                                               AutomationProperties.Name="任务配置校验结果"
+                                               AutomationProperties.LiveSetting="Polite" />
+                                </ScrollViewer>
+                            </DockPanel>
                         </Border>
 
                         <Border x:Name="ProjectEmptyStatePanel"

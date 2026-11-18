@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -70,7 +70,9 @@ public partial class MainWindow : FluentWindow
     private ChildSessionSnapshot _sessionSnapshot = ChildSessionSnapshot.Empty;
     private WorkerCoordinatorSnapshot _workerSnapshot = WorkerCoordinatorSnapshot.Empty;
     private ProjectPlanModule? _projectPlan;
+    private ProjectPlanModule? _projectBeforeLoadFailure;
     private RunStartAttempt? _pendingStartAttempt;
+    private volatile bool _pendingStartSent;
     private ScrollViewer? _homeLogScrollViewer;
     private readonly RunLogFeed _runLog;
     private bool _allowClose;
@@ -79,7 +81,8 @@ public partial class MainWindow : FluentWindow
     private bool _exitInProgress;
     private bool _followLogs = true;
     private bool _projectConfigurationValid;
-    private bool _startupConfigurationValid;
+    private (Guid Configuration, bool StartupOnly)? _blockedRunScope;
+    private string? _configurationNotice;
     private bool _updatingOptionEditors;
     private bool _taskShelfExpanded;
     private double? _preferredRuntimeSidebarWidth;
@@ -104,7 +107,7 @@ public partial class MainWindow : FluentWindow
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
-    private readonly Dictionary<(Guid, string, string), InputDraft> _invalidInputDrafts = new();
+    private readonly Dictionary<(Guid Configuration, string Option, string Input), string> _inputDrafts = [];
     private readonly Dictionary<(Guid, string, string), WpfTextBox> _optionInputEditors = new();
     private readonly Dictionary<string, InspectorRowView> _inspectorRows = new(StringComparer.Ordinal);
     private System.Windows.Data.Binding? _configurationEditableBinding;
@@ -114,8 +117,10 @@ public partial class MainWindow : FluentWindow
     private static readonly DependencyProperty ConfigurationEditableProperty = DependencyProperty.Register(
         "ConfigurationEditable", typeof(bool), typeof(MainWindow), new PropertyMetadata(true));
 
+    private enum InputEdit { Idle, Edited, Rejected }
+
     private sealed record OptionInputTag(Guid ConfigurationId, string OptionName, string InputName, string Value,
-        string? PatternMessage, bool Submitted = false)
+        bool IsExplicit, InputEdit Edit = InputEdit.Idle)
     {
         internal (Guid, string, string) Key => (ConfigurationId, OptionName, InputName);
     }
@@ -244,10 +249,6 @@ public partial class MainWindow : FluentWindow
         } catch (Exception exception) {
             _logger.Warn(
                 $"加载 Project Interface 失败。AppContext.BaseDirectory={AppContext.BaseDirectory}", exception);
-            ShowProjectUnavailableState(
-                "项目无法加载",
-                $"请使用完整发布包，确保 {AppIdentity.Name}.exe 同级目录直接包含 interface.json。");
-            ShowProjectValidationError(exception);
             RefreshRuntimeControls();
         }
         ShowWelcomeIfChanged();
@@ -534,51 +535,95 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!ValidateRunInputs() || OperationOrExitInProgress) {
-            LogIgnoredAction();
-            return;
-        }
-        await PrepareFromPanelAsync(startRun: true);
-    }
+    private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e) =>
+        await RunFromPanelAsync(prepare: true);
 
-    private async void PrepareEnvironmentButton_Click(object sender, RoutedEventArgs e)
-    {
+    private async void PrepareEnvironmentButton_Click(object sender, RoutedEventArgs e) =>
         await PrepareFromPanelAsync(showDesktop: true);
+
+    private Task PrepareFromPanelAsync(bool showDesktop = false) =>
+        RunOperationAsync(PendingOperation.PreparingEnvironment, async () => {
+            if (TryReloadForRun(unattended: false)) {
+                await PrepareCurrentEnvironmentAsync(showDesktop);
+            }
+        });
+
+    private async Task PrepareCurrentEnvironmentAsync(bool showDesktop = false)
+    {
+        _environmentPreparationFailed = false;
+        try {
+            await _prepareEnvironment(RequireProject(), _settings.CreateFrameworkOptions, showDesktop);
+        } catch {
+            _environmentPreparationFailed = true;
+            throw;
+        }
     }
 
-    // Only a manual "仅启动分身" shows the Child Session window; every other preparation keeps it hidden.
-    private async Task PrepareFromPanelAsync(
-        bool startRun = false, bool startupOnly = false, bool unattended = false, bool showDesktop = false)
+    private bool TryReloadForRun(bool unattended)
     {
-        if (OperationOrExitInProgress) {
+        try {
+            LoadProject();
+            return true;
+        } catch (Exception exception) {
+            _logger.Warn("重新加载项目失败。", exception);
+            if (unattended) {
+                ReportAutoRunFailure(ProjectEmptyStateDetailText.Text);
+            }
+            return false;
+        }
+    }
+
+    private async Task RunFromPanelAsync(bool prepare, bool startupOnly = false, Guid? automaticConfiguration = null)
+    {
+        var unattended = automaticConfiguration.HasValue;
+        if (OperationOrExitInProgress || !CommitFocusedConfigurationInput(deferDraftCheck: true)) {
             LogIgnoredAction();
+            if (unattended) {
+                ReportAutoRunFailure("暂时无法开始任务，请完成当前操作后重试。");
+            }
             return;
         }
-        _environmentPreparationFailed = false;
-        await RunOperationAsync(
-            PendingOperation.PreparingEnvironment,
-            async () =>
-            {
+        await RunOperationAsync(prepare ? PendingOperation.PreparingEnvironment : PendingOperation.StartingRun,
+            async () => {
+                if (_workerCoordinator.Snapshot.SnapshotFresh && await CheckPendingStartAsync()) {
+                    return;
+                }
+                if (!TryReloadForRun(unattended)) {
+                    return;
+                }
+                var project = RequireProject();
+                if (project.ConfigurationsUnreadable) {
+                    ReportRunBlocker(project.LoadWarning!, unattended);
+                    return;
+                }
+                if (automaticConfiguration is { } id && id != project.ActiveConfigurationId
+                    && !ApplyConfigurationChange(() => project.ActivateConfiguration(id), unattended: true)) {
+                    return;
+                }
+                if (RevealInvalidParameters(project, startupOnly, focus: !unattended) is { } problem) {
+                    ReportRunBlocker(problem, unattended);
+                    return;
+                }
+                if (project.GetExecutionItems(startupOnly).Count == 0) {
+                    const string noItems = "本次没有可执行的任务。请勾选适用的任务后重试。";
+                    ReportRunBlocker(!string.IsNullOrEmpty(_configurationNotice)
+                        ? $"{_configurationNotice}{Environment.NewLine}{noItems}"
+                        : noItems, unattended);
+                    return;
+                }
+                RunStartAttempt attempt;
                 try {
-                    LoadProject();
-                    // Reload may change which fields the selected Plan Items require.
-                    if (startRun && RevealInvalidParameter(startupOnly)) {
-                        if (unattended) {
-                            ReportAutoRunFailure("所选配置有未通过校验的参数。");
-                        }
+                    attempt = project.CreateRunStartAttempt(startupOnly);
+                } catch (Exception exception) {
+                    _logger.Warn("生成运行计划失败。", exception);
+                    ReportRunBlocker("当前配置无法生成运行计划。请检查任务参数及项目资源包后重试。", unattended);
+                    return;
+                }
+                if (prepare) {
+                    await PrepareCurrentEnvironmentAsync();
+                    if (_exitInProgress || _environment.Closing) {
                         return;
                     }
-                    await _prepareEnvironment(RequireProject(), _settings.CreateFrameworkOptions, showDesktop);
-                } catch {
-                    _environmentPreparationFailed = true;
-                    throw;
-                }
-                if (startRun && !_exitInProgress && !_environment.Closing) {
-                    // Keep the operation gate and configuration lock through admission of the Run.
-                    // UI snapshot notifications may still be queued when preparation completes.
-                    _logger.Info("等待 Worker 依赖检查完成后自动开始当前任务计划。");
                     using var readyWait = new CancellationTokenSource();
                     _workerReadyWait = readyWait;
                     try {
@@ -586,14 +631,23 @@ public partial class MainWindow : FluentWindow
                     } finally {
                         _workerReadyWait = null;
                     }
-                    if (_exitInProgress || _environment.Closing) {
-                        return;
-                    }
-                    SetPendingOperation(PendingOperation.StartingRun);
-                    await StartCurrentPlanAsync(startupOnly, unattended ? _quitAfterRun : null);
                 }
-            },
-            unattended);
+                if (!_exitInProgress && !_environment.Closing) {
+                    SetPendingOperation(PendingOperation.StartingRun);
+                    await SubmitRunAsync(attempt, startupOnly, unattended ? _quitAfterRun : null);
+                }
+            }, unattended);
+    }
+
+    private void ReportRunBlocker(string message, bool unattended)
+    {
+        ProjectValidationText.Text = message;
+        ProjectValidationBorder.Visibility = Visibility.Visible;
+        if (unattended) {
+            ReportAutoRunFailure(message);
+        } else {
+            _logger.Warn(message);
+        }
     }
 
     // RuntimeControls chooses what Retry means; this handler only carries it out.
@@ -618,53 +672,79 @@ public partial class MainWindow : FluentWindow
 
     private async void StartRunButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!ValidateRunInputs()
-            || CurrentControls.Action is not (RuntimeAction.Start { Enabled: true }
-                or RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true })) {
+        if (CurrentControls.Action is not (RuntimeAction.Start { Enabled: true }
+            or RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true })) {
             LogIgnoredAction();
             return;
         }
-        await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync());
+        await RunFromPanelAsync(prepare: false);
     }
 
-    // Called only while the application operation gate is held, after preparation or a direct Start.
-    private async Task StartCurrentPlanAsync(bool startupOnly = false, QuitAfterRunTracker? quitAfterRun = null)
+    private void InvalidatePendingStart()
     {
-        // The operation may wait behind another one, so the session is checked again when it runs.
-        if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
-            or ChildSessionState.ConnectedHidden)) {
-            throw new InvalidOperationException("Child Session 尚未连接，当前不能开始任务。 ");
-        }
-        var project = RequireProject();
-        if (!(startupOnly ? _startupConfigurationValid : _projectConfigurationValid)) {
-            throw new InvalidOperationException(
-                "当前 任务配置尚未通过正式 PI Resolver 校验。 ");
-        }
-        if (_pendingStartAttempt is not null && _pendingStartupOnly != startupOnly) {
+        if (!_pendingStartSent) {
             _pendingStartAttempt = null;
         }
-        _pendingStartupOnly = startupOnly;
-        var attempt = _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
-        if (quitAfterRun is null && _quitAfterRun?.IsWaitingFor(attempt.RunId) == true) {
-            // A manual retry reuses the ID. Ask the Worker whether it saw the automatic request before replaying it.
-            var worker = await _workerCoordinator.RefreshSnapshotAsync();
-            if (worker.ActiveRun?.RunId == attempt.RunId || worker.LastRun?.RunId == attempt.RunId) {
-                _pendingStartAttempt = null;
-                return;
-            }
-            if (_exitInProgress || _environment.Closing) {
-                return;
-            }
+    }
+
+    private async Task<bool> CheckPendingStartAsync()
+    {
+        if (!_pendingStartSent || _pendingStartAttempt is not { } previous) {
+            return false;
+        }
+        // A lost response is ambiguous even when the reloaded PI or the user's choices changed.
+        var worker = await _workerCoordinator.RefreshSnapshotAsync();
+        if (worker.ActiveRun?.RunId == previous.RunId || worker.LastRun?.RunId == previous.RunId) {
+            _pendingStartAttempt = null;
+            _pendingStartSent = false;
+            return true;
+        }
+        if (_exitInProgress || _environment.Closing) {
+            return true;
+        }
+        _pendingStartSent = false;
+        if (_quitAfterRun?.IsWaitingFor(previous.RunId) == true) {
             _quitAfterRun.Abandon();
         }
+        return false;
+    }
+
+    private async Task SubmitRunAsync(RunStartAttempt attempt, bool startupOnly, QuitAfterRunTracker? quitAfterRun)
+    {
+        if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
+            or ChildSessionState.ConnectedHidden)) {
+            throw new InvalidOperationException("桌面分身尚未连接，请重新准备运行环境。");
+        }
+        if (await CheckPendingStartAsync()) {
+            return;
+        }
+        if (_pendingStartAttempt is { } previous && _pendingStartupOnly == startupOnly
+            && previous.Plan.Items.Count == attempt.Plan.Items.Count) {
+            // Compare actual resolved content while retaining the IDs and timestamp of an identical retry.
+            var plan = attempt.Plan with {
+                CreatedAtUtc = previous.Plan.CreatedAtUtc,
+                Items = attempt.Plan.Items.Zip(previous.Plan.Items,
+                    (item, old) => item with { PlanItemId = old.PlanItemId }).ToArray()
+            };
+            if (CanonicalDigest.ComputePlanDigestV2(plan) == previous.PlanDigest) {
+                attempt = previous;
+            }
+        }
+        _pendingStartAttempt = attempt;
+        _pendingStartupOnly = startupOnly;
+        _pendingStartSent = false;
         RunResultLog.WritePlan(_logger, attempt, ActiveConfigurationName, startupOnly);
         _telemetry.Register(attempt.RedactionValues);
         RunStartResponse response;
         try {
             response = await _workerCoordinator.StartRunAsync(attempt,
-                onSending: quitAfterRun is null ? null : () => quitAfterRun.Await(attempt.RunId));
+                onSending: () => {
+                    _pendingStartSent = true;
+                    quitAfterRun?.Await(attempt.RunId);
+                });
         } catch (WorkerProtocolErrorException) {
             // The start was rejected. A manual retry may reuse this ID and must not cause an automatic exit.
+            _pendingStartSent = false;
             quitAfterRun?.Abandon();
             throw;
         }
@@ -674,6 +754,7 @@ public partial class MainWindow : FluentWindow
         _logger.Info(
             $"run.start {response.Disposition}：runId={attempt.RunId:D}；planDigest={attempt.PlanDigest}。 ");
         _pendingStartAttempt = null;
+        _pendingStartSent = false;
     }
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
@@ -738,7 +819,7 @@ public partial class MainWindow : FluentWindow
             if (!(task.Kind == PlanItemKind.Pretask ? project.AddPretask(task.Name) : project.AddTask(task.Name))) {
                 return;
             }
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             _addedSinceShelfOpened.Add(task.Label);
             UpdateAddedTasks();
             RenderTaskPlan();
@@ -797,48 +878,63 @@ public partial class MainWindow : FluentWindow
             new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
     }
 
-    // Preserve any edit first, then decide whether its draft belongs to this Run, including shared options.
-    private bool ValidateRunInputs(bool startupOnly = false) =>
-        CommitFocusedConfigurationInput(deferDraftCheck: true) && !RevealInvalidParameter(startupOnly);
-
-    // An invalid parameter blocks Start: show the field holding an invalid, unsaved value, or the checkbox row below
-    // min_count, instead of running.
-    private bool RevealInvalidParameter(bool startupOnly = false)
+    private string? RevealInvalidParameters(ProjectPlanModule project, bool startupOnly, bool focus)
     {
-        if (_projectPlan is not { } project) {
-            return false;
+        _blockedRunScope = (project.ActiveConfigurationId, startupOnly);
+        var problems = RefreshRunFieldProblems(project);
+        if (problems.FirstOrDefault() is not { } first) {
+            return null;
         }
-        var match = project.GetExecutionItems(startupOnly).OrderBy(task => IsExpanded(task) ? 0 : 1)
-            .SelectMany(task => DeriveInspectorRows(task.Name, GetConfigurationOrEmpty(task.Name, task.Kind),
-                shared: false, task.Kind).Where(row => row.IsInvalid).Select(row => (Task: task, Row: row)))
-            .FirstOrDefault();
-        if (match.Task is null) {
-            return false;
+        if (focus) {
+            if (!IsExpanded(first.Task)) {
+                _expandedTaskName = first.Task.Name;
+                _expandedTaskKind = first.Task.Kind;
+                RenderTaskPlan();
+            }
+            FrameworkElement? target = first.Input is { } input
+                ? _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, first.Option, input))
+                : _inspectorRows.TryGetValue(first.Option, out var view)
+                    ? FindVisualChild<System.Windows.Controls.ListBox>(view.Row) : null;
+            if (target is not null) {
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => {
+                    BringIntoPlanView(target);
+                    target.Focus();
+                });
+            }
         }
-        var option = match.Row.Option.Name;
-        var field = match.Row.Inputs.FirstOrDefault(input => input.Error is not null);
-        FrameworkElement? Target() => field is null ? _inspectorRows.GetValueOrDefault(option)?.Row
-            : _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
-        if (!IsExpanded(match.Task) || Target() is null) {
-            _expandedTaskName = match.Task.Name;
-            _expandedTaskKind = match.Task.Kind;
-            RenderTaskPlan();
+        return ProjectValidationText.Text;
+    }
+
+    private RunFieldProblem[] RefreshRunFieldProblems(ProjectPlanModule project)
+    {
+        var problems = _blockedRunScope is { } scope && scope.Configuration == project.ActiveConfigurationId
+            ? project.GetExecutionItems(scope.StartupOnly)
+                .SelectMany(task => InspectorRows(task.Name, task.Kind).SelectMany(row => row.RunProblems(task)))
+                .ToArray() : [];
+        if (problems.Length == 0) {
+            _blockedRunScope = null;
         }
-        if (Target() is { } target) {
-            _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => {
-                BringIntoPlanView(target);
-                target.Focus();
-            });
+        var messages = new List<string>();
+        if (!string.IsNullOrEmpty(_configurationNotice)) {
+            messages.Add(_configurationNotice);
         }
-        _logger.Info($"参数 {option} 未通过校验，已阻止开始任务。 ");
-        return true;
+        var byTask = problems.ToLookup(problem => (problem.Task.Kind, problem.Task.Name));
+        foreach (var (key, card) in _planItemContainers) {
+            AutomationProperties.SetItemStatus(card, byTask.Contains(key) ? "参数需要修改" : string.Empty);
+        }
+        foreach (var group in byTask) {
+            var fields = string.Join(" ", group.Select(problem => problem.Message));
+            messages.Add($"请检查“{group.First().Task.Label}”的参数。{fields}");
+        }
+        ProjectValidationText.Text = string.Join(Environment.NewLine, messages);
+        ProjectValidationBorder.Visibility = messages.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        return problems;
     }
 
     // The header is the only expansion toggle; a task without parameters has nothing to expand.
     private void PlanItemHeader_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not WpfButton { Tag: ProjectTaskChoice task }
-            || !IsExpanded(task) && !HasParameters(GetConfigurationOrEmpty(task.Name, task.Kind))) {
+        if (sender is not WpfButton { Tag: ProjectTaskChoice task }) {
             return;
         }
         _expandedTaskName = IsExpanded(task) ? null : task.Name;
@@ -862,7 +958,7 @@ public partial class MainWindow : FluentWindow
                 _expandedTaskName = null;
             }
             CloseTaskDescriptionDrawer();
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             RenderTaskPlan();
             _logger.Info($"已从执行计划移除任务：{task.Name}。 ");
         } catch (Exception exception) {
@@ -952,19 +1048,18 @@ public partial class MainWindow : FluentWindow
     private void OptionInputTextBox_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
         if (e.Key == Key.Enter && sender is WpfTextBox { Tag: OptionInputTag } submitted) {
-            _ = CommitOptionInput(submitted);
+            _ = CommitOptionInput(submitted, submitDefault: true);
             e.Handled = true;
             return;
         }
         if (e.Key != Key.Escape || sender is not WpfTextBox { Tag: OptionInputTag tag } editor
-            || GetInputText(editor) == tag.Value && !_invalidInputDrafts.ContainsKey(tag.Key)) {
+            || GetInputText(editor) == tag.Value && !_inputDrafts.ContainsKey(tag.Key)) {
             return;
         }
-        _invalidInputDrafts.Remove(tag.Key);
+        _inputDrafts.Remove(tag.Key);
         SetInputText(editor, tag.Value);
+        editor.Tag = tag with { Edit = InputEdit.Idle };
         editor.SelectAll();
-        ShowOptionInputError(editor, null);
-        RefreshParameterDisplays();
         e.Handled = true;
     }
 
@@ -992,10 +1087,10 @@ public partial class MainWindow : FluentWindow
         }
 
         try {
-            var before = GetExpandedOptionNames();
+            var before = GetExpandedOptionLayout();
             save(RequireProject());
-            _pendingStartAttempt = null;
-            RefreshAfterOptionSaved(!before.SequenceEqual(GetExpandedOptionNames()));
+            InvalidatePendingStart();
+            RefreshAfterOptionSaved(!before.SequenceEqual(GetExpandedOptionLayout()));
             _logger.Info($"已保存 explicit case：option={optionName}。 ");
         } catch (Exception exception) {
             HandleOperationError("保存 select/switch/checkbox option 失败", exception);
@@ -1009,7 +1104,7 @@ public partial class MainWindow : FluentWindow
         try {
             RenderTaskPlan();
         } catch (Exception exception) {
-            _projectConfigurationValid = _startupConfigurationValid = false;
+            _projectConfigurationValid = false;
             ShowProjectValidationError(exception);
             _logger.Warn("刷新 option 编辑器失败。", exception);
             RefreshRuntimeControls();
@@ -1024,39 +1119,24 @@ public partial class MainWindow : FluentWindow
             RenderConfigurationTabs();
             RenderAvailableTaskShelf(project);
             RenderPlanItems(project);
-            RefreshConfigurationValidity(project);
+            RefreshPlanStatus(project);
         } finally {
             _updatingOptionEditors = false;
         }
     }
 
-    private void RefreshConfigurationValidity(ProjectPlanModule project)
+    private void RefreshPlanStatus(ProjectPlanModule project)
     {
-        Exception? ValidationError(bool startupOnly)
-        {
-            try {
-                project.ValidateConfiguration(startupOnly);
-                return null;
-            } catch (Exception exception) {
-                return exception;
-            }
-        }
-
-        var error = ValidationError(startupOnly: false);
-        _projectConfigurationValid = error is null;
-        _startupConfigurationValid = _projectConfigurationValid || ValidationError(startupOnly: true) is null;
-        if (error is null) {
-            ProjectValidationText.Text = project.LoadWarning ?? string.Empty;
-            ProjectValidationBorder.Visibility = project.LoadWarning is null
-                ? Visibility.Collapsed : Visibility.Visible;
-        } else {
-            ShowProjectValidationError(error);
-        }
+        // Field problems belong to the inspector. Leave Start available so a click can locate the field.
+        _projectConfigurationValid = true;
+        RetryProjectLoadButton.Visibility = project.LoadWarning is null ? Visibility.Collapsed : Visibility.Visible;
+        _configurationNotice = string.Join(Environment.NewLine,
+            new[] { project.LoadWarning, project.SkippedPretaskMessage }.OfType<string>());
+        RefreshRunFieldProblems(project);
         RefreshRuntimeControls();
     }
 
-    // Option edits never change the task shelf or tabs. Plan cards are rebuilt only when nested options appear or
-    // vanish; otherwise the edited control stays in place and keeps its animation and focus.
+    // Option edits only rebuild cards when the expanded rows change order, visibility or depth.
     private void RefreshAfterOptionSaved(bool rebuildCards)
     {
         var project = RequireProject();
@@ -1070,13 +1150,11 @@ public partial class MainWindow : FluentWindow
         } else {
             RefreshParameterDisplays();
         }
-        RefreshConfigurationValidity(project);
+        RefreshPlanStatus(project);
     }
 
-    private string[] GetExpandedOptionNames() => _expandedTaskName is not { } taskName ? []
-        : DeriveInspectorRows(taskName, GetConfigurationOrEmpty(taskName, _expandedTaskKind),
-            shared: false, _expandedTaskKind)
-            .Select(row => row.Option.Name).ToArray();
+    private (string Name, int Depth)[] GetExpandedOptionLayout() => _expandedTaskName is not { } taskName ? []
+        : InspectorRows(taskName, _expandedTaskKind).Select(row => (row.Option.Name, row.Depth)).ToArray();
 
     private void RenderAvailableTaskShelf(ProjectPlanModule project)
     {
@@ -1272,23 +1350,10 @@ public partial class MainWindow : FluentWindow
     private bool IsExpanded(ProjectTaskChoice task) =>
         _expandedTaskName == task.Name && _expandedTaskKind == task.Kind;
 
-    private ProjectConfigurationView GetConfigurationOrEmpty(string taskName, PlanItemKind kind)
-    {
-        try {
-            return RequireProject().GetConfiguration(taskName, kind);
-        } catch (Exception exception) when (exception is InvalidDataException or ArgumentException) {
-            return new ProjectConfigurationView([], []);
-        }
-    }
-
-    private static bool HasParameters(ProjectConfigurationView configuration) =>
-        configuration.GlobalOptions.Count + configuration.TaskOptions.Count != 0;
-
     private Border CreatePlanItem(ProjectTaskChoice task, bool expanded)
     {
-        var configuration = GetConfigurationOrEmpty(task.Name, task.Kind);
-        var hasParameters = HasParameters(configuration);
-        expanded &= hasParameters;
+        var rows = InspectorRows(task.Name, task.Kind, shared: expanded);
+        expanded &= rows.Count != 0;
         var container = new Border {
             Tag = task,
             Style = (Style)FindResource(expanded ? "PlanItemExpandedStyle" : "PlanItemStyle")
@@ -1310,12 +1375,12 @@ public partial class MainWindow : FluentWindow
             layout.Children.Add(accentLine);
         }
 
-        layout.Children.Add(CreatePlanItemHeader(task, expanded, hasParameters, configuration, container));
+        layout.Children.Add(CreatePlanItemHeader(task, expanded, rows, container));
 
         if (expanded) {
             var editor = new Border {
                 Style = (Style)FindResource("ParameterEditorStyle"),
-                Child = CreateParameterInspector(task.Name, configuration, task.Kind)
+                Child = CreateParameterInspector(rows)
             };
             // A wide card lines the inspector up with the task label; a narrow one gives it the full width.
             container.SizeChanged += (_, args) =>
@@ -1327,9 +1392,10 @@ public partial class MainWindow : FluentWindow
         return container;
     }
 
-    private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, bool hasParameters,
-        ProjectConfigurationView configuration, Border container)
+    private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, IReadOnlyList<InspectorRow> rows,
+        Border container)
     {
+        var hasParameters = rows.Count != 0;
         var header = new Grid {
             MinHeight = 44,
             Margin = new Thickness(expanded ? 6 : 4, 0, 4, 0)
@@ -1340,25 +1406,19 @@ public partial class MainWindow : FluentWindow
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var dragHandle = CreateIconButton(WpfSymbolRegular.ReOrderDotsVertical20, "拖动以调整顺序", "拖动以调整顺序");
-        dragHandle.Tag = task;
-        dragHandle.Width = dragHandle.MinWidth = 24;
-        if (task.Kind == PlanItemKind.Pretask) {
-            dragHandle.Visibility = Visibility.Hidden;
-            dragHandle.IsHitTestVisible = false;
-        } else {
+        if (task.Kind == PlanItemKind.MaaTask) {
+            var dragHandle = CreateIconButton(WpfSymbolRegular.ReOrderDotsVertical20, "拖动以调整顺序", "拖动以调整顺序");
+            dragHandle.Tag = task;
+            dragHandle.Width = dragHandle.MinWidth = 24;
             dragHandle.Cursor = WpfCursors.SizeAll;
             dragHandle.PreviewMouseLeftButtonDown += PlanDragHandle_PreviewMouseLeftButtonDown;
             dragHandle.PreviewMouseMove += PlanDragHandle_PreviewMouseMove;
             BindConfigurationEditable(dragHandle);
-        }
-        header.Children.Add(dragHandle);
-        if (task.Kind == PlanItemKind.Pretask) {
-            dragHandle.Visibility = Visibility.Collapsed;
+            header.Children.Add(dragHandle);
+            header.Children.Add(CreatePlanItemSelection(task));
+        } else {
             header.Margin = new Thickness(10, 0, 4, 0);
             header.Children.Add(CreateStartupSelection(task));
-        } else {
-            header.Children.Add(CreatePlanItemSelection(task));
         }
 
         var label = new TextBlock {
@@ -1393,7 +1453,7 @@ public partial class MainWindow : FluentWindow
                 VerticalAlignment = VerticalAlignment.Center
             };
             _planItemSummaries.Add((summaryText, task));
-            FillParameterSummary(summaryText, task.Name, configuration, task.Kind);
+            FillParameterSummary(summaryText, rows);
             Grid.SetColumn(summaryText, 2);
             title.Children.Add(summaryText);
         }
@@ -1406,7 +1466,9 @@ public partial class MainWindow : FluentWindow
         AutomationProperties.SetName(main,
             $"{task.Label}，{(hasParameters ? (expanded ? "已展开" : "已折叠") : "没有可配置的参数")}");
         AutomationProperties.SetHelpText(main, hasParameters ? (expanded ? "点击收起参数" : "点击展开参数") : string.Empty);
-        main.Click += PlanItemHeader_Click;
+        if (hasParameters) {
+            main.Click += PlanItemHeader_Click;
+        }
         Grid.SetColumn(main, 2);
         header.Children.Add(main);
         if (!string.IsNullOrWhiteSpace(task.Description)) {
@@ -1419,7 +1481,7 @@ public partial class MainWindow : FluentWindow
             header.Children.Add(information);
         }
 
-        if (task.Kind == PlanItemKind.Pretask && RequireProject().Pretasks.Any(item => item.Name == task.Name)) {
+        if (task.Kind == PlanItemKind.Pretask) {
             return header;
         }
 
@@ -1464,32 +1526,27 @@ public partial class MainWindow : FluentWindow
                 return;
             }
             RequireProject().SetItemEnabled(task.Kind, task.Name, selection.IsChecked == true);
-            _pendingStartAttempt = null;
-            RefreshConfigurationValidity(RequireProject());
+            InvalidatePendingStart();
+            RefreshPlanStatus(RequireProject());
         };
         Grid.SetColumn(selection, 1);
         return selection;
     }
 
-    // Drafts are those of the active configuration; sharing is only worked out for the expanded card.
-    private IReadOnlyList<InspectorRow> DeriveInspectorRows(
-        string taskName, ProjectConfigurationView configuration, bool shared, PlanItemKind kind)
+    private IReadOnlyList<InspectorRow> InspectorRows(string taskName, PlanItemKind kind, bool shared = false)
     {
         var project = RequireProject();
-        var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == project.ActiveConfigurationId)
-            .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value);
-        (string, ProjectConfigurationView)[] others = !shared ? [] : project.SelectedItems
-            .Where(task => task.Name != taskName || task.Kind != kind)
-            .Select(task => (task.Label, GetConfigurationOrEmpty(task.Name, task.Kind))).ToArray();
-        return ParameterInspector.Derive(configuration, drafts, others);
+        var others = shared ? project.SelectedItems.Where(task => task.Name != taskName || task.Kind != kind)
+            .Select(task => (task.Label, project.GetConfiguration(task.Name, task.Kind))).ToArray() : [];
+        return ParameterInspector.Derive(project.GetConfiguration(taskName, kind),
+            (option, input) => _inputDrafts.GetValueOrDefault((project.ActiveConfigurationId, option, input)), others);
     }
 
     // An unfixed invalid draft replaces the saved value in red, so folded cards agree with the field and Start block.
-    private void FillParameterSummary(TextBlock summary, string taskName, ProjectConfigurationView configuration,
-        PlanItemKind kind)
+    private void FillParameterSummary(TextBlock summary, IReadOnlyList<InspectorRow> rows)
     {
         summary.Inlines.Clear();
-        foreach (var row in DeriveInspectorRows(taskName, configuration, shared: false, kind)) {
+        foreach (var row in rows) {
             var parts = row.Kind == ProjectOptionKind.Input
                 ? row.Inputs.Select(input =>
                     (input.Label, Value: input.Show(input.DisplayValue), Invalid: input.Error is not null))
@@ -1513,23 +1570,19 @@ public partial class MainWindow : FluentWindow
     private void RefreshParameterDisplays()
     {
         foreach (var (summary, task) in _planItemSummaries) {
-            FillParameterSummary(summary, task.Name, GetConfigurationOrEmpty(task.Name, task.Kind), task.Kind);
+            FillParameterSummary(summary, InspectorRows(task.Name, task.Kind));
         }
-        if (_expandedTaskName is not { } expanded || _inspectorRows.Count == 0) {
-            return;
-        }
-        foreach (var row in DeriveInspectorRows(expanded, GetConfigurationOrEmpty(expanded, _expandedTaskKind),
-            shared: false, _expandedTaskKind)) {
-            if (_inspectorRows.TryGetValue(row.Option.Name, out var view)) {
-                ApplyInspectorRow(view, row);
+        if (_inspectorRows.Count != 0 && _expandedTaskName is { } expanded) {
+            foreach (var row in InspectorRows(expanded, _expandedTaskKind)) {
+                ApplyInspectorRow(_inspectorRows[row.Option.Name], row);
             }
         }
     }
 
-    private Border CreateParameterInspector(string taskName, ProjectConfigurationView configuration, PlanItemKind kind)
+    private Border CreateParameterInspector(IReadOnlyList<InspectorRow> rows)
     {
         var table = new StackPanel();
-        foreach (var row in DeriveInspectorRows(taskName, configuration, shared: true, kind)) {
+        foreach (var row in rows) {
             table.Children.Add(CreateInspectorRow(row, separated: table.Children.Count != 0));
         }
         return new Border { Style = (Style)FindResource("Inspector.Table"), Child = table };
@@ -1600,7 +1653,8 @@ public partial class MainWindow : FluentWindow
         if (row.Inputs.Count == 1) {
             var input = row.Inputs[0];
             notes[input.Input.Name] = new StackPanel();
-            return new StackPanel { Children = { LimitWidth(CreateInputEditor(row, input)), notes[input.Input.Name] } };
+            var editor = CreateInputEditor(row, input);
+            return new StackPanel { Children = { LimitWidth(editor), notes[input.Input.Name] } };
         }
         var panel = new ParameterInputsPanel();
         foreach (var input in row.Inputs) {
@@ -1614,8 +1668,9 @@ public partial class MainWindow : FluentWindow
                 });
             }
             notes[input.Input.Name] = new StackPanel();
+            var editor = CreateInputEditor(row, input);
             panel.Children.Add(new StackPanel {
-                Children = { header, CreateInputEditor(row, input), notes[input.Input.Name] }
+                Children = { header, editor, notes[input.Input.Name] }
             });
         }
         return panel;
@@ -1625,7 +1680,7 @@ public partial class MainWindow : FluentWindow
     private FrameworkElement CreateInputEditor(InspectorRow row, InspectorInput input)
     {
         var tag = new OptionInputTag(_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name,
-            input.SavedValue, input.Input.PatternMessage);
+            input.SavedValue, input.Input.IsExplicit);
         var editor = input.Input.IsPassword
             ? new Wpf.Ui.Controls.PasswordBox { PasswordChar = '●', RevealButtonEnabled = false }
             : new Wpf.Ui.Controls.TextBox();
@@ -1636,6 +1691,29 @@ public partial class MainWindow : FluentWindow
         AutomationProperties.SetName(editor, input.AccessibleName);
         if (!string.IsNullOrWhiteSpace(input.HelpText)) {
             AutomationProperties.SetHelpText(editor, input.HelpText);
+        }
+        void OnInputChanged()
+        {
+            if (_updatingOptionEditors || _committingConfigurationInput) {
+                return;
+            }
+            var current = (OptionInputTag)editor.Tag;
+            var text = GetInputText(editor);
+            if (text == current.Value) {
+                _inputDrafts.Remove(current.Key);
+            } else {
+                _inputDrafts[current.Key] = text;
+            }
+            editor.Tag = current with { Edit = InputEdit.Edited };
+            RefreshParameterDisplays();
+            if (_blockedRunScope.HasValue) {
+                RefreshRunFieldProblems(RequireProject());
+            }
+        }
+        if (editor is Wpf.Ui.Controls.PasswordBox password) {
+            password.PasswordChanged += (_, _) => OnInputChanged();
+        } else {
+            editor.TextChanged += (_, _) => OnInputChanged();
         }
         editor.LostKeyboardFocus += OptionInputTextBox_LostKeyboardFocus;
         editor.PreviewKeyDown += OptionInputTextBox_PreviewKeyDown;
@@ -1654,7 +1732,7 @@ public partial class MainWindow : FluentWindow
         browse.Click += (_, _) => {
             if (PickPath(folder) is { } path) {
                 editor.Text = path;
-                _ = CommitOptionInput(editor);
+                _ = CommitOptionInput(editor, submitDefault: true);
             }
         };
         return new Grid {
@@ -1702,11 +1780,11 @@ public partial class MainWindow : FluentWindow
             }
             segments.SelectionChanged += (_, e) => {
                 var selected = segments.SelectedItems.Cast<ProjectCaseEditor>().ToArray();
-                if (selected.Length > option.MaxCount) {
-                    // At max_count 1 a new pick replaces the old one; a wider limit refuses the extra pick. Either
-                    // removal raises SelectionChanged again, which saves.
-                    var extra = option.MaxCount == 1 ? selected.Except(e.AddedItems.Cast<ProjectCaseEditor>())
-                        : e.AddedItems.Cast<ProjectCaseEditor>();
+                if (selected.Length > option.MaxCount && e.AddedItems.Count > 0) {
+                    // Allow one-for-one replacement. If already over the new limit, undo only the new picks.
+                    var added = e.AddedItems.Cast<ProjectCaseEditor>();
+                    var extra = option.MaxCount == 1 && selected.Length == 2 && e.AddedItems.Count == 1
+                        ? selected.Except(added) : added;
                     extra.ToList().ForEach(segments.SelectedItems.Remove);
                     return;
                 }
@@ -1761,28 +1839,28 @@ public partial class MainWindow : FluentWindow
         if (row.CaseDescription is { } caseDescription) {
             view.CaseNotes.Children.Add(CreateInspectorNote(caseDescription, "Inspector.Note"));
         }
-        if (row.Option.IsBelowMinimum) {
-            view.CaseNotes.Children.Add(CreateInspectorNote(
-                $"至少选择 {row.Option.MinCount} 项，否则不能开始任务", "Inspector.Error"));
+        if (row.Option.SelectionCountError is { } countError) {
+            view.CaseNotes.Children.Add(CreateInspectorNote(countError, "Inspector.Error"));
         } else if (row.Option.Cases.Count > 1 && ParameterInspector.DescribeLimits(row.Option) is { } limits) {
             view.CaseNotes.Children.Add(CreateInspectorNote(limits, "Inspector.Note"));
         }
         foreach (var input in row.Inputs) {
-            if (!view.InputNotes.TryGetValue(input.Input.Name, out var notes)) {
-                continue;
-            }
-            notes.Children.Clear();
-            if (_optionInputEditors.TryGetValue(
-                (_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name), out var editor)) {
-                ShowOptionInputError(editor, input.Error);
-            }
-            if (input.Error is { } error) {
-                notes.Children.Add(CreateInspectorNote(error, "Inspector.Error"));
-            }
-            if (input.Draft is not null) {
-                var saved = ParameterInspector.ShowValue(input.Show(input.SavedValue));
-                notes.Children.Add(CreateInspectorNote($"未保存，仍使用「{saved}」· Esc 还原", "Inspector.DraftNote"));
-            }
+            var key = (RequireProject().ActiveConfigurationId, row.Option.Name, input.Input.Name);
+            var editor = _optionInputEditors[key];
+            ShowInputNotes(view.InputNotes[input.Input.Name], editor, input);
+        }
+    }
+
+    private void ShowInputNotes(StackPanel notes, WpfTextBox editor, InspectorInput input)
+    {
+        notes.Children.Clear();
+        ShowOptionInputError(editor, input.Error);
+        if (input.Error is { } message) {
+            notes.Children.Add(CreateInspectorNote(message, "Inspector.Error"));
+        }
+        if (input.Draft is { } draft && draft != input.SavedValue) {
+            var previous = ParameterInspector.ShowValue(input.Show(input.SavedValue));
+            notes.Children.Add(CreateInspectorNote($"未保存，仍使用「{previous}」· Esc 还原", "Inspector.DraftNote"));
         }
     }
 
@@ -1903,7 +1981,7 @@ public partial class MainWindow : FluentWindow
             targetIndex = Math.Clamp(targetIndex, 0, project.SelectedTaskNames.Count - 1);
             _expandedTaskName = null;
             if (project.MoveTask(taskName, targetIndex)) {
-                _pendingStartAttempt = null;
+                InvalidatePendingStart();
                 _logger.Info($"已调整执行计划顺序：{taskName} -> {targetIndex}。 ");
             }
             RenderTaskPlan();
@@ -2030,34 +2108,64 @@ public partial class MainWindow : FluentWindow
         return "请检查当前配置和系统状态后重试。";
     }
 
+    private void RetryProjectLoadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (OperationOrExitInProgress || CurrentControls.ConfigurationLock is not null) {
+            return;
+        }
+        try {
+            LoadProject();
+        } catch (Exception exception) {
+            _logger.Warn("重新加载项目失败。", exception);
+        }
+    }
+
     private void LoadProject()
     {
-        var configPath = Path.Combine(_applicationDirectory, "config", "configurations.json");
-        LegacyConfigFile.Migrate(configPath);
-        if (_onboardingPreferences is null) {
-            _onboardingPreferences = new OnboardingPreferences(Path.GetDirectoryName(configPath)!, _logger);
-            _onboardingPreferences.CaptureBeforeProjectLoad(configPath);
+        var previous = _projectPlan ?? _projectBeforeLoadFailure;
+        ProjectPlanModule project;
+        try {
+            var configPath = Path.Combine(_applicationDirectory, "config", "configurations.json");
+            LegacyConfigFile.Migrate(configPath);
+            if (_onboardingPreferences is null) {
+                _onboardingPreferences = new OnboardingPreferences(Path.GetDirectoryName(configPath)!, _logger);
+                _onboardingPreferences.CaptureBeforeProjectLoad(configPath);
+            }
+            project = ProjectPlanModule.Open(_applicationDirectory, configPath, previous,
+                message => _logger.Info(message));
+        } catch (Exception exception) {
+            _projectBeforeLoadFailure = previous;
+            var guidance = exception is UnsupportedConfigurationVersionException ? exception.Message
+                : "任务无法运行。请确认安装的是与任务配置对应的完整资源包，再重新加载。";
+            ShowProjectUnavailableState("项目无法加载", guidance);
+            ProjectValidationText.Text = "任务无法运行，原配置已保留。详细原因已记录到日志。";
+            ProjectValidationBorder.Visibility = RetryProjectLoadButton.Visibility = Visibility.Visible;
+            RefreshRuntimeControls();
+            throw;
         }
-        var previous = _projectPlan;
-        var project = ProjectPlanModule.Open(_applicationDirectory, configPath, previous,
-            message => _logger.Info(message));
+        foreach (var key in _inputDrafts.Keys.ToArray()) {
+            if (project.GetInputType(key.Option, key.Input) is not { } current
+                || previous?.GetInputType(key.Option, key.Input) != current) {
+                _inputDrafts.Remove(key);
+            }
+        }
+        _projectBeforeLoadFailure = null;
         _projectPlan = project;
         _settings.ViewWelcome.IsVisible = project.HasWelcome;
         ShowProjectIdentity(project);
-        // Preparing the environment reloads the project; an unfixed invalid draft must survive it and keep blocking
-        // Start. Drafts for inputs the reloaded PI no longer has are never rendered or matched.
-        _pendingStartAttempt = null;
-        _expandedTaskKind = PlanItemKind.MaaTask;
-        _expandedTaskName = project.InitializedTaskName
-            ?? (_onboardingPreferences.ShouldOfferAutomatically && !_onboardingAutoEnded
-                ? project.SelectedTaskNames.FirstOrDefault() : null);
+        if (previous?.ActiveConfigurationId != project.ActiveConfigurationId) {
+            _expandedTaskKind = PlanItemKind.MaaTask;
+            _expandedTaskName = project.InitializedTaskName
+                ?? (_onboardingPreferences.ShouldOfferAutomatically && !_onboardingAutoEnded
+                    ? project.SelectedTaskNames.FirstOrDefault() : null);
+        }
         CloseTaskDescriptionDrawer();
         ProjectEmptyStatePanel.Visibility = Visibility.Collapsed;
         TaskWorkspacePanel.Visibility = Visibility.Visible;
 
         RenderTaskPlan();
         if (project.LoadWarning is not null) {
-            _logger.Warn(project.LoadWarning);
+            _logger.Warn(project.LoadWarning, project.LoadException);
         }
         // Every prepare reloads the project; the log only needs it the first time and when it has changed.
         if (previous?.SourceInterfaceDigest != project.SourceInterfaceDigest
@@ -2079,9 +2187,7 @@ public partial class MainWindow : FluentWindow
         _projectPlan = null;
         _settings.ViewWelcome.IsVisible = false;
         ShowProjectIdentity(null);
-        _invalidInputDrafts.Clear();
-        _pendingStartAttempt = null;
-        _projectConfigurationValid = _startupConfigurationValid = false;
+        _projectConfigurationValid = false;
         _expandedTaskName = null;
         AvailableTasksPanel.Children.Clear();
         PlanItemsPanel.Children.Clear();

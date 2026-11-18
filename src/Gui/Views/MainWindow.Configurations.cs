@@ -236,7 +236,7 @@ public partial class MainWindow
         if (Keyboard.FocusedElement is not WpfTextBox editor) {
             return true;
         }
-        return editor.Tag is OptionInputTag ? CommitOptionInput(editor, deferDraftCheck)
+        return editor.Tag is OptionInputTag ? CommitOptionInput(editor, deferDraftCheck: deferDraftCheck)
             : editor == _configurationNameEditor ? CommitConfigurationName() : true;
     }
 
@@ -302,20 +302,20 @@ public partial class MainWindow
         }
     }
 
-    // Returns whether the change was made. An unattended change (started by the launch itself) reports a refusal or
-    // failure without a dialog nobody can answer.
-    private bool ChangeConfiguration(Action change, bool unattended = false)
+    private void ChangeConfiguration(Action change)
     {
         if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not null
             || !CommitFocusedConfigurationInput()) {
             if (_projectPlan is not null) {
                 RestoreConfigurationSelection();
             }
-            if (unattended) {
-                ReportAutoRunFailure("无法切换到所选配置。");
-            }
-            return false;
+            return;
         }
+        ApplyConfigurationChange(change, unattended: false);
+    }
+
+    private bool ApplyConfigurationChange(Action change, bool unattended)
+    {
         try {
             var previous = _projectPlan?.ActiveConfigurationId;
             change();
@@ -324,7 +324,7 @@ public partial class MainWindow
                 _addedSinceShelfOpened.Clear();
                 UpdateAddedTasks();
             }
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             _expandedTaskName = null;
             _dragTaskName = null;
             EndConfigurationRename();
@@ -435,38 +435,37 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitOptionInput(WpfTextBox textBox, bool deferDraftCheck = false)
+    private bool CommitOptionInput(WpfTextBox textBox, bool submitDefault = false, bool deferDraftCheck = false)
     {
         var text = GetInputText(textBox);
         if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
-            || textBox.Tag is not OptionInputTag tag || tag.Submitted && text == tag.Value) {
+            || textBox.Tag is not OptionInputTag tag
+            || !_inputDrafts.ContainsKey(tag.Key) && (tag.IsExplicit || !submitDefault && tag.Edit == InputEdit.Idle)) {
             return true;
         }
-        if (_invalidInputDrafts.TryGetValue(tag.Key, out var draft) && draft.Text == text) {
+        if (tag.Edit == InputEdit.Rejected) {
             return deferDraftCheck;
         }
         _committingConfigurationInput = true;
         try {
-            if (_projectPlan!.CheckInputValue(tag.OptionName, tag.InputName, text) is { } problem) {
+            if (_projectPlan!.TrySetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text) is not null) {
                 // A rejected value is a typo, not a failure: keep the text and explain it under the field.
                 // The saved value is unchanged; the draft survives re-rendering until it is fixed or Esc restores it.
-                var message = tag.PatternMessage ?? problem;
-                _invalidInputDrafts[tag.Key] = new InputDraft(text, message);
-                ShowOptionInputError(textBox, message);
-                RefreshParameterDisplays();
+                _inputDrafts[tag.Key] = text;
+                textBox.Tag = tag with { Edit = InputEdit.Rejected };
                 _logger.Info($"input 未通过校验，未保存：option={tag.OptionName}，input={tag.InputName}。 ");
                 return deferDraftCheck;
             }
-            _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text);
-            _invalidInputDrafts.Remove(tag.Key);
-            textBox.Tag = tag with { Value = text, Submitted = true };
-            _pendingStartAttempt = null;
-            ShowOptionInputError(textBox, null);
+            _inputDrafts.Remove(tag.Key);
+            textBox.Tag = tag with { Value = text, IsExplicit = true, Edit = InputEdit.Idle };
+            InvalidatePendingStart();
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;
         } catch (Exception exception) {
+            _inputDrafts.Remove(tag.Key);
             SetInputText(textBox, tag.Value);
-            textBox.Tag = tag with { Submitted = true };
+            textBox.Tag = tag with { Edit = InputEdit.Idle };
+            RefreshParameterDisplays();
             HandleOperationError("保存 input option 失败", exception);
             ShowProjectValidationError(exception);
             return false;

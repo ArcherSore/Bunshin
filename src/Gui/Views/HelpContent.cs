@@ -1,5 +1,6 @@
 using Gui.Infrastructure;
 using Gui.Settings;
+using ProjectModel;
 using Protocol;
 
 namespace Gui.Views;

@@ -14,17 +14,17 @@ public partial class MainWindow
     // starts the Run, as the Start button does. Returns whether it did.
     internal async Task<bool> AutoRunOnLaunchAsync()
     {
-        if (_projectPlan is not { } project) {
-            return false;
-        }
         // The list is a placeholder then, so nothing can be matched; say so instead of skipping silently. Asked for
         // means what Decide would look up: --instance only with --autostart, otherwise the chosen configuration.
-        var requested = _launchCommand is { AutoStart: true, Instance: not null }
-            || _settings.AutoRunConfigurationId is not null;
-        if (project.ConfigurationsUnreadable && requested
-            && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
-            ReportAutoRunFailure("无法读取任务配置文件，请检查后重试。");
-            return true;
+        var project = _projectPlan;
+        if (project is null || project.ConfigurationsUnreadable) {
+            var requested = _launchCommand is { AutoStart: true, Instance: not null }
+                || _settings.AutoRunConfigurationId is not null;
+            if (requested && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
+                ReportAutoRunFailure(project?.LoadWarning ?? ProjectEmptyStateDetailText.Text);
+                return true;
+            }
+            return false;
         }
         var canStart = AutoRunPlanner.RuntimeAllows(CurrentControls);
         var decision = AutoRunPlanner.Decide(
@@ -36,25 +36,9 @@ public partial class MainWindow
             }
             return false;
         }
-        // A refusal is reported by the change itself: the other configuration must never be run instead.
-        if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
-            return true;
-        }
-        if (project.EnabledItems.Count == 0) {
-            ReportAutoRunFailure("所选配置没有可执行的任务。");
-            return true;
-        }
-        if (!_projectConfigurationValid) {
-            ReportAutoRunFailure("所选配置未通过校验，请打开程序检查参数。");
-            return true;
-        }
-        _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
-        if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunOperationAsync(PendingOperation.StartingRun,
-                () => StartCurrentPlanAsync(quitAfterRun: _quitAfterRun), unattended: true);
-        } else {
-            await PrepareFromPanelAsync(startRun: true, unattended: true);
-        }
+        var direct = CurrentControls.Action is RuntimeAction.Start
+            or RuntimeAction.Retry { Target: RetryTarget.Start };
+        await RunFromPanelAsync(prepare: !direct, automaticConfiguration: id);
         return true;
     }
 
@@ -70,8 +54,12 @@ public partial class MainWindow
         ShowActivated = true;
     }
 
-    private void ReportAutoRunFailure(string message) =>
-        ReportUnattendedFailure("自动执行", new InvalidOperationException(message));
+    private void ReportAutoRunFailure(string message)
+    {
+        var reason = $"自动执行：{message}";
+        _logger.Warn(reason);
+        AutoRunFailed?.Invoke(this, reason);
+    }
 
     private void ReportUnattendedFailure(string operation, Exception exception)
     {

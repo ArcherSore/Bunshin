@@ -58,11 +58,13 @@ internal static partial class SelfTestRunner
             .GetProperty("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session,
                 new ChildSessionSnapshot(ChildSessionState.ConnectedHidden, record.ChildSessionId, 1, "ready"));
         var failNextPreparation = scenario == "prepare-failure";
+        var preparations = 0;
         if (scenario != "reconnect" && !failNextPreparation) {
             ConnectDesktop();
         }
         Task Prepare(ProjectPlanModule _, Func<MaaFrameworkOptions> options, bool showDesktop)
         {
+            preparations++;
             if (failNextPreparation) {
                 failNextPreparation = false;
                 throw new InvalidOperationException("scripted preparation failure");
@@ -170,6 +172,19 @@ internal static partial class SelfTestRunner
             var launch = window.AutoRunOnLaunchAsync();
             if (scenario == "prepare-failure") {
                 Require(await launch && !failNextPreparation, "自动执行必须处理准备失败。");
+                var pi = Path.Combine(projectRoot, "interface.json");
+                var original = File.ReadAllText(pi);
+                EditInterface(projectRoot, root => {
+                    var field = root["option"]!["ServerRange"]!["inputs"]![0]!;
+                    field["verify"] = "^new$";
+                    field["pattern_msg"] = "请更新区服";
+                });
+                Click(window, "RetryEnvironmentButton");
+                var panel = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+                Require(preparations == 1 && ConfigurationDescendants(panel).OfType<System.Windows.Controls.TextBox>()
+                    .Any(field => System.Windows.Automation.AutomationProperties.GetItemStatus(field) == "请更新区服"),
+                    "重试准备必须先用新版规则定位错误，不得第二次准备环境。");
+                File.WriteAllText(pi, original);
                 await CompleteManualRetry("RetryEnvironmentButton");
                 return;
             }
@@ -192,6 +207,7 @@ internal static partial class SelfTestRunner
                     pipeName, record, 0, token, lastRun: last, stateRevision: 2);
                 if (scenario == "retry-ended") {
                     PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");
+                    File.WriteAllText(Path.Combine(projectRoot, "interface.json"), "{");
                     Click(window, "StartTaskHeaderButton");
                     var query = await WorkerCoordinatorSelfTest.ReadRequestAsync(
                         restored, ProtocolOperations.WorkerGetSnapshot, token);

@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
@@ -26,6 +26,78 @@ internal static partial class SelfTestRunner
         var card = ConfigurationDescendants(plan).OfType<Border>()
             .Single(card => card.Tag is ProjectTaskChoice { Kind: PlanItemKind.MaaTask, Name: "RealTask" });
         PlanHeader(card).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    }
+
+    private static void VerifyRunValidationSummary(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "run-validation-summary");
+        var root = CreatePretaskFixture(directory, """
+            [{"name":"Boot","label":"启动游戏","exec":"boot-fixture","option":["LaunchInput"]}]
+            """);
+        AddSecretAndPathInputs(root);
+        EditInterface(root, pi => {
+            var login = pi["option"]!["Login"]!;
+            login["label"] = "登录密码";
+            login["inputs"]![0]!["verify"] = "^$";
+            login["inputs"]![0]!["pattern_msg"] = "请修改登录密码";
+            var fields = pi["option"]!["LaunchInput"]!["inputs"]!;
+            foreach (var (index, label) in new[] { (0, "角色"), (1, "区服") }) {
+                fields[index]!["label"] = label;
+                fields[index]!["verify"] = "^1$";
+                fields[index]!["pattern_msg"] = $"请填写{label}";
+            }
+        });
+        var path = Path.Combine(root, "config", "configurations.json");
+        ProjectPlanModule.Open(root, path).AddPretask("Boot");
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, directory, window => {
+            var panel = Named<Panel>(window, "PlanItemsPanel");
+            var banner = Named<TextBlock>(window, "ProjectValidationText");
+            T Field<T>(string label) where T : FrameworkElement => ConfigurationDescendants(panel)
+                .OfType<T>().Single(field => AutomationProperties.GetName(field) == label);
+            Border Card(string name) => ConfigurationDescendants(panel).OfType<Border>()
+                .Single(card => card.Tag is ProjectTaskChoice task && task.Name == name);
+            bool Marked(string name) => AutomationProperties.GetItemStatus(Card(name)).Length != 0;
+            void Submit(Button button)
+            {
+                Require(button.IsEnabled && button.IsVisible && button.Focus(), "应能使用任务页启动入口。");
+                button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            }
+
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            if (!ConfigurationDescendants(Card("RealTask")).OfType<Wpf.Ui.Controls.PasswordBox>().Any()) {
+                ToggleRealTask(panel);
+            }
+            var password = Field<Wpf.Ui.Controls.PasswordBox>("登录密码");
+            Require(password.Focus(), "应能编辑普通任务的密码。");
+            password.Password = SecretInputValue;
+            Submit(Named<Button>(window, "PrepareEnvironmentButton"));
+            PumpUntil(() => ConfigurationDescendants(Card("Boot")).OfType<TextBox>().Any(field =>
+                field.IsKeyboardFocused && AutomationProperties.GetName(field).Contains("角色")),
+                "即使普通任务已展开，也应按执行顺序定位到启动项的第一个错误字段。");
+            Require(banner.IsVisible && new[] { "启动游戏", "请填写角色", "请填写区服", "Real task", "请修改登录密码" }
+                    .All(message => banner.Text.Contains(message)) && !banner.Text.Contains(SecretInputValue)
+                && Marked("Boot") && Marked("RealTask") && preparations == 0,
+                "开始前应汇总每张受影响卡片及所有字段的改法，标记所有卡片并保护密码。");
+            ToggleRealTask(panel);
+            Require(Field<Wpf.Ui.Controls.PasswordBox>("登录密码").Password == SecretInputValue
+                && Marked("Boot") && Marked("RealTask") && banner.Text.Contains("请填写角色"),
+                "手动打开其他卡片后应保留草稿、卡片标记和启动问题汇总。");
+            Submit(Field<Button>("仅执行启动"));
+            PumpUntil(() => Marked("Boot") && !Marked("RealTask"), "仅执行启动应只标记前置任务。");
+            Require(banner.Text.Contains("请填写角色") && banner.Text.Contains("请填写区服")
+                && !banner.Text.Contains("登录密码") && preparations == 0, "仅执行启动只应报告两个启动参数。");
+            var role = Field<TextBox>("LaunchInput · 角色");
+            PumpUntil(() => role.IsKeyboardFocused, "应定位到启动阶段首个无效字段。");
+            role.Text = "1";
+            Require(AutomationProperties.GetItemStatus(role).Length == 0 && banner.Text.Contains("角色")
+                && !banner.Text.Contains("请填写角色"), "修正草稿后应撤下格式错误，启动汇总仍应指出待保存的字段。");
+            Require(Field<TextBox>("LaunchInput · 区服").Focus() && !banner.Text.Contains("角色")
+                && banner.Text.Contains("请填写区服"), "保存后只应留下仍有问题的区服字段。");
+        }, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(true));
+        }, projectDirectory: root);
     }
 
     private static void VerifyStartScopeWiring(AppLogger logger, string testDirectory)
@@ -79,13 +151,13 @@ internal static partial class SelfTestRunner
                         return plan;
                     }
 
-                    void VerifyStartupOnly(string failure)
+                    void VerifyStartupOnly(string failure, string expectedCaption = "启动参数")
                     {
                         var plan = Submit(FindControl<Button>("仅执行启动"), failure);
                         Require(plan.Items is [{ Kind: PlanItemKind.Pretask, TaskName: "Boot" }],
                             "仅执行启动应只向 Worker 提交所选前置任务。");
                         var args = JsonNode.Parse(plan.Items[0].Program!.Arguments.Single());
-                        Require((string?)args!["LaunchInput"]!["caption"] == "启动参数",
+                        Require((string?)args!["LaunchInput"]!["caption"] == expectedCaption,
                             "仅执行启动应把前置任务填写的参数交给 Worker。");
                     }
 
@@ -107,6 +179,52 @@ internal static partial class SelfTestRunner
                     var full = Submit(Named<Button>(window, "StartTaskHeaderButton"), "跳过无效任务后应可完整运行。");
                     Require(full.Items is [{ Kind: PlanItemKind.Pretask, TaskName: "Boot" },
                         { Kind: PlanItemKind.MaaTask, TaskName: "ReadyTask" }], "完整运行应提交前置任务及其余勾选的普通任务。");
+
+                    Require(FindControl<TextBox>("Recipient").Text == "  ",
+                        "完整运行后，被取消勾选的任务仍应保留原草稿。");
+                    definition["task"]![1]!["option"] = new JsonArray("LaunchInput");
+                    var caption = definition["option"]!["LaunchInput"]!["inputs"]![0]!;
+                    caption["pipeline_type"] = "int";
+                    caption["default"] = "1";
+                    File.WriteAllText(interfacePath, definition.ToJsonString());
+                    Click(window, "StartTaskHeaderButton");
+                    bool Marked(string name)
+                    {
+                        var card = ConfigurationDescendants(items).OfType<Border>()
+                            .Single(item => item.Tag is ProjectTaskChoice task && task.Name == name);
+                        return AutomationProperties.GetItemStatus(card).Length > 0;
+                    }
+                    var typed = FindControl<TextBox>("LaunchInput · caption");
+                    PumpUntil(() => typed.IsKeyboardFocused, "应定位到执行顺序中第一个旧输入不合法的参数。");
+                    Require(Marked("Boot") && Marked("ReadyTask") && typed.Text == "启动参数",
+                        "字段改为整数后，前置任务和普通任务都应阻止相同的已存旧值。");
+                    typed.Text = "仍无法转换";
+                    FindControl<Button>("仅执行启动").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    typed = FindControl<TextBox>("LaunchInput · caption");
+                    PumpUntil(() => typed.IsKeyboardFocused, "仅执行启动也应定位未通过整数校验的草稿。");
+                    Require(Marked("Boot") && !Marked("ReadyTask") && typed.Text == "仍无法转换",
+                        "仅执行启动应保留非法草稿，只标记参与本次运行的前置任务。");
+                    typed.Text = "007";
+                    VerifyStartupOnly("修正整数后，前置程序应收到包含前导零的原文。", "007");
+                    typed = FindControl<TextBox>("LaunchInput · caption");
+                    Require(typed.Focus(), "前置任务成功提交后应能继续编辑。");
+                    typed.Text = "仍无法转换";
+
+                    caption["pipeline_type"] = "string";
+                    File.WriteAllText(interfacePath, definition.ToJsonString());
+                    VerifyStartupOnly("规则放宽后仍应提交已保存的前置参数。", "007");
+                    var draft = FindControl<TextBox>("LaunchInput · caption");
+                    Require(draft.Text == "仍无法转换" && AutomationProperties.GetItemStatus(draft).Length == 0
+                        && ConfigurationDescendants(items).OfType<TextBlock>()
+                            .Any(note => note.IsVisible && note.Text.Contains("007") && note.Text.Contains("Esc")),
+                        "有效的旧草稿仍应显示实际执行的已保存值，并提供 Esc 还原提示。");
+
+                    File.WriteAllText(interfacePath, "{");
+                    Click(window, "StartTaskHeaderButton");
+                    Require(Named<UIElement>(window, "ProjectEmptyStatePanel").IsVisible
+                        && Named<Button>(window, "RetryProjectLoadButton").IsVisible
+                        && !Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
+                        "已连接时加载失败，任务页必须提供重新加载且不得继续提交旧计划。");
                 }, session: session, coordinator: coordinator, projectDirectory: projectDirectory);
             } finally {
                 timeout.Cancel();
@@ -168,10 +286,11 @@ internal static partial class SelfTestRunner
                 && Cards().Select(card => ((ProjectTaskChoice)card.Tag).Name)
                     .SequenceEqual(new[] { "RealTask", "SecondBoot", "RealTask" }),
                 "前置任务应按 PI 顺序固定在前，普通任务与前置任务允许同名。");
-            Require(Cards().Where(card => ((ProjectTaskChoice)card.Tag).Kind == PlanItemKind.Pretask)
-                .All(card => ConfigurationDescendants(card).OfType<Button>()
-                    .Single(button => AutomationProperties.GetName(button) == "拖动以调整顺序")
-                    .Visibility == Visibility.Collapsed), "前置任务不得提供重排入口。");
+            bool HasDragHandle(Border card) => ConfigurationDescendants(card).OfType<Button>()
+                .Any(button => button.IsVisible && button.IsEnabled
+                    && button.Cursor == System.Windows.Input.Cursors.SizeAll);
+            Require(!HasDragHandle(Cards()[0]) && !HasDragHandle(Cards()[1]) && HasDragHandle(Cards()[2]),
+                "普通任务应提供可用的拖动入口，前置任务应保持项目声明顺序。");
 
             var preCard = Cards()[0];
             Click(PlanHeader(preCard));
@@ -183,12 +302,15 @@ internal static partial class SelfTestRunner
                 .Any(editor => AutomationProperties.GetName(editor).StartsWith("Server range")),
                 "前置参数编辑不应混入普通任务的全局参数。");
             account.Text = "account-text";
+            Require(AutomationProperties.GetItemStatus(account).Length > 0,
+                "前置任务的整数输入应在编辑时提示非法文本。");
+            account.Text = "007";
             account.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, account, null) {
                 RoutedEvent = Keyboard.LostKeyboardFocusEvent
             });
             Require(project.Configurations[0].ExplicitOptions["LoginAccount"].GetProperty("Inputs")
-                .GetProperty("uin").GetString() == "account-text",
-                "前置 input 应保存原始字符串，不按 pipeline_type 转换。");
+                .GetProperty("uin").GetString() == "007" && AutomationProperties.GetItemStatus(account).Length == 0,
+                "前置任务的整数通过校验后应清除错误并保留输入的前导零。");
             foreach (var (index, label, expected) in new[] {
                 (0, "启动并登录", "前置登录说明"), (2, "Real task", "A long task description")
             }) {
@@ -371,16 +493,9 @@ internal static partial class SelfTestRunner
             var failures = 0;
             window.AutoRunFailed += (_, _) => failures++;
             var full = window.AutoRunOnLaunchAsync();
-            PumpUntil(() => full.IsCompleted, "普通任务的旧选项失效时，完整运行必须报告失败。");
-            Require(full.GetAwaiter().GetResult() && failures == 1 && preparations == 0,
-                "完整运行必须在准备环境、向 Worker 提交之前拒绝已删除的普通任务选项。");
-
-            var panel = Named<Panel>(window, "PlanItemsPanel");
-            var startup = ConfigurationDescendants(panel).OfType<Button>()
-                .Single(button => AutomationProperties.GetName(button) == "仅执行启动");
-            Require(startup.IsEnabled, "普通任务的旧选项失效时，仍应允许单独执行有效的启动阶段。");
-            startup.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-            PumpUntil(() => preparations == 1, "单独执行有效的启动阶段必须进入环境准备。");
+            PumpUntil(() => full.IsCompleted, "普通任务的旧选项恢复后，完整运行应进入准备。");
+            Require(full.GetAwaiter().GetResult() && failures == 0 && preparations == 1,
+                "已移除的普通任务选项按当前默认恢复，无人值守启动应继续。");
         }, beforeLoad: directory => {
             var path = Path.Combine(directory, "interface.json");
             var root = JsonNode.Parse(File.ReadAllText(path))!;
@@ -404,8 +519,83 @@ internal static partial class SelfTestRunner
 
     private static void VerifyStartupDraftAfterProjectReload(AppLogger logger, string testDirectory)
     {
+        foreach (var cold in new[] { false, true }) {
+            foreach (var startupOnly in new[] { false, true }) {
+                VerifySavedInputAfterUpgrade(logger, Path.Combine(testDirectory, $"upgrade-{cold}-{startupOnly}"),
+                    cold, startupOnly, string.Empty);
+            }
+        }
+        VerifySavedInputAfterUpgrade(logger, Path.Combine(testDirectory, "old-text"), false, false, "旧账号");
         VerifyReloadedStartupInput(logger, Path.Combine(testDirectory, "missing"), editDraft: false);
         VerifyReloadedStartupInput(logger, Path.Combine(testDirectory, "draft"), editDraft: true);
+    }
+
+    private static void VerifySavedInputAfterUpgrade(AppLogger logger, string directory, bool cold, bool startupOnly,
+        string saved)
+    {
+        var root = CreatePretaskFixture(directory, """[{"name":"Boot","label":"游戏登录","exec":"boot-fixture"}]""");
+        AddRequiredInput(root);
+        var path = Path.Combine(root, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        var input = pi["option"]!["Recipient"]!["inputs"]![0]!;
+        input["verify"] = ".*";
+        input["default"] = "默认账号";
+        const string hint = "请填写当前账号";
+        input["pattern_msg"] = hint;
+        File.WriteAllText(path, pi.ToJsonString());
+        var config = Path.Combine(root, "config", "configurations.json");
+        var project = ProjectPlanModule.Open(root, config);
+        project.AddPretask("Boot");
+        WithPlanWindow(logger, directory, project, (window, panel) => {
+            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            InvokeOnboarding(window, "RenderTaskPlan");
+            var editor = ConfigurationDescendants(panel).OfType<TextBox>()
+                .Single(box => AutomationProperties.GetName(box) == "Recipient");
+            editor.Text = saved;
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, null) {
+                RoutedEvent = Keyboard.LostKeyboardFocusEvent
+            });
+        });
+        var explicitInputs = JsonNode.Parse(File.ReadAllText(config))!["Configurations"]![0]!["ExplicitOptions"]!;
+        Require((string?)explicitInputs["Recipient"]?["Inputs"]?["recipient"] == saved,
+            "旧版编辑器应写入显式输入键，包括合法空串。");
+        void Upgrade()
+        {
+            input["verify"] = "^当前.+$";
+            if (startupOnly) {
+                pi["pretask"]![0]!["option"] = new JsonArray("Recipient");
+            }
+            File.WriteAllText(path, pi.ToJsonString());
+        }
+        if (cold) {
+            Upgrade();
+        }
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, directory, window => {
+            var items = Named<Panel>(window, "PlanItemsPanel");
+            var button = startupOnly ? ConfigurationDescendants(items).OfType<Button>()
+                .Single(control => AutomationProperties.GetName(control) == "仅执行启动")
+                : Named<Button>(window, "PrepareEnvironmentButton");
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            Require(button.IsVisible && button.IsEnabled && button.Focus(), "启动入口应能定位需要修改的参数。");
+            if (!cold) {
+                Upgrade();
+            }
+            button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            bool FocusedField()
+            {
+                var name = startupOnly ? "Boot" : "RealTask";
+                var card = ConfigurationDescendants(items).OfType<Border>()
+                    .Single(control => control.Tag is ProjectTaskChoice task && task.Name == name);
+                return ConfigurationDescendants(card).OfType<TextBox>().Any(field => field.IsKeyboardFocused
+                    && field.Text == saved && AutomationProperties.GetItemStatus(field).Contains(hint));
+            }
+            PumpUntil(() => preparations > 0 || FocusedField(), "新版规则应展开本次运行的任务卡并聚焦错误字段。");
+            Require(preparations == 0, "无效的已保存输入必须在准备环境之前阻止启动。");
+        }, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(true));
+        }, projectDirectory: root);
     }
 
     private static void VerifyReloadedStartupInput(AppLogger logger, string directory, bool editDraft)

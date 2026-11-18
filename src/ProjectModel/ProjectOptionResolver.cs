@@ -7,33 +7,33 @@ namespace ProjectModel;
 internal static class ProjectOptionResolver
 {
     internal static ResolvedProjectOptions Resolve(
-        ProjectDefinition project, TaskDefinition task, TaskConfiguration config, ISet<string>? passwords = null)
+        ProjectDefinition project, TaskDefinition task, TaskConfiguration config, ISet<string> passwords)
     {
         var pipelineOverrides = new JsonArray { ParseObject(task.PipelineOverride) };
 
         var globalValues = new JsonObject();
         var taskValues = new JsonObject();
-        ResolveScope(project, project.GlobalOptions, config, globalValues, pipelineOverrides, "global_option");
-        ResolveScope(project, task.Options, config, taskValues, pipelineOverrides, $"task.{task.Name}.option");
-        return new ResolvedProjectOptions(ToElement(MaskPasswords(project, globalValues, passwords)),
-            ToElement(MaskPasswords(project, taskValues, passwords)), ToElement(pipelineOverrides));
+        ResolveScope(project, project.GlobalOptions, config, globalValues, pipelineOverrides);
+        ResolveScope(project, task.Options, config, taskValues, pipelineOverrides);
+        return new ResolvedProjectOptions(ProtocolJson.ToElement(MaskPasswords(project, globalValues, passwords)),
+            ProtocolJson.ToElement(MaskPasswords(project, taskValues, passwords)),
+            ProtocolJson.ToElement(pipelineOverrides));
     }
 
-    // Pretask options only become program arguments: without pipeline overrides, every input stays a string.
-    // The argument carries passwords as entered; the resolved values are a record that reaches logs, so masked.
+    // The program receives validated inputs as entered. Mask passwords in the separate record that reaches logs.
     internal static (JsonElement Values, JsonElement Argument) ResolvePretask(
-        ProjectDefinition project, PretaskDefinition pretask, TaskConfiguration config, ISet<string>? passwords = null)
+        ProjectDefinition project, PretaskDefinition pretask, TaskConfiguration config, ISet<string> passwords)
     {
         var values = new JsonObject();
-        ResolveScope(project, pretask.Options, config, values, null, $"pretask.{pretask.Name}.option");
-        var argument = ToElement(values);
-        return (ToElement(MaskPasswords(project, values, passwords)), argument);
+        ResolveScope(project, pretask.Options, config, values, null);
+        var argument = ProtocolJson.ToElement(values);
+        return (ProtocolJson.ToElement(MaskPasswords(project, values, passwords)), argument);
     }
 
     // Resolved values are keyed by option name, so every filled password input can be found by its definition.
     // Masking also collects each original value, which telemetry must redact from whatever it uploads.
     private static JsonObject MaskPasswords(ProjectDefinition project, JsonObject resolvedValues,
-        ISet<string>? passwords)
+        ISet<string> passwords)
     {
         foreach (var (optionName, node) in resolvedValues.ToArray()) {
             if (node is not JsonObject inputs) {
@@ -41,7 +41,7 @@ internal static class ProjectOptionResolver
             }
             foreach (var input in project.Options[optionName].Inputs.Where(input => input.Password)) {
                 if (inputs[input.Name]?.GetValue<string>() is { Length: > 0 } value) {
-                    passwords?.Add(value);
+                    passwords.Add(value);
                     inputs[input.Name] = ProjectInputEditor.PasswordMask;
                 }
             }
@@ -49,67 +49,37 @@ internal static class ProjectOptionResolver
         return resolvedValues;
     }
 
-    internal static void ValidateScope(
-        ProjectDefinition project, IReadOnlyList<string> optionNames, TaskConfiguration config, string scope)
-    {
-        ResolveScope(project, optionNames, config, new JsonObject(), new JsonArray(), scope);
-    }
-
     private static void ResolveScope(
         ProjectDefinition project, IReadOnlyList<string> optionNames, TaskConfiguration config,
-        JsonObject resolvedValues, JsonArray? pipelineOverrides, string scope)
+        JsonObject resolvedValues, JsonArray? pipelineOverrides)
     {
         foreach (var optionName in optionNames) {
-            ResolveOption(project, optionName, config, resolvedValues, pipelineOverrides, scope);
-        }
-    }
-
-    private static void ResolveOption(
-        ProjectDefinition project, string optionName, TaskConfiguration config,
-        JsonObject resolvedValues, JsonArray? pipelineOverrides, string scope)
-    {
-        var option = project.Options[optionName];
-        try {
-            switch (option.Kind) {
-                case OptionDefinitionKind.Input: {
-                        var values = new JsonObject();
-                        var substitutions = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
-                        var explicitInputs = ExplicitOptionIntent.ReadInputs(option, config);
-                        foreach (var input in option.Inputs) {
-                            var resolvedValue = explicitInputs.TryGetValue(input.Name, out var explicitValue)
-                                ? explicitValue
-                                : input.Default;
-                            values[input.Name] = resolvedValue;
-                            substitutions[input.Name] = ProjectInputValue.Parse(input, resolvedValue,
-                                $"option {optionName} input {input.Name} 的值", typed: pipelineOverrides is not null,
-                                isDefault: !explicitInputs.ContainsKey(input.Name));
-                        }
-                        resolvedValues[optionName] = values;
-                        pipelineOverrides?.Add(CreateTemplatedOverride(option.PipelineOverride, substitutions));
-                        break;
+            var option = project.Options[optionName];
+            if (option.Kind == ProjectOptionKind.Input) {
+                var inputs = ExplicitOptionIntent.ReadInputs(option, config);
+                var values = new JsonObject();
+                foreach (var input in inputs) {
+                    if (input.Error is { } error) {
+                        throw new InvalidOperationException($"参数“{option.Label}”：{error}");
                     }
-                case OptionDefinitionKind.Select:
-                case OptionDefinitionKind.Switch:
-                case OptionDefinitionKind.Checkbox: {
-                        // Checked checkbox cases merge in declaration order, not in the order they were checked.
-                        var active = ExplicitOptionIntent.ReadActiveCases(option, config);
-                        resolvedValues[optionName] = option.Kind == OptionDefinitionKind.Checkbox
-                            ? new JsonArray(active.Select(item => (JsonNode)item.Name).ToArray())
-                            : (JsonNode)active[0].Name;
-                        foreach (var selected in active) {
-                            pipelineOverrides?.Add(ParseObject(selected.PipelineOverride));
-                            foreach (var nested in selected.Options) {
-                                ResolveOption(project, nested, config, resolvedValues, pipelineOverrides, scope);
-                            }
-                        }
-                        break;
-                    }
-                default:
-                    throw new InvalidOperationException(
-                        $"Loader 产生了不支持的 option kind：{option.Kind}。 ");
+                    values[input.Name] = input.Value;
+                }
+                resolvedValues[optionName] = values;
+                pipelineOverrides?.Add(CreateTemplatedOverride(option.PipelineOverride,
+                    inputs.ToDictionary(input => input.Name, input => input.ParsedValue)));
+                continue;
             }
-        } catch (Exception exception) when (exception is InvalidDataException or JsonException) {
-            throw new InvalidDataException($"{scope} 解析 {optionName} 失败：{exception.Message}", exception);
+
+            var active = ExplicitOptionIntent.ReadActiveCases(option, config);
+            if (ProjectOptionEditor.CheckSelectionCount(active.Count, option.MinCount, option.MaxCount) is { } reason) {
+                throw new InvalidOperationException($"参数“{option.Label}”：{reason}");
+            }
+            resolvedValues[optionName] = option.Kind == ProjectOptionKind.Checkbox
+                ? new JsonArray(active.Select(item => (JsonNode)item.Name).ToArray()) : (JsonNode)active[0].Name;
+            foreach (var selected in active) {
+                pipelineOverrides?.Add(ParseObject(selected.PipelineOverride));
+                ResolveScope(project, selected.Options, config, resolvedValues, pipelineOverrides);
+            }
         }
     }
 
@@ -165,10 +135,4 @@ internal static class ProjectOptionResolver
 
     private static JsonObject ParseObject(JsonElement element) =>
         JsonNode.Parse(element.GetRawText())!.AsObject();
-
-    private static JsonElement ToElement(JsonNode node)
-    {
-        using var document = JsonDocument.Parse(node.ToJsonString(ProtocolJson.Options));
-        return document.RootElement.Clone();
-    }
 }

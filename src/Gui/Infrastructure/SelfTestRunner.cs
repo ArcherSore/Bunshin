@@ -72,6 +72,10 @@ internal static partial class SelfTestRunner
             c => VerifyIndependentConfigurations(c.Directory, c.Project)),
         new(Group.Project, nameof(VerifyConfigurationFallback),
             c => VerifyConfigurationFallback(c.Directory, c.Project)),
+        new(Group.Project, nameof(VerifyConfigurationBackups), c => VerifyConfigurationBackups(c.Directory, c.Project)),
+        new(Group.Project, nameof(VerifyRecoveryRetry), c => VerifyRecoveryRetry(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyRecoveryProjectIdentity), c => VerifyRecoveryProjectIdentity(c.Directory)),
+        new(Group.Project, nameof(VerifyRemovedTaskRecovery), c => VerifyRemovedTaskRecovery(c.Directory)),
         new(Group.Project, nameof(VerifyConfigurationStoreLog),
             c => VerifyConfigurationStoreLog(c.Directory, c.Project)),
         new(Group.Project, nameof(VerifyInvalidConfigurationIsolation),
@@ -86,9 +90,16 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyPlanItemHeaders), c => VerifyPlanItemHeaders(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyParameterInspectorWindow),
             c => VerifyParameterInspectorWindow(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyCaseRecovery), c => VerifyCaseRecovery(c.Directory)),
+        new(Group.Project, nameof(VerifyCheckboxRecovery), c => VerifyCheckboxRecovery(c.Directory)),
+        new(Group.Project, nameof(VerifyChangedCheckboxLimit), c => VerifyChangedCheckboxLimit(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyExplicitDefaults), c => VerifyExplicitDefaults(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyCheckboxOptions), c => VerifyCheckboxOptions(c.Directory)),
         new(Group.Project, nameof(VerifyCheckboxEditor), c => VerifyCheckboxEditor(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyDraftMigration), c => VerifyDraftMigration(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyUpgradedInputEditors), c => VerifyUpgradedInputEditors(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyRequiredInputDefault), c => VerifyRequiredInputDefault(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyRunValidationSummary), c => VerifyRunValidationSummary(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyStartupWithRetiredTaskCase),
             c => VerifyStartupWithRetiredTaskCase(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyStartupDraftAfterProjectReload),
@@ -726,15 +737,11 @@ internal static partial class SelfTestRunner
 
     private static void VerifyRejectedInputEdit(ProjectPlanModule project, string inputName, string invalidValue)
     {
-        if (project.CheckInputValue("ServerRange", inputName, invalidValue) is null) {
-            throw new InvalidOperationException($"PI input {inputName} 的单字段检查未拒绝非法值。");
-        }
-        try {
-            project.SetInputValue("ServerRange", inputName, invalidValue);
-            throw new InvalidOperationException($"PI input {inputName} 未拒绝非法显式值。");
-        } catch (InvalidDataException) {
-            // Expected: invalid edits are not persisted.
-        }
+        var field = project.GetConfiguration("RealTask").GlobalOptions.Single().Inputs
+            .Single(input => input.Name == inputName);
+        Require(field.CheckValue(invalidValue) is { } error
+            && project.TrySetInputValue(project.ActiveConfigurationId, "ServerRange", inputName, invalidValue) == error,
+            $"PI input {inputName} 应在编辑与保存时给出同一字段错误。");
     }
 
     private static void VerifyWorkerLogSequenceTracker()

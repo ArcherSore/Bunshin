@@ -10,17 +10,33 @@ public enum ProjectOptionKind { Input, Select, Switch, Checkbox }
 // The editor an input asks for; the value is a plain string either way. A password is never a file or folder.
 public enum ProjectInputType { Text, Password, File, Directory }
 
-public sealed record ProjectInputEditor(
-    string Name, string Label, string Description, string DefaultValue, string Value,
-    bool IsExplicit, string? Verify, string? PatternMessage)
+public sealed class ProjectInputEditor
 {
-    // Shown in place of a filled password, in the GUI and in logs alike.
-    public const string PasswordMask = "••••••";
+    private readonly InputDefinition _definition;
 
-    // Set when the value still fails verify; it may be shown and saved around, but blocks Start.
-    public string? Error { get; init; }
-    public ProjectInputType InputType { get; init; }
-    public bool IsPassword => InputType == ProjectInputType.Password;
+    internal ProjectInputEditor(InputDefinition input, string value, bool isExplicit)
+    {
+        _definition = input;
+        Value = value;
+        IsExplicit = isExplicit;
+        Error = ProjectInputValue.Parse(input, value, out var parsed);
+        ParsedValue = parsed;
+    }
+
+    public const string PasswordMask = "••••••";
+    public string Name => _definition.Name;
+    public string Label => _definition.Label;
+    public string Description => _definition.Description;
+    public string DefaultValue => _definition.Default;
+    public string? Verify => _definition.Verify?.ToString();
+    public string? PatternMessage => _definition.PatternMessage;
+    public ProjectInputType InputType => _definition.InputType;
+    public bool IsPassword => _definition.Password;
+    public string Value { get; }
+    public bool IsExplicit { get; }
+    public string? Error { get; }
+    internal JsonNode? ParsedValue { get; }
+    public string? CheckValue(string value) => ProjectInputValue.Parse(_definition, value, out _);
 }
 
 public sealed record ProjectCaseEditor(string Name, string Label, string Description);
@@ -36,96 +52,70 @@ public sealed record ProjectOptionEditor(
     public int MinCount { get; init; }
     public int? MaxCount { get; init; }
 
-    // A checkbox below min_count may be saved, but a Run cannot start with it.
-    public bool IsBelowMinimum => SelectedCases.Count < MinCount;
-
-    // Why a Run cannot start with this option yet, or null when it can.
-    public string? StartBlocker => IsBelowMinimum ? $"至少选择 {MinCount} 项"
-        : Inputs.Select(input => input.Error).FirstOrDefault(error => error is not null);
+    public string? SelectionCountError => CheckSelectionCount(SelectedCases.Count, MinCount, MaxCount);
+    internal static string? CheckSelectionCount(int count, int min, int? max) => count < min
+        ? $"至少选 {min} 项，当前选了 {count} 项。请再选 {min - count} 项。"
+        : count > max ? $"最多选 {max} 项，当前选了 {count} 项。请取消 {count - max} 项。" : null;
 }
 
 public sealed record ProjectConfigurationView(
-    IReadOnlyList<ProjectOptionEditor> GlobalOptions, IReadOnlyList<ProjectOptionEditor> TaskOptions);
-
-internal static class ExplicitOptionIntent
+    IReadOnlyList<ProjectOptionEditor> GlobalOptions, IReadOnlyList<ProjectOptionEditor> TaskOptions)
 {
-    internal static IReadOnlyDictionary<string, string> ReadInputs(OptionDefinition option, TaskConfiguration config)
-    {
-        if (!config.ExplicitOptions.TryGetValue(option.Name, out var element)) {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
-        }
-        var root = RequireObject(element, option.Name);
-        RejectUnknown(root, "Inputs", option.Name);
-        if (!root.TryGetProperty("Inputs", out var inputs) || inputs.ValueKind != JsonValueKind.Object) {
-            throw new InvalidDataException(
-                $"ExplicitOptions.{option.Name}.Inputs 必须是 object。 ");
-        }
+    public IEnumerable<(ProjectOptionEditor Option, int Depth, bool Global)> ActiveOptions => EnumerateActiveOptions();
 
-        var definitions = option.Inputs.ToDictionary(input => input.Name, StringComparer.Ordinal);
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var property in inputs.EnumerateObject()) {
-            if (!definitions.TryGetValue(property.Name, out var definition)) {
-                throw new InvalidDataException(
-                    $"ExplicitOptions.{option.Name}.Inputs 包含未知字段 {property.Name}。 ");
-            }
-            if (property.Value.ValueKind != JsonValueKind.String) {
-                throw new InvalidDataException(
-                    $"ExplicitOptions.{option.Name}.Inputs.{property.Name} 必须是 string。 ");
-            }
-            var value = property.Value.GetString()!;
-            if ((definition.Password ? Unprotect(value) : value) is { } read) {
-                result.Add(property.Name, read);
-            }
+    private IEnumerable<(ProjectOptionEditor Option, int Depth, bool Global)> EnumerateActiveOptions()
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in Walk(GlobalOptions, 0, true, visited).Concat(Walk(TaskOptions, 0, false, visited))) {
+            yield return item;
         }
-        if (!inputs.EnumerateObject().Any()) {
-            throw new InvalidDataException(
-                $"ExplicitOptions.{option.Name}.Inputs 不能为空；跟随默认时应删除该 option intent。 ");
-        }
-        return result;
     }
 
-    // The cases a select, switch or checkbox uses, in declaration order; without an explicit choice, its defaults.
+    private static IEnumerable<(ProjectOptionEditor Option, int Depth, bool Global)> Walk(
+        IReadOnlyList<ProjectOptionEditor> options, int depth, bool global, HashSet<string> visited)
+    {
+        foreach (var option in options) {
+            if (!visited.Add(option.Name)) {
+                continue;
+            }
+            yield return (option, depth, global);
+            foreach (var child in Walk(option.ActiveChildren, depth + 1, global, visited)) {
+                yield return child;
+            }
+        }
+    }
+}
+
+internal static partial class ExplicitOptionIntent
+{
+    internal static IReadOnlyList<ProjectInputEditor> ReadInputs(OptionDefinition option, TaskConfiguration config)
+    {
+        var saved = config.ExplicitOptions.TryGetValue(option.Name, out var intent)
+            ? intent.GetProperty("Inputs") : (JsonElement?)null;
+        return option.Inputs.Select(input => {
+            string? value = null;
+            if (saved is { } fields && fields.TryGetProperty(input.Name, out var field)) {
+                value = field.GetString()!;
+                if (input.Password) {
+                    value = Unprotect(value);
+                }
+            }
+            return new ProjectInputEditor(input, value ?? input.Default, value is not null);
+        }).ToArray();
+    }
+
+    // Both the editor and the Run resolve choices in declaration order from the reconciled configuration.
     internal static IReadOnlyList<CaseDefinition> ReadActiveCases(OptionDefinition option, TaskConfiguration config)
     {
-        IReadOnlyList<string> names = option.Kind == OptionDefinitionKind.Checkbox
-            ? ReadSelectedCases(option, config) ?? option.DefaultCases
-            : [ReadSelectedCase(option, config) ?? option.DefaultCase!];
-        if (names.FirstOrDefault(name => option.Cases.All(item => item.Name != name)) is { } unknown) {
-            throw new InvalidDataException($"option {option.Name} 的 case {unknown} 不存在。 ");
-        }
+        var saved = config.ExplicitOptions.TryGetValue(option.Name, out var intent);
+        IEnumerable<string> names = option.Kind == ProjectOptionKind.Checkbox
+            ? saved ? ReadCaseNames(intent) : option.DefaultCases
+            : [saved ? intent.GetProperty("SelectedCase").GetString()! : option.DefaultCase!];
         return option.Cases.Where(item => names.Contains(item.Name)).ToArray();
     }
 
-    private static IReadOnlyList<string>? ReadSelectedCases(OptionDefinition option, TaskConfiguration config)
-    {
-        if (!config.ExplicitOptions.TryGetValue(option.Name, out var element)) {
-            return null;
-        }
-        var root = RequireObject(element, option.Name);
-        RejectUnknown(root, "SelectedCases", option.Name);
-        if (!root.TryGetProperty("SelectedCases", out var selected) || selected.ValueKind != JsonValueKind.Array
-            || selected.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String)) {
-            throw new InvalidDataException(
-                $"ExplicitOptions.{option.Name}.SelectedCases 必须是 string 数组。 ");
-        }
-        return selected.EnumerateArray().Select(item => item.GetString()!).ToArray();
-    }
-
-    private static string? ReadSelectedCase(OptionDefinition option, TaskConfiguration config)
-    {
-        if (!config.ExplicitOptions.TryGetValue(option.Name, out var element)) {
-            return null;
-        }
-        var root = RequireObject(element, option.Name);
-        RejectUnknown(root, "SelectedCase", option.Name);
-        if (!root.TryGetProperty("SelectedCase", out var selected)
-            || selected.ValueKind != JsonValueKind.String
-            || string.IsNullOrWhiteSpace(selected.GetString())) {
-            throw new InvalidDataException(
-                $"ExplicitOptions.{option.Name}.SelectedCase 必须是非空 string。 ");
-        }
-        return selected.GetString();
-    }
+    private static string[] ReadCaseNames(JsonElement intent) =>
+        intent.GetProperty("SelectedCases").EnumerateArray().Select(item => item.GetString()!).ToArray();
 
     internal static JsonElement CreateInputs(OptionDefinition option, IReadOnlyDictionary<string, string> values)
     {
@@ -133,12 +123,29 @@ internal static class ExplicitOptionIntent
         foreach (var (name, value) in values.OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
             inputs[name] = option.IsPassword(name) ? Protect(value) : value;
         }
-        return ToElement(new JsonObject { ["Inputs"] = inputs });
+        return CreateStoredInputs(option, inputs);
     }
 
-    // Passwords stay DPAPI-encrypted for the current Windows user in the configuration, also in memory, and are
-    // decrypted only when read. A value that cannot be decrypted, e.g. a configuration copied from another user, reads
-    // as never entered: a required password then blocks Start like an unfilled field, but every input stays editable.
+    private static JsonElement CreateStoredInputs(OptionDefinition option, JsonObject inputs)
+    {
+        var passwords = inputs.Where(pair => option.IsPassword(pair.Key)).Select(pair => (JsonNode)pair.Key).ToArray();
+        return ToElement(new JsonObject { ["Inputs"] = inputs, ["PasswordInputs"] = new JsonArray(passwords) });
+    }
+
+    // Update only the named field, preserving sibling values including their original password ciphertext.
+    internal static JsonElement? UpdateInput(OptionDefinition option, TaskConfiguration config, string name,
+        string? value)
+    {
+        var inputs = config.ExplicitOptions.TryGetValue(option.Name, out var current)
+            ? current.GetProperty("Inputs").Deserialize<JsonObject>()! : new JsonObject();
+        if (value is null) {
+            inputs.Remove(name);
+        } else {
+            inputs[name] = option.IsPassword(name) ? Protect(value) : value;
+        }
+        return inputs.Count == 0 ? null : CreateStoredInputs(option, inputs);
+    }
+
     private static string Protect(string value) => value.Length == 0 ? value : Convert.ToBase64String(
         ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
 
@@ -152,31 +159,12 @@ internal static class ExplicitOptionIntent
         }
     }
 
-    internal static JsonElement CreateSelectedCase(string selectedCase) =>
-        ToElement(new JsonObject { ["SelectedCase"] = selectedCase });
+    internal static JsonElement CreateSelectedCase(OptionDefinition option, string selectedCase) =>
+        ToElement(new JsonObject { ["Kind"] = option.Kind.ToString(), ["SelectedCase"] = selectedCase });
 
     internal static JsonElement CreateSelectedCases(IEnumerable<string> selectedCases) => ToElement(new JsonObject {
         ["SelectedCases"] = new JsonArray(selectedCases.Select(name => (JsonNode)name).ToArray())
     });
-
-    private static JsonElement RequireObject(JsonElement element, string optionName)
-    {
-        if (element.ValueKind != JsonValueKind.Object) {
-            throw new InvalidDataException(
-                $"ExplicitOptions.{optionName} 必须是 object。 ");
-        }
-        return element;
-    }
-
-    private static void RejectUnknown(JsonElement element, string allowed, string optionName)
-    {
-        foreach (var property in element.EnumerateObject()) {
-            if (!string.Equals(property.Name, allowed, StringComparison.Ordinal)) {
-                throw new InvalidDataException(
-                    $"ExplicitOptions.{optionName} 包含未知字段 {property.Name}。 ");
-            }
-        }
-    }
 
     private static JsonElement ToElement(JsonNode node) => JsonSerializer.SerializeToElement(node);
 }

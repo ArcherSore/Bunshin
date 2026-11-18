@@ -11,7 +11,7 @@ internal static partial class ProjectInterfaceLoader
         "interface_version", "name", "label", "title", "version", "description", "icon", "github", "contact",
         "license",
         "controller", "resource", "agent", "global_option", "task", "option", "group", "pretask", "preset", "welcome",
-        "telemetry"
+        "telemetry", "languages"
     };
 
     private static readonly HashSet<string> AllowedControllerProperties = new(StringComparer.Ordinal)
@@ -114,19 +114,17 @@ internal static partial class ProjectInterfaceLoader
         var resources = ParseResources(resourceElements, projectRoot);
         var (agentExec, agentArgs) = ParseAgent(RequireProperty(root, "agent", "$"));
         var agent = new AgentDefinition(agentExec, agentArgs, projectRoot);
-        var tasks = ParseTasks(RequireArray(root, "task", "$"));
-        var groups = ParseGroups(root);
-        var options = ParseOptions(RequireProperty(root, "option", "$"));
+        var translations = ReadChineseTranslations(root, projectRoot);
+        var tasks = ParseTasks(RequireArray(root, "task", "$"), translations);
+        var groups = ParseGroups(root, translations);
+        var options = ParseOptions(RequireProperty(root, "option", "$"), translations);
         var globalOptions = ReadStringArray(root, "global_option", required: false, "$");
         ValidateReferences(globalOptions, tasks, options);
-        var pretasks = ParsePretasks(root, controller.Name, resources[0].Name);
+        var pretasks = ParsePretasks(root, controller.Name, resources[0].Name, translations);
         foreach (var pretask in pretasks) {
             ValidateReferences(pretask.Options, $"$.pretask.{pretask.Name}.option", options);
         }
-        var pretaskOptions = CollectOptionNames(pretasks.SelectMany(item => item.Options), options);
-        pretaskOptions.ExceptWith(CollectOptionNames(globalOptions.Concat(tasks.SelectMany(item => item.Options)),
-            options));
-        ValidateOptionDefinitions(options, pretaskOptions);
+        ValidateOptionDefinitions(options);
         ValidateOptionGraph(options);
         var presets = ParsePresets(root);
         RejectPresetPasswords(presets, options);
@@ -167,7 +165,7 @@ internal static partial class ProjectInterfaceLoader
     }
 
     private static IReadOnlyList<PretaskDefinition> ParsePretasks(
-        JsonElement root, string controller, string resource)
+        JsonElement root, string controller, string resource, JsonElement translations)
     {
         if (!root.TryGetProperty("pretask", out var value)) {
             return [];
@@ -207,13 +205,19 @@ internal static partial class ProjectInterfaceLoader
             }
             var controllers = ReadStringArray(obj, "controller", required: false, path);
             var resources = ReadStringArray(obj, "resource", required: false, path);
-            var applicable = (!obj.TryGetProperty("controller", out _) || controllers.Contains(controller))
-                && (!obj.TryGetProperty("resource", out _) || resources.Contains(resource));
+            var reasons = new List<string>();
+            if (controllers.Count > 0 && !controllers.Contains(controller, StringComparer.OrdinalIgnoreCase)) {
+                reasons.Add($"不适用于控制器 {controller}");
+            }
+            if (resources.Count > 0 && !resources.Contains(resource, StringComparer.OrdinalIgnoreCase)) {
+                reasons.Add($"不适用于资源 {resource}");
+            }
             _ = ReadDisplayString(obj, "icon");
-            var label = ReadDisplayString(obj, "label");
+            var label = DisplayText(obj, "label", translations);
             result.Add(new PretaskDefinition(name, string.IsNullOrWhiteSpace(label) ? name : label,
                 ReadOptionalDescription(obj, "description") ?? string.Empty, executable, arguments,
-                ReadStringArray(obj, "option", required: false, path), applicable));
+                ReadStringArray(obj, "option", required: false, path),
+                reasons.Count == 0 ? null : string.Join("、", reasons)));
         }
         return result;
     }
@@ -229,8 +233,8 @@ internal static partial class ProjectInterfaceLoader
         RejectUnknownProperties(win32, AllowedWin32Properties, "$.controller[0].win32");
         var classRegex = RequireString(win32, "class_regex", "$.controller[0].win32");
         var windowRegex = RequireString(win32, "window_regex", "$.controller[0].win32");
-        ValidateRegex(classRegex, "$.controller[0].win32.class_regex");
-        ValidateRegex(windowRegex, "$.controller[0].win32.window_regex");
+        ParseRegex(classRegex, "$.controller[0].win32.class_regex");
+        ParseRegex(windowRegex, "$.controller[0].win32.window_regex");
         RejectNonEmptyOptionScope(obj, "$.controller[0]");
         return new Win32ControllerDefinition(
             RequireString(obj, "name", "$.controller[0]"),
@@ -267,7 +271,7 @@ internal static partial class ProjectInterfaceLoader
             ReadStringArray(obj, "child_args", required: false, "$.agent"));
     }
 
-    private static IReadOnlyList<ProjectTaskGroup> ParseGroups(JsonElement root)
+    private static IReadOnlyList<ProjectTaskGroup> ParseGroups(JsonElement root, JsonElement translations)
     {
         if (!root.TryGetProperty("group", out var array)) {
             return [];
@@ -286,14 +290,14 @@ internal static partial class ProjectInterfaceLoader
             }
             var defaultExpand = OptionalBoolean(obj, "default_expand", path, fallback: true);
             groups.Add(new ProjectTaskGroup(
-                name, OptionalString(obj, "label") ?? name,
+                name, DisplayText(obj, "label", translations) ?? name,
                 ReadOptionalDescription(obj, "description") ?? string.Empty,
                 ReadDisplayString(obj, "icon"), defaultExpand));
         }
         return groups;
     }
 
-    private static IReadOnlyList<TaskDefinition> ParseTasks(JsonElement array)
+    private static IReadOnlyList<TaskDefinition> ParseTasks(JsonElement array, JsonElement translations)
     {
         var tasks = new List<TaskDefinition>();
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -307,7 +311,7 @@ internal static partial class ProjectInterfaceLoader
                 throw new InvalidDataException($"重复 task.name：{name}。 ");
             }
             tasks.Add(new TaskDefinition(
-                name, OptionalString(obj, "label") ?? name,
+                name, DisplayText(obj, "label", translations) ?? name,
                 ReadOptionalDescription(obj, "description") ?? string.Empty,
                 RequireString(obj, "entry", path),
                 ReadStringArray(obj, "option", required: false, path),
@@ -320,7 +324,8 @@ internal static partial class ProjectInterfaceLoader
         return tasks;
     }
 
-    private static IReadOnlyDictionary<string, OptionDefinition> ParseOptions(JsonElement element)
+    private static IReadOnlyDictionary<string, OptionDefinition> ParseOptions(JsonElement element,
+        JsonElement translations)
     {
         var obj = RequireObject(element, "$.option");
         var result = new Dictionary<string, OptionDefinition>(StringComparer.Ordinal);
@@ -329,25 +334,25 @@ internal static partial class ProjectInterfaceLoader
             var option = RequireObject(property.Value, path);
             RejectUnknownProperties(option, AllowedOptionProperties, path);
             var kind = ParseOptionKind(OptionalString(option, "type") ?? "select", path);
-            if (kind is not OptionDefinitionKind.Input && option.TryGetProperty("pipeline_override", out _)) {
+            if (kind is not ProjectOptionKind.Input && option.TryGetProperty("pipeline_override", out _)) {
                 throw new InvalidDataException(
                     $"{FormatOptionKind(kind)} option {path} 不能声明 pipeline_override；请放到对应 case 中。 ");
             }
-            var checkbox = kind == OptionDefinitionKind.Checkbox;
+            var checkbox = kind == ProjectOptionKind.Checkbox;
+            var label = DisplayText(option, "label", translations, keepEmpty: kind == ProjectOptionKind.Input);
             result.Add(property.Name, new OptionDefinition(
-                property.Name,
-                ReadDisplayString(option, "label") ?? property.Name,
+                property.Name, label ?? property.Name,
                 ReadDisplayString(option, "description") ?? string.Empty,
                 kind, checkbox ? null : OptionalString(option, "default_case"),
                 checkbox ? ReadStringArray(option, "default_case", required: false, path) : [],
                 ReadCount(option, "min_count", path) ?? 0, ReadCount(option, "max_count", path),
-                ParseInputs(option, path), ParseCases(option, path),
+                ParseInputs(option, path, translations), ParseCases(option, path, translations),
                 ReadObjectOrEmpty(option, "pipeline_override", path)));
         }
         return result;
     }
 
-    private static IReadOnlyList<InputDefinition> ParseInputs(JsonElement option, string path)
+    private static IReadOnlyList<InputDefinition> ParseInputs(JsonElement option, string path, JsonElement translations)
     {
         if (!option.TryGetProperty("inputs", out var array)) {
             return [];
@@ -381,15 +386,16 @@ internal static partial class ProjectInterfaceLoader
                 var value => throw new InvalidDataException($"不支持 input_type={value}（{inputPath}）。 ")
             };
             result.Add(new InputDefinition(
-                name, ReadDisplayString(input, "label") ?? name,
+                name, DisplayText(input, "label", translations, keepEmpty: true) ?? name,
                 ReadDisplayString(input, "description") ?? string.Empty,
-                password ? string.Empty : defaultValue.GetString()!, pipelineKind, OptionalString(input, "verify"),
-                ReadDisplayString(input, "pattern_msg"), password ? ProjectInputType.Password : inputType));
+                password ? string.Empty : defaultValue.GetString()!, pipelineKind,
+                OptionalString(input, "verify") is { } pattern ? ParseRegex(pattern, $"{inputPath}.verify") : null,
+                DisplayText(input, "pattern_msg", translations), password ? ProjectInputType.Password : inputType));
         }
         return result;
     }
 
-    private static IReadOnlyList<CaseDefinition> ParseCases(JsonElement option, string path)
+    private static IReadOnlyList<CaseDefinition> ParseCases(JsonElement option, string path, JsonElement translations)
     {
         if (!option.TryGetProperty("cases", out var array)) {
             return [];
@@ -407,7 +413,7 @@ internal static partial class ProjectInterfaceLoader
                 throw new InvalidDataException($"重复 case.name：{name}（{casePath}）。 ");
             }
             result.Add(new CaseDefinition(
-                name, ReadDisplayString(item, "label") ?? name,
+                name, DisplayText(item, "label", translations) ?? name,
                 ReadDisplayString(item, "description") ?? string.Empty,
                 ReadStringArray(item, "option", required: false, casePath),
                 ReadObjectOrEmpty(item, "pipeline_override", casePath)));
@@ -444,28 +450,11 @@ internal static partial class ProjectInterfaceLoader
         }
     }
 
-    internal static HashSet<string> CollectOptionNames(
-        IEnumerable<string> roots, IReadOnlyDictionary<string, OptionDefinition> options)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        var pending = new Stack<string>(roots);
-        while (pending.TryPop(out var name)) {
-            if (!result.Add(name)) {
-                continue;
-            }
-            foreach (var nested in options[name].Cases.SelectMany(item => item.Options)) {
-                pending.Push(nested);
-            }
-        }
-        return result;
-    }
-
-    private static void ValidateOptionDefinitions(
-        IReadOnlyDictionary<string, OptionDefinition> options, IReadOnlySet<string> pretaskOnlyOptions)
+    private static void ValidateOptionDefinitions(IReadOnlyDictionary<string, OptionDefinition> options)
     {
         foreach (var option in options.Values) {
             var path = $"$.option.{option.Name}";
-            if (option.Kind == OptionDefinitionKind.Input) {
+            if (option.Kind == ProjectOptionKind.Input) {
                 if (option.Inputs.Count == 0) {
                     throw new InvalidDataException($"{path}.inputs 必须至少包含一个 input。 ");
                 }
@@ -477,8 +466,10 @@ internal static partial class ProjectInterfaceLoader
                 }
                 for (var inputIndex = 0; inputIndex < option.Inputs.Count; inputIndex++) {
                     var input = option.Inputs[inputIndex];
-                    _ = ProjectInputValue.Parse(input, input.Default, $"{path}.inputs[{inputIndex}].default",
-                        typed: !pretaskOnlyOptions.Contains(option.Name), isDefault: true);
+                    var error = ProjectInputValue.Parse(input, input.Default, out _, allowUnfilledDefault: true);
+                    if (error is not null) {
+                        throw new InvalidDataException($"{path}.inputs[{inputIndex}].default {error}");
+                    }
                 }
                 continue;
             }
@@ -490,10 +481,10 @@ internal static partial class ProjectInterfaceLoader
             if (option.Cases.Count == 0) {
                 throw new InvalidDataException($"{path}.cases 必须至少包含一个 case。 ");
             }
-            if (option.Kind == OptionDefinitionKind.Switch && option.Cases.Count != 2) {
+            if (option.Kind == ProjectOptionKind.Switch && option.Cases.Count != 2) {
                 throw new InvalidDataException($"switch option {path} 必须恰好有两个 case。 ");
             }
-            if (option.Kind == OptionDefinitionKind.Checkbox) {
+            if (option.Kind == ProjectOptionKind.Checkbox) {
                 if (option.MinCount > (option.MaxCount ?? option.Cases.Count) || option.MaxCount > option.Cases.Count) {
                     throw new InvalidDataException(
                         $"{path} 需满足 min_count ≤ max_count ≤ cases 数量。 ");
@@ -517,12 +508,12 @@ internal static partial class ProjectInterfaceLoader
         }
     }
 
-    private static OptionDefinitionKind ParseOptionKind(string value, string path) =>
+    private static ProjectOptionKind ParseOptionKind(string value, string path) =>
         value switch {
-            "select" => OptionDefinitionKind.Select,
-            "switch" => OptionDefinitionKind.Switch,
-            "checkbox" => OptionDefinitionKind.Checkbox,
-            "input" => OptionDefinitionKind.Input,
+            "select" => ProjectOptionKind.Select,
+            "switch" => ProjectOptionKind.Switch,
+            "checkbox" => ProjectOptionKind.Checkbox,
+            "input" => ProjectOptionKind.Input,
             _ => throw new InvalidDataException(
                 $"首版不支持 option type：{value}（{path}）。 ")
         };
@@ -536,7 +527,7 @@ internal static partial class ProjectInterfaceLoader
                 $"不支持 pipeline_type={value}（{path}）。 ")
         };
 
-    private static string FormatOptionKind(OptionDefinitionKind kind) =>
+    private static string FormatOptionKind(ProjectOptionKind kind) =>
         kind.ToString().ToLowerInvariant();
 
     private static void ValidateOptionGraph(IReadOnlyDictionary<string, OptionDefinition> options)
@@ -625,10 +616,10 @@ internal static partial class ProjectInterfaceLoader
         return value;
     }
 
-    private static void ValidateRegex(string pattern, string path)
+    private static Regex ParseRegex(string pattern, string path)
     {
         try {
-            _ = new Regex(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            return new Regex(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         } catch (ArgumentException exception) {
             throw new InvalidDataException($"{path} 不是合法正则表达式。", exception);
         }
@@ -665,6 +656,36 @@ internal static partial class ProjectInterfaceLoader
             throw new InvalidDataException($"{path}.{name} 必须是 boolean。 ");
         }
         return value.GetBoolean();
+    }
+
+    private static JsonElement ReadChineseTranslations(JsonElement root, string projectRoot)
+    {
+        if (!root.TryGetProperty("languages", out var languages) || languages.ValueKind != JsonValueKind.Object
+            || !languages.TryGetProperty("zh_cn", out var language) || language.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(language.GetString())) {
+            return default;
+        }
+        try {
+            using var document = JsonDocument.Parse(ProjectContent.ReadFile(projectRoot, language.GetString()!));
+            return document.RootElement.Clone();
+        } catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+            or ArgumentException or NotSupportedException) {
+            return default;
+        }
+    }
+
+    private static string? DisplayText(JsonElement obj, string key, JsonElement translations, bool keepEmpty = false)
+    {
+        var message = ReadDisplayString(obj, key)?.Trim();
+        if (keepEmpty && message == string.Empty) {
+            return string.Empty;
+        }
+        if (message?.StartsWith('$') == true) {
+            message = translations.ValueKind == JsonValueKind.Object
+                && translations.TryGetProperty(message[1..], out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()?.Trim() : null;
+        }
+        return string.IsNullOrWhiteSpace(message) || message.StartsWith('$') ? null : message;
     }
 
     private static string? ReadDisplayString(JsonElement obj, string name)

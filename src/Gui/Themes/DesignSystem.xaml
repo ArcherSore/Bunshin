@@ -854,6 +854,12 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="{StaticResource Radius.Control}" />
         <Setter Property="Margin" Value="0,0,0,8" />
+        <Style.Triggers>
+            <Trigger Property="AutomationProperties.ItemStatus" Value="参数需要修改">
+                <Setter Property="Background" Value="{StaticResource Brush.Error.Surface}" />
+                <Setter Property="BorderBrush" Value="{StaticResource Brush.Error.Border}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <Style x:Key="PlanItemExpandedStyle"

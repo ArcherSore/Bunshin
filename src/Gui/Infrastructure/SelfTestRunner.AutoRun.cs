@@ -214,9 +214,56 @@ internal static partial class SelfTestRunner
             Require(ran && prepared.Count == 0 && failures.Count == 1,
                 "任务配置读不出来时必须报告失败，不能悄悄跳过，也不能运行占位的配置。"),
             fixture: directory => {
-                twoConfigurations(directory);
+                Directory.CreateDirectory(Path.Combine(directory, "config"));
                 File.WriteAllText(Path.Combine(directory, "config", "configurations.json"), "{ not json");
             });
+        string? secretProject = null;
+        var reported = new List<string>();
+        void Capture(object? sender, Models.LogEntry entry) => reported.Add(entry.Message);
+        logger.EntryWritten += Capture;
+        try {
+            Launch("resource-upgrade", boot, "日常", false, (window, ran) => {
+                Require(ran && failures.Count == 1 && prepared.Count == 0
+                    && failures[0].Contains("Real task") && failures[0].Contains("登录密码")
+                    && failures[0].Contains("请重新填写") && failures[0].Contains("领取奖励")
+                    && failures[0].Contains("请填写收件人") && reported.Contains(failures[0])
+                    && failures[0].Contains(Named<System.Windows.Controls.TextBlock>(window,
+                        "ProjectValidationText").Text)
+                    && !reported.Concat(failures).Any(message => message.Contains(SecretInputValue)),
+                    "无人值守应在准备前以同一条日志和通知说明任务、密码字段与改法，并保护密码原文。");
+                File.WriteAllText(Path.Combine(secretProject!, "interface.json"), "{");
+                var reload = window.AutoRunOnLaunchAsync();
+                PumpUntil(() => reload.IsCompleted, "无人值守资源加载失败应完成并通知。");
+                Require(reload.GetAwaiter().GetResult() && prepared.Count == 0 && failures.Count == 2
+                    && failures[1].Contains(Named<System.Windows.Controls.TextBlock>(window,
+                        "ProjectEmptyStateDetailText").Text) && reported.Contains(failures[1]),
+                    "项目重载失败时，任务页和无人值守通知、日志应说明相同的影响与下一步。");
+            }, beforeAutoRun: (_, directory) => EditInterface(directory, root => {
+                var field = root["option"]!["Login"]!["inputs"]![0]!;
+                field["verify"] = "^new-";
+                field["pattern_msg"] = "请重新填写登录密码";
+            }), fixture: directory => {
+                secretProject = directory;
+                AddSecretAndPathInputs(directory);
+                EditInterface(directory, root => root["option"]!["Login"]!["label"] = "登录密码");
+                twoConfigurations(directory);
+                var path = Path.Combine(directory, "config", "configurations.json");
+                EditInterface(directory, root => {
+                    root["task"]!.AsArray().Add(JsonNode.Parse("""
+                        {"name":"Collect","label":"领取奖励","entry":"Collect","option":["Recipient"]}
+                        """));
+                    root["option"]!["Recipient"] = JsonNode.Parse("""
+                        {"type":"input","label":"收件人","inputs":[
+                          {"name":"name","default":"","verify":".+","pattern_msg":"请填写收件人"}]}
+                        """);
+                });
+                var project = ProjectPlanModule.Open(directory, path);
+                project.SetInputValue("Login", "password", SecretInputValue);
+                project.AddTask("Collect");
+            });
+        } finally {
+            logger.EntryWritten -= Capture;
+        }
         FileStream? locked = null;
         Launch("switch-refused", boot, "周常", false, (window, ran) => {
             locked?.Dispose();

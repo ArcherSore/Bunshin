@@ -18,9 +18,8 @@ public partial class MainWindow
     private void RenderStartupStage(ProjectPlanModule project)
     {
         _startupOnlyButton = null;
-        var pretasks = project.Pretasks.Concat(project.SelectedItems.Where(item => item.Kind == PlanItemKind.Pretask
-            && !project.Pretasks.Any(available => available.Name == item.Name))).ToArray();
-        if (pretasks.Length == 0) {
+        var pretasks = project.Pretasks;
+        if (pretasks.Count == 0) {
             return;
         }
         var body = new StackPanel();
@@ -111,7 +110,7 @@ public partial class MainWindow
                 } else {
                     project.RemovePretask(task.Name);
                 }
-                _pendingStartAttempt = null;
+                InvalidatePendingStart();
                 RenderTaskPlan();
             } catch (Exception exception) {
                 HandleProjectEditError("更新启动阶段失败", exception);
@@ -123,18 +122,13 @@ public partial class MainWindow
 
     private async void RunStartupOnly_Click(object sender, RoutedEventArgs e)
     {
-        if (_startupOnlyButton?.IsEnabled != true || !ValidateRunInputs(startupOnly: true)
-            || OperationOrExitInProgress) {
+        if (_startupOnlyButton?.IsEnabled != true || OperationOrExitInProgress) {
             LogIgnoredAction();
             return;
         }
-        if (CurrentControls.Action is RuntimeAction.Prepare
-            or RuntimeAction.Retry { Target: RetryTarget.Prepare }) {
-            await PrepareFromPanelAsync(startRun: true, startupOnly: true);
-        } else if (CurrentControls.Action is RuntimeAction.Start
-            or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(startupOnly: true));
-        }
+        var prepare = CurrentControls.Action is RuntimeAction.Prepare
+            or RuntimeAction.Retry { Target: RetryTarget.Prepare };
+        await RunFromPanelAsync(prepare, startupOnly: true);
     }
 
     private void RefreshStartupOnlyButton(RuntimeControlState state)
@@ -142,11 +136,7 @@ public partial class MainWindow
         if (_startupOnlyButton is null || _projectPlan is not { } project) {
             return;
         }
-        var count = project.GetExecutionItems(startupOnly: true).Count;
-        if (!_projectConfigurationValid && _startupConfigurationValid) {
-            state = ControlsFor(new ProjectReadiness(true, count, true, project.RuntimeProfileDigest));
-        }
-        _startupOnlyButton.IsEnabled = state.ConfigurationEditable && count > 0 && _startupConfigurationValid
+        _startupOnlyButton.IsEnabled = state.ConfigurationEditable && project.GetExecutionItems(true).Count > 0
             && state.Action is RuntimeAction.Prepare { Enabled: true }
                 or RuntimeAction.Start { Enabled: true } or RuntimeAction.Retry { Enabled: true };
     }
