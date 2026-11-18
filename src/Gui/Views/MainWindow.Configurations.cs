@@ -302,20 +302,20 @@ public partial class MainWindow
         }
     }
 
-    // Returns whether the change was made. An unattended change (started by the launch itself) reports a refusal or
-    // failure without a dialog nobody can answer.
-    private bool ChangeConfiguration(Action change, bool unattended = false)
+    private void ChangeConfiguration(Action change)
     {
         if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not null
             || !CommitFocusedConfigurationInput()) {
             if (_projectPlan is not null) {
                 RestoreConfigurationSelection();
             }
-            if (unattended) {
-                ReportAutoRunFailure("无法切换到所选配置。");
-            }
-            return false;
+            return;
         }
+        ApplyConfigurationChange(change, unattended: false);
+    }
+
+    private bool ApplyConfigurationChange(Action change, bool unattended)
+    {
         try {
             var previous = _projectPlan?.ActiveConfigurationId;
             change();
@@ -324,7 +324,7 @@ public partial class MainWindow
                 _addedSinceShelfOpened.Clear();
                 UpdateAddedTasks();
             }
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             _expandedTaskName = null;
             _dragTaskName = null;
             EndConfigurationRename();
@@ -469,7 +469,7 @@ public partial class MainWindow
             _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text, tag.Kind);
             _inputDrafts.Remove(tag.Key);
             textBox.Tag = tag with { Value = text, Submitted = true, Edited = false };
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             ShowOptionInputError(textBox, null);
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;

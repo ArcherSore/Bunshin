@@ -395,11 +395,11 @@ public sealed partial class ProjectPlanModule
     public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false)
     {
         var config = ExecutionConfiguration(startupOnly);
-        ValidateActiveConfiguration(config);
         if (config.SelectedTasks.Count + config.SelectedPretasks.Count == 0) {
             throw new InvalidOperationException("请先勾选要执行的任务或前置任务。");
         }
         RequireRunnableOptions(config);
+        ValidateActiveConfiguration(config);
 
         var passwords = new HashSet<string>(StringComparer.Ordinal);
         var resolvedItems = config.SelectedTasks.Select(taskName => {

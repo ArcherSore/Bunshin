@@ -107,6 +107,31 @@ internal static partial class SelfTestRunner
                     var full = Submit(Named<Button>(window, "StartTaskHeaderButton"), "跳过无效任务后应可完整运行。");
                     Require(full.Items is [{ Kind: PlanItemKind.Pretask, TaskName: "Boot" },
                         { Kind: PlanItemKind.MaaTask, TaskName: "ReadyTask" }], "完整运行应提交前置任务及其余勾选的普通任务。");
+
+                    Require(FindControl<TextBox>("Recipient").Text == "  ",
+                        "完整运行后，被取消勾选的任务仍应保留原草稿。");
+                    definition["task"]![1]!["option"] = new JsonArray("LaunchInput");
+                    var caption = definition["option"]!["LaunchInput"]!["inputs"]![0]!;
+                    caption["pipeline_type"] = "int";
+                    caption["default"] = "1";
+                    File.WriteAllText(interfacePath, definition.ToJsonString());
+                    Click(window, "StartTaskHeaderButton");
+                    var ready = ConfigurationDescendants(items).OfType<Border>()
+                        .Single(card => card.Tag is ProjectTaskChoice { Name: "ReadyTask" });
+                    var typed = ConfigurationDescendants(ready).OfType<TextBox>()
+                        .Single(box => AutomationProperties.GetName(box) == "LaunchInput · caption");
+                    PumpUntil(() => typed.IsKeyboardFocused, "已连接时应重载并在使用整数的普通任务中定位旧文本。");
+                    typed.Text = "仍无法转换";
+                    VerifyStartupOnly("普通任务的类型错误不能阻止有效的前置参数原文。");
+                    Require(FindControl<TextBox>("LaunchInput · caption").Text == "仍无法转换",
+                        "前置项应使用已保存的原文，普通任务的无效草稿仍须保留。");
+
+                    File.WriteAllText(interfacePath, "{");
+                    Click(window, "StartTaskHeaderButton");
+                    Require(Named<UIElement>(window, "ProjectEmptyStatePanel").IsVisible
+                        && Named<Button>(window, "RetryProjectLoadButton").IsVisible
+                        && !Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
+                        "已连接时加载失败，任务页必须提供重新加载且不得继续提交旧计划。");
                 }, session: session, coordinator: coordinator, projectDirectory: projectDirectory);
             } finally {
                 timeout.Cancel();

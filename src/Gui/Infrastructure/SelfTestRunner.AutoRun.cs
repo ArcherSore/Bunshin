@@ -217,6 +217,39 @@ internal static partial class SelfTestRunner
                 twoConfigurations(directory);
                 File.WriteAllText(Path.Combine(directory, "config", "configurations.json"), "{ not json");
             });
+        string? secretProject = null;
+        var reported = new List<string>();
+        void Capture(object? sender, Models.LogEntry entry) => reported.Add(entry.Message);
+        logger.EntryWritten += Capture;
+        try {
+            Launch("resource-upgrade", boot, "日常", false, (window, ran) => {
+                Require(ran && failures.Count == 1 && prepared.Count == 0
+                    && failures[0].Contains("Real task") && failures[0].Contains("登录密码")
+                    && failures[0].Contains("请重新填写") && reported.Contains(failures[0])
+                    && !reported.Concat(failures).Any(message => message.Contains(SecretInputValue)),
+                    "无人值守应在准备前以同一条日志和通知说明任务、密码字段与改法，并保护密码原文。");
+                File.WriteAllText(Path.Combine(secretProject!, "interface.json"), "{");
+                var reload = window.AutoRunOnLaunchAsync();
+                PumpUntil(() => reload.IsCompleted, "无人值守资源加载失败应完成并通知。");
+                Require(reload.GetAwaiter().GetResult() && prepared.Count == 0 && failures.Count == 2
+                    && failures[1].Contains(Named<System.Windows.Controls.TextBlock>(window,
+                        "ProjectEmptyStateDetailText").Text) && reported.Contains(failures[1]),
+                    "项目重载失败时，任务页和无人值守通知、日志应说明相同的影响与下一步。");
+            }, beforeAutoRun: (_, directory) => EditInterface(directory, root => {
+                var field = root["option"]!["Login"]!["inputs"]![0]!;
+                field["verify"] = "^new-";
+                field["pattern_msg"] = "请重新填写登录密码";
+            }), fixture: directory => {
+                secretProject = directory;
+                AddSecretAndPathInputs(directory);
+                EditInterface(directory, root => root["option"]!["Login"]!["label"] = "登录密码");
+                twoConfigurations(directory);
+                var path = Path.Combine(directory, "config", "configurations.json");
+                ProjectPlanModule.Open(directory, path).SetInputValue("Login", "password", SecretInputValue);
+            });
+        } finally {
+            logger.EntryWritten -= Capture;
+        }
         FileStream? locked = null;
         Launch("switch-refused", boot, "周常", false, (window, ran) => {
             locked?.Dispose();

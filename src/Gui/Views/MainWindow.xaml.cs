@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -561,7 +561,7 @@ public partial class MainWindow : FluentWindow
             LoadProject();
             return true;
         } catch (Exception exception) {
-            _logger.Warn($"加载项目失败（{exception.GetType().Name}）。");
+            _logger.Warn("重新加载项目失败。", exception);
             if (unattended) {
                 ReportAutoRunFailure(ProjectEmptyStateDetailText.Text);
             }
@@ -569,25 +569,42 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async Task RunFromPanelAsync(bool prepare, bool startupOnly = false, bool unattended = false)
+    private async Task RunFromPanelAsync(bool prepare, bool startupOnly = false, Guid? automaticConfiguration = null)
     {
+        var unattended = automaticConfiguration.HasValue;
         if (OperationOrExitInProgress || !CommitFocusedConfigurationInput(deferDraftCheck: true)) {
             LogIgnoredAction();
+            if (unattended) {
+                ReportAutoRunFailure("暂时无法开始任务，请完成当前操作后重试。");
+            }
             return;
         }
         await RunOperationAsync(prepare ? PendingOperation.PreparingEnvironment : PendingOperation.StartingRun,
             async () => {
+                if (_workerCoordinator.Snapshot.SnapshotFresh && await CheckPendingStartAsync()) {
+                    return;
+                }
                 if (!TryReloadForRun(unattended)) {
                     return;
                 }
                 var project = RequireProject();
-                if (FindRunInputProblem(startupOnly) is { } problem) {
+                if (project.ConfigurationsUnreadable) {
+                    ReportRunBlocker(project.LoadWarning!, unattended);
+                    return;
+                }
+                if (automaticConfiguration is { } id && id != project.ActiveConfigurationId
+                    && !ApplyConfigurationChange(() => project.ActivateConfiguration(id), unattended: true)) {
+                    return;
+                }
+                if (RevealInvalidParameter(startupOnly) is { } problem) {
                     if (unattended) {
                         ReportAutoRunFailure(problem);
+                    } else {
+                        _logger.Info(problem);
                     }
                     return;
                 }
-                if (project.ConfigurationsUnreadable || project.GetExecutionItems(startupOnly).Count == 0) {
+                if (project.GetExecutionItems(startupOnly).Count == 0) {
                     ReportRunBlocker(project.LoadWarning ?? "请先勾选本次要执行的任务。", unattended);
                     return;
                 }
@@ -595,7 +612,7 @@ public partial class MainWindow : FluentWindow
                 try {
                     attempt = project.CreateRunStartAttempt(startupOnly);
                 } catch (Exception exception) {
-                    _logger.Warn($"生成运行计划失败（{exception.GetType().Name}）。");
+                    _logger.Warn("生成运行计划失败。", exception);
                     ReportRunBlocker("当前配置无法生成运行计划。请检查任务参数及项目资源包后重试。", unattended);
                     return;
                 }
@@ -660,37 +677,54 @@ public partial class MainWindow : FluentWindow
         await RunFromPanelAsync(prepare: false);
     }
 
+    private void InvalidatePendingStart()
+    {
+        if (!_pendingStartSent) {
+            _pendingStartAttempt = null;
+        }
+    }
+
+    private async Task<bool> CheckPendingStartAsync()
+    {
+        if (!_pendingStartSent || _pendingStartAttempt is not { } previous) {
+            return false;
+        }
+        // A lost response is ambiguous even when the reloaded PI or the user's choices changed.
+        var worker = await _workerCoordinator.RefreshSnapshotAsync();
+        if (worker.ActiveRun?.RunId == previous.RunId || worker.LastRun?.RunId == previous.RunId) {
+            _pendingStartAttempt = null;
+            _pendingStartSent = false;
+            return true;
+        }
+        if (_exitInProgress || _environment.Closing) {
+            return true;
+        }
+        _pendingStartSent = false;
+        if (_quitAfterRun?.IsWaitingFor(previous.RunId) == true) {
+            _quitAfterRun.Abandon();
+        }
+        return false;
+    }
+
     private async Task SubmitRunAsync(RunStartAttempt attempt, bool startupOnly, QuitAfterRunTracker? quitAfterRun)
     {
         if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
             or ChildSessionState.ConnectedHidden)) {
             throw new InvalidOperationException("桌面分身尚未连接，请重新准备运行环境。");
         }
-        if (_pendingStartAttempt is { } previous) {
-            if (_pendingStartSent) {
-                // A lost response is ambiguous even when the reloaded PI produced a different plan.
-                var worker = await _workerCoordinator.RefreshSnapshotAsync();
-                if (worker.ActiveRun?.RunId == previous.RunId || worker.LastRun?.RunId == previous.RunId) {
-                    _pendingStartAttempt = null;
-                    return;
-                }
-                if (_exitInProgress || _environment.Closing) {
-                    return;
-                }
-                if (_quitAfterRun?.IsWaitingFor(previous.RunId) == true) {
-                    _quitAfterRun.Abandon();
-                }
-            }
-            if (_pendingStartupOnly == startupOnly && previous.Plan.Items.Count == attempt.Plan.Items.Count) {
-                // Compare actual resolved content while retaining the IDs and timestamp of an identical retry.
-                var plan = attempt.Plan with {
-                    CreatedAtUtc = previous.Plan.CreatedAtUtc,
-                    Items = attempt.Plan.Items.Zip(previous.Plan.Items,
-                        (item, old) => item with { PlanItemId = old.PlanItemId }).ToArray()
-                };
-                if (CanonicalDigest.ComputePlanDigestV2(plan) == previous.PlanDigest) {
-                    attempt = previous;
-                }
+        if (await CheckPendingStartAsync()) {
+            return;
+        }
+        if (_pendingStartAttempt is { } previous && _pendingStartupOnly == startupOnly
+            && previous.Plan.Items.Count == attempt.Plan.Items.Count) {
+            // Compare actual resolved content while retaining the IDs and timestamp of an identical retry.
+            var plan = attempt.Plan with {
+                CreatedAtUtc = previous.Plan.CreatedAtUtc,
+                Items = attempt.Plan.Items.Zip(previous.Plan.Items,
+                    (item, old) => item with { PlanItemId = old.PlanItemId }).ToArray()
+            };
+            if (CanonicalDigest.ComputePlanDigestV2(plan) == previous.PlanDigest) {
+                attempt = previous;
             }
         }
         _pendingStartAttempt = attempt;
@@ -717,6 +751,7 @@ public partial class MainWindow : FluentWindow
         _logger.Info(
             $"run.start {response.Disposition}：runId={attempt.RunId:D}；planDigest={attempt.PlanDigest}。 ");
         _pendingStartAttempt = null;
+        _pendingStartSent = false;
     }
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
@@ -781,7 +816,7 @@ public partial class MainWindow : FluentWindow
             if (!(task.Kind == PlanItemKind.Pretask ? project.AddPretask(task.Name) : project.AddTask(task.Name))) {
                 return;
             }
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             _addedSinceShelfOpened.Add(task.Label);
             UpdateAddedTasks();
             RenderTaskPlan();
@@ -840,23 +875,21 @@ public partial class MainWindow : FluentWindow
             new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
     }
 
-    private bool RevealInvalidParameter(bool startupOnly = false) => FindRunInputProblem(startupOnly) is not null;
-
-    private string? FindRunInputProblem(bool startupOnly)
+    private string? RevealInvalidParameter(bool startupOnly)
     {
         if (_projectPlan is not { } project) {
             return null;
         }
         var match = project.GetExecutionItems(startupOnly).OrderBy(task => IsExpanded(task) ? 0 : 1)
             .SelectMany(task => DeriveInspectorRows(task.Name, GetConfigurationOrEmpty(task.Name, task.Kind),
-                shared: false, task.Kind).Where(row => row.IsInvalid || row.Inputs.Any(input => input.Draft is not null))
+                shared: false, task.Kind).Where(row => row.IsInvalid || row.Option.StartBlocker is not null)
                 .Select(row => (Task: task, Row: row)))
             .FirstOrDefault();
         if (match.Task is null) {
             return null;
         }
         var option = match.Row.Option.Name;
-        var field = match.Row.Inputs.FirstOrDefault(input => input.Error is not null || input.Draft is not null);
+        var field = match.Row.Inputs.FirstOrDefault(input => input.Error is not null || input.Input.Error is not null);
         FrameworkElement? Target()
         {
             if (field is not null) {
@@ -876,10 +909,8 @@ public partial class MainWindow : FluentWindow
                 target.Focus();
             });
         }
-        var reason = field?.Error ?? match.Row.Option.SelectionCountError ?? "请按 Enter 保存当前输入，或按 Esc 恢复已保存值。";
-        var message = $"请检查“{match.Task.Label}”的“{field?.AccessibleName ?? match.Row.Label}”。{reason}";
-        _logger.Info(message);
-        return message;
+        var reason = field?.Error ?? match.Row.Option.SelectionCountError ?? "请按 Enter 保存当前已修正的输入。";
+        return $"请检查“{match.Task.Label}”的“{field?.AccessibleName ?? match.Row.Label}”。{reason}";
     }
 
     // The header is the only expansion toggle; a task without parameters has nothing to expand.
@@ -910,7 +941,7 @@ public partial class MainWindow : FluentWindow
                 _expandedTaskName = null;
             }
             CloseTaskDescriptionDrawer();
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             RenderTaskPlan();
             _logger.Info($"已从执行计划移除任务：{task.Name}。 ");
         } catch (Exception exception) {
@@ -1043,7 +1074,7 @@ public partial class MainWindow : FluentWindow
         try {
             var before = GetExpandedOptionNames();
             save(RequireProject());
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             RefreshAfterOptionSaved(!before.SequenceEqual(GetExpandedOptionNames()));
             _logger.Info($"已保存 explicit case：option={optionName}。 ");
         } catch (Exception exception) {
@@ -1511,7 +1542,7 @@ public partial class MainWindow : FluentWindow
                 return;
             }
             RequireProject().SetItemEnabled(task.Kind, task.Name, selection.IsChecked == true);
-            _pendingStartAttempt = null;
+            InvalidatePendingStart();
             RefreshConfigurationValidity(RequireProject());
         };
         Grid.SetColumn(selection, 1);
@@ -1685,7 +1716,7 @@ public partial class MainWindow : FluentWindow
                 if (input is not null) {
                     _inputDrafts.Remove((id, row.Option.Name, input.Input.Name));
                 }
-                _pendingStartAttempt = null;
+                InvalidatePendingStart();
                 RefreshAfterOptionSaved(rebuildCards: true);
             } catch (Exception exception) {
                 HandleOperationError("恢复项目默认值失败", exception);
@@ -2010,7 +2041,7 @@ public partial class MainWindow : FluentWindow
             targetIndex = Math.Clamp(targetIndex, 0, project.SelectedTaskNames.Count - 1);
             _expandedTaskName = null;
             if (project.MoveTask(taskName, targetIndex)) {
-                _pendingStartAttempt = null;
+                InvalidatePendingStart();
                 _logger.Info($"已调整执行计划顺序：{taskName} -> {targetIndex}。 ");
             }
             RenderTaskPlan();

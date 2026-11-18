@@ -111,7 +111,7 @@ public partial class MainWindow
                 } else {
                     project.RemovePretask(task.Name);
                 }
-                _pendingStartAttempt = null;
+                InvalidatePendingStart();
                 RenderTaskPlan();
             } catch (Exception exception) {
                 HandleProjectEditError("更新启动阶段失败", exception);
@@ -127,7 +127,8 @@ public partial class MainWindow
             LogIgnoredAction();
             return;
         }
-        var prepare = CurrentControls.Action is RuntimeAction.Prepare or RuntimeAction.Retry { Target: RetryTarget.Prepare };
+        var prepare = CurrentControls.Action is RuntimeAction.Prepare
+            or RuntimeAction.Retry { Target: RetryTarget.Prepare };
         await RunFromPanelAsync(prepare, startupOnly: true);
     }
 
@@ -136,7 +137,7 @@ public partial class MainWindow
         if (_startupOnlyButton is null || _projectPlan is not { } project) {
             return;
         }
-        _startupOnlyButton.IsEnabled = state.ConfigurationEditable && project.GetExecutionItems(startupOnly: true).Count > 0
+        _startupOnlyButton.IsEnabled = state.ConfigurationEditable && project.GetExecutionItems(true).Count > 0
             && state.Action is RuntimeAction.Prepare { Enabled: true }
                 or RuntimeAction.Start { Enabled: true } or RuntimeAction.Retry { Enabled: true };
     }

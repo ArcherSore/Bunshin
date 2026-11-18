@@ -248,7 +248,7 @@ internal static partial class SelfTestRunner
                 && ConfigurationDescendants(row).OfType<TextBlock>()
                     .Any(text => text.Text.Contains("0") && text.Text.Contains("1"))
                 && ParameterInspector.ShowCases(Option("Features")) == "无"
-                && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false])!,
+                && typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false]) is not null,
                 "少于 min_count 时必须保存、标红并阻止开始。");
 
             Segments("Tier").SelectedItems.Add(Case(Segments("Tier"), "Low"));

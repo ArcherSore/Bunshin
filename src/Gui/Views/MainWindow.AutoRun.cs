@@ -40,13 +40,9 @@ public partial class MainWindow
             }
             return false;
         }
-        // A refusal is reported by the change itself: the other configuration must never be run instead.
-        if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
-            return true;
-        }
-        _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
-        var direct = CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start };
-        await RunFromPanelAsync(prepare: !direct, unattended: true);
+        var direct = CurrentControls.Action is RuntimeAction.Start
+            or RuntimeAction.Retry { Target: RetryTarget.Start };
+        await RunFromPanelAsync(prepare: !direct, automaticConfiguration: id);
         return true;
     }
 
@@ -62,8 +58,12 @@ public partial class MainWindow
         ShowActivated = true;
     }
 
-    private void ReportAutoRunFailure(string message) =>
-        ReportUnattendedFailure("自动执行", new InvalidOperationException(message));
+    private void ReportAutoRunFailure(string message)
+    {
+        var reason = $"自动执行：{message}";
+        _logger.Warn(reason);
+        AutoRunFailed?.Invoke(this, reason);
+    }
 
     private void ReportUnattendedFailure(string operation, Exception exception)
     {
