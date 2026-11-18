@@ -9,9 +9,6 @@ internal sealed record ScheduleEntry(TaskConfiguration Configuration, IReadOnlyL
 internal sealed record ScheduleOccurrence(
     DateTime Time, IReadOnlyList<ScheduleEntry> Entries, TaskConfiguration? Winner);
 
-internal sealed record ScheduleConflict(TaskConfiguration Other, bool OtherFirst, IReadOnlyList<DayOfWeek> Days,
-    IReadOnlyList<TimeOnly> Times);
-
 // Predicts what the scheduler will do from the saved policies, in the same order it decides: per local minute, the
 // first configuration in list order that can run wins and the rest are skipped. Busy runtime states are not predicted.
 internal sealed class SchedulePreview
@@ -20,6 +17,9 @@ internal sealed class SchedulePreview
         DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday,
         DayOfWeek.Saturday, DayOfWeek.Sunday];
     private static readonly string[] DayNames = ["日", "一", "二", "三", "四", "五", "六"];
+
+    private sealed record ScheduleConflict(TaskConfiguration Other, bool OtherFirst, IReadOnlyList<DayOfWeek> Days,
+        IReadOnlyList<TimeOnly> Times);
 
     private readonly IReadOnlyList<TaskConfiguration> _configurations;
     private readonly Func<Guid, string?> _invalidReason;
@@ -60,7 +60,7 @@ internal sealed class SchedulePreview
     }
 
     // Enabled policies of other configurations that share a day and a time with this one.
-    internal IReadOnlyList<ScheduleConflict> Conflicts(TaskConfiguration configuration, SchedulePolicy policy)
+    private List<ScheduleConflict> Conflicts(TaskConfiguration configuration, SchedulePolicy policy)
     {
         if (!policy.Enabled) {
             return [];

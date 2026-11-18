@@ -8,11 +8,11 @@ namespace Gui.Views;
 internal enum ScheduledRunDisposition { Invalid, Busy, Failed, Admitted }
 
 internal sealed record ScheduledRunResult(
-    Guid ConfigurationId, ScheduledRunDisposition Disposition, Guid? RunId = null, string? Reason = null);
+    ScheduledRunDisposition Disposition, Guid? RunId = null, string? Reason = null);
 
 public partial class MainWindow
 {
-    private sealed record ScheduledSubmission(Guid ConfigurationId, string Name, Guid WorkerId, Guid RunId)
+    private sealed record ScheduledSubmission(string Name, Guid WorkerId, Guid RunId)
     {
         public bool AwaitingConfirmation { get; set; }
         public bool CompletionReported { get; set; }
@@ -40,8 +40,17 @@ public partial class MainWindow
         AddScheduleActivity(message);
     }
 
-    internal event EventHandler<Guid>? ScheduledConfigurationActivated;
-    internal event EventHandler<(Guid ConfigurationId, RunSnapshot Run)>? ScheduledRunCompleted;
+    internal event EventHandler<RunSnapshot>? ScheduledRunCompleted;
+
+    private void RenderScheduledActivation(Guid configurationId)
+    {
+        RenderConfigurationChange(
+            ConfigurationTabs.SelectedItem is not System.Windows.Controls.TabItem { Tag: Guid shown }
+            || shown != configurationId);
+        if (ScheduleView.IsVisible) {
+            ScheduleView.Refresh();
+        }
+    }
 
     // Called on the GUI dispatcher. Invalid leaves the opportunity to the next candidate.
     internal async Task<ScheduledRunResult> TryStartScheduledRunAsync(Guid configurationId, string? policyTime = null)
@@ -54,7 +63,7 @@ public partial class MainWindow
             await _environment.TryRunExclusiveAsync(async () =>
                 result = await StartScheduledRunInGateAsync(project, configurationId, name, policyTime));
         }
-        result ??= new(configurationId, ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
+        result ??= new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
         if (result.Disposition == ScheduledRunDisposition.Busy) {
             ReportScheduledSkip(name, result.Reason!);
         }
@@ -66,17 +75,17 @@ public partial class MainWindow
         ProjectPlanModule? project, Guid configurationId, string name, string? policyTime)
     {
         if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker) {
-            return new(configurationId, ScheduledRunDisposition.Busy, Reason: blocker);
+            return new(ScheduledRunDisposition.Busy, Reason: blocker);
         }
         // The clock may run ahead of the dispatcher's snapshot callback. Consume the old Run before replacing it.
         await ObserveScheduledRunAsync(observed, gateHeld: true);
         if (_environment.Closing || _environment.EndUnconfirmed) {
-            return new(configurationId, ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
+            return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
         }
         if (project is null || project.ConfigurationsUnreadable) {
             const string detail = "无法读取任务配置。";
             ReportScheduledStartFailure(name, detail);
-            return new(configurationId, ScheduledRunDisposition.Failed, Reason: detail);
+            return new(ScheduledRunDisposition.Failed, Reason: detail);
         }
         var active = configurationId == project.ActiveConfigurationId;
         if (active) {
@@ -87,21 +96,19 @@ public partial class MainWindow
         }
         RunStartAttempt attempt;
         try {
-            var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == configurationId)
-                .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value.Message);
-            attempt = project.CreateRunStartAttempt(configurationId, inputErrors: drafts);
+            attempt = CreateScheduledAttempt(project, configurationId);
         } catch (Exception exception) {
             var reason = exception.Message.TrimEnd().TrimEnd('。')
                 .Replace("请先勾选要执行的任务或前置任务", "执行计划为空").Replace("Run Plan", "执行计划");
             ReportScheduledStartFailure(name, reason, exception);
-            return new(configurationId, ScheduledRunDisposition.Invalid, Reason: exception.Message);
+            return new(ScheduledRunDisposition.Invalid, Reason: exception.Message);
         }
 
         if (!active && SaveEditor() is { } saveFailure) {
             return saveFailure;
         }
         if (_environment.ScheduledRunBlocker(out _, out var hadSession) is { } changed) {
-            return new(configurationId, ScheduledRunDisposition.Busy, Reason: changed);
+            return new(ScheduledRunDisposition.Busy, Reason: changed);
         }
         Guid? submitted = null;
         var sending = false;
@@ -109,7 +116,7 @@ public partial class MainWindow
         SetPendingOperation(PendingOperation.PreparingEnvironment);
         try {
             project.ActivateConfiguration(configurationId);
-            ScheduledConfigurationActivated?.Invoke(this, configurationId);
+            RenderScheduledActivation(configurationId);
             AddScheduleActivity(policyTime is null ? $"启动「{name}」" : $"启动「{name}」（{policyTime}）");
             endingOldSession = true;
             var ended = await _environment.EndWhileExclusiveAsync();
@@ -125,23 +132,23 @@ public partial class MainWindow
                 if (await WaitForRunStartAsync()) {
                     var worker = _workerCoordinator.Snapshot.WorkerSnapshot
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
-                    _scheduledSubmission = new(configurationId, name, worker.WorkerInstanceId, attempt.RunId);
+                    _scheduledSubmission = new(name, worker.WorkerInstanceId, attempt.RunId);
                     submitted = attempt.RunId;
                     await SubmitRunAsync(attempt, name, startupOnly: false, onSending: () => sending = true);
                 }
             }
-            return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
+            return new(ScheduledRunDisposition.Admitted, submitted);
         } catch (Exception exception) {
             if (submitted.HasValue && _scheduledSubmission is { } own) {
                 var status = _workerCoordinator.ObserveStart(own.WorkerId, own.RunId);
                 if (status == StartObservation.Accepted) {
-                    return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
+                    return new(ScheduledRunDisposition.Admitted, submitted);
                 }
                 if (sending && status == StartObservation.Unknown && exception is not WorkerProtocolErrorException) {
                     own.AwaitingConfirmation = true;
                     var pending = $"开始请求未确认，等待 Worker 快照：{exception.Message}";
                     _logger.Warn($"定时执行“{name}”（Run {submitted}）：{pending}");
-                    return new(configurationId, ScheduledRunDisposition.Admitted, submitted, pending);
+                    return new(ScheduledRunDisposition.Admitted, submitted, pending);
                 }
                 _scheduledSubmission = null;
             }
@@ -154,7 +161,7 @@ public partial class MainWindow
             };
             var reason = endingOldSession ? "旧的桌面分身未能关闭" : $"桌面分身启动失败（{detail}）";
             ReportScheduledStartFailure(name, reason, exception);
-            return new(configurationId, ScheduledRunDisposition.Admitted, submitted, exception.Message);
+            return new(ScheduledRunDisposition.Admitted, submitted, exception.Message);
         } finally {
             SetPendingOperation(PendingOperation.None);
         }
@@ -167,7 +174,7 @@ public partial class MainWindow
             } catch (Exception error) {
                 var reason = $"无法保存配置「{ActiveConfigurationName}」";
                 ReportScheduledStartFailure(name, reason, error);
-                return new(configurationId, ScheduledRunDisposition.Failed, Reason: reason);
+                return new(ScheduledRunDisposition.Failed, Reason: reason);
             }
         }
     }
@@ -203,7 +210,7 @@ public partial class MainWindow
         }
         if (!own.CompletionReported) {
             own.CompletionReported = true;
-            ScheduledRunCompleted?.Invoke(this, (own.ConfigurationId, run));
+            ScheduledRunCompleted?.Invoke(this, run);
         }
         ObserveRunNotification(observed);
         if (run.State == RunState.Succeeded) {

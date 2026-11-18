@@ -223,7 +223,7 @@ internal static partial class SelfTestRunner
                     Require(failures.Count == 0, "普通冲突只能记日志。");
                 }
                 Require(start.Result is { Disposition: ScheduledRunDisposition.Admitted, RunId: { } runId }
-                    && runId == own.RunId && start.Result.ConfigurationId == target, "启动结果必须对应提交给 Worker 的计划。");
+                    && runId == own.RunId, "启动结果必须对应提交给 Worker 的计划。");
                 if (terminal == RunState.Cancelled) {
                     // The pending start is resolved by a Running event during the synchronous Windows inspection.
                     wts.DuringEnumeration = () => {
@@ -242,7 +242,7 @@ internal static partial class SelfTestRunner
                     AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                         "下一分钟已到时 Worker 应已报告此前 Run 的失败。");
                     var completed = new List<Guid>();
-                    window.ScheduledRunCompleted += (_, e) => completed.Add(e.Run.RunId);
+                    window.ScheduledRunCompleted += (_, run) => completed.Add(run.RunId);
                     var next = window.TryStartScheduledRunAsync(target);
                     PumpUntil(() => next.IsCompleted, "下一次机会应消化上次终态，再在新环境中启动。");
                     Require(next.Result.Disposition == ScheduledRunDisposition.Admitted
@@ -252,8 +252,8 @@ internal static partial class SelfTestRunner
                     return;
                 } else {
                     var completions = new List<Guid>();
-                    window.ScheduledRunCompleted += (_, e) => {
-                        completions.Add(e.Run.RunId);
+                    window.ScheduledRunCompleted += (_, run) => {
+                        completions.Add(run.RunId);
                         if (lostReply && completions.Count == 1) {
                             wts.DuringEnumeration = () => {
                                 wts.DuringEnumeration = null;

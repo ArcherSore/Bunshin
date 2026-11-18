@@ -32,10 +32,17 @@ internal sealed class ScheduleTimeline : FrameworkElement
     // Rows share whatever height the page gives the timeline; tracks grow slower than rows so tall rows keep a gap.
     private const double MinRow = 40;
     private const int AddStep = 15, DragStep = 5;
-    private static readonly WpfColor GridColor = WpfColor.FromRgb(0xE9, 0xEE, 0xF4);
-    private static readonly WpfColor GridStrongColor = WpfColor.FromRgb(0xDC, 0xE3, 0xEC);
-    private static readonly WpfColor NightColor = WpfColor.FromRgb(0xF1, 0xF4, 0xF8);
-    private static readonly WpfColor TrackColor = WpfColor.FromRgb(0xFB, 0xFC, 0xFE);
+    // The static parts of every row are drawn with shared frozen resources instead of new ones per render.
+    private static readonly WpfPen GridPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
+        WpfColor.FromRgb(0xE9, 0xEE, 0xF4))), 1));
+    private static readonly WpfPen GridStrongPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
+        WpfColor.FromRgb(0xDC, 0xE3, 0xEC))), 1));
+    private static readonly WpfPen HatchPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
+        WpfColor.FromArgb(0x18, 0x18, 0x22, 0x30))), 1));
+    private static readonly SolidColorBrush NightBrush =
+        Frozen(new SolidColorBrush(WpfColor.FromRgb(0xF1, 0xF4, 0xF8)));
+    private static readonly SolidColorBrush TrackBrush =
+        Frozen(new SolidColorBrush(WpfColor.FromRgb(0xFB, 0xFC, 0xFE)));
     private static readonly WpfColor NowColor = WpfColor.FromRgb(0xE0, 0x31, 0x31);
     private static readonly WpfColor WarnColor = WpfColor.FromRgb(0xD0, 0x8A, 0x16);
     private static readonly WpfColor MutedColor = WpfColor.FromRgb(0x5F, 0x6E, 0x80);
@@ -51,7 +58,12 @@ internal sealed class ScheduleTimeline : FrameworkElement
     public ScheduleTimeline()
     {
         _tip.PlacementTarget = this;
-        Focusable = false;
+    }
+
+    private static T Frozen<T>(T resource) where T : Freezable
+    {
+        resource.Freeze();
+        return resource;
     }
 
     internal event Action<DayOfWeek, TimeOnly>? EmptyClicked;
@@ -127,21 +139,19 @@ internal sealed class ScheduleTimeline : FrameworkElement
             }
 
             dc.PushClip(new RectangleGeometry(track, 6, 6));
-            dc.DrawRectangle(new SolidColorBrush(TrackColor), null, track);
-            var night = new SolidColorBrush(NightColor);
-            dc.DrawRectangle(night, null, new Rect(X(0), track.Top, X(360) - X(0), track.Height));
-            dc.DrawRectangle(night, null, new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
+            dc.DrawRectangle(TrackBrush, null, track);
+            dc.DrawRectangle(NightBrush, null, new Rect(X(0), track.Top, X(360) - X(0), track.Height));
+            dc.DrawRectangle(NightBrush, null, new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
             for (var hour = 1; hour < 24; hour++) {
                 var x = Math.Round(X(hour * 60)) + 0.5;
-                dc.DrawLine(new WpfPen(new SolidColorBrush(hour % 6 == 0 ? GridStrongColor : GridColor), 1),
-                    new WpfPoint(x, track.Top), new WpfPoint(x, track.Bottom));
+                dc.DrawLine(hour % 6 == 0 ? GridStrongPen : GridPen, new WpfPoint(x, track.Top),
+                    new WpfPoint(x, track.Bottom));
             }
             if (day == today) {
                 // Today's elapsed part: minutes that have passed are never caught up on.
                 dc.PushClip(new RectangleGeometry(new Rect(track.Left, track.Top, X(now) - track.Left, track.Height)));
-                var hatch = new WpfPen(new SolidColorBrush(WpfColor.FromArgb(0x18, 0x18, 0x22, 0x30)), 1);
                 for (var x = track.Left - track.Height; x < X(now); x += 6) {
-                    dc.DrawLine(hatch, new WpfPoint(x, track.Bottom), new WpfPoint(x + track.Height, track.Top));
+                    dc.DrawLine(HatchPen,new WpfPoint(x, track.Bottom), new WpfPoint(x + track.Height, track.Top));
                 }
                 dc.Pop();
             }

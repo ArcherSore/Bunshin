@@ -104,11 +104,10 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             return;
         }
         var configurations = project.Configurations;
-        if (Focused is null) {
-            _focus = project.ActiveConfigurationId;
-        }
-        var focus = Focused ?? configurations[0];
+        var focus = Focused ?? configurations.FirstOrDefault(c => c.Id == project.ActiveConfigurationId)
+            ?? configurations[0];
         _focus = focus.Id;
+        var color = ColorOf(configurations.ToList().IndexOf(focus));
         var policy = ActivePolicy(focus);
         if (_selected is { } selected && (policy?.Id != selected.PolicyId || !policy.Times.Contains(selected.Time))) {
             _selected = null;
@@ -116,9 +115,9 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         _preview = new SchedulePreview(configurations, _invalidReason, Now);
         RenderBanner(_preview);
         RenderList(configurations, focus);
-        RenderTimeline(configurations, focus, policy);
-        RenderPolicyBar(configurations, focus, policy);
-        RenderInspector(configurations, focus, policy);
+        RenderTimeline(configurations, focus, policy, color);
+        RenderPolicyBar(focus, policy, color);
+        RenderInspector(focus, policy, color);
     }
 
     private void RenderBanner(SchedulePreview preview)
@@ -223,7 +222,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
     }
 
     private void RenderTimeline(IReadOnlyList<TaskConfiguration> configurations, TaskConfiguration focus,
-        SchedulePolicy? active)
+        SchedulePolicy? active, WpfColor color)
     {
         var lane = configurations.Count <= 1 ? 0 : Math.Min(7, 28.0 / (configurations.Count - 1));
         var pins = new List<TimelinePin>();
@@ -236,8 +235,8 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 foreach (var day in policy.Days) {
                     foreach (var time in policy.Times) {
                         var winner = policy.Enabled ? configurations.Take(index).FirstOrDefault(other =>
-                            _preview!.InvalidReason(other) is null && other.SchedulePolicies.Any(p => p.Enabled
-                                && p.Days.Contains(day) && p.Times.Contains(time))) : null;
+                            _preview!.InvalidReason(other) is null
+                            && other.SchedulePolicies.Any(p => p.FiresAt(day, time))) : null;
                         var tip = (role == TimelinePinRole.Other ? $"{configuration.Name} · " : string.Empty)
                             + $"{policy.Name} {SchedulePreview.TimeText(time)}"
                             + (policy.Enabled ? "" : "（已停用）")
@@ -249,7 +248,6 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 }
             }
         }
-        var color = ColorOf(configurations.ToList().IndexOf(focus));
         Timeline.ActiveColor = color;
         Timeline.ActiveDays = (active?.Days ?? []).ToHashSet();
         Timeline.Selected = _selected;
@@ -258,15 +256,14 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         KeyCurrent.Fill = new SolidColorBrush(color);
     }
 
-    private void RenderPolicyBar(IReadOnlyList<TaskConfiguration> configurations, TaskConfiguration focus,
-        SchedulePolicy? active)
+    private void RenderPolicyBar(TaskConfiguration focus, SchedulePolicy? active, WpfColor focusColor)
     {
         PolicyBar.Children.Clear();
         PolicyBar.Children.Add(new WpfTextBlock {
             Text = focus.Name, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0), Foreground = (WpfBrush)FindResource("Brush.Text.Primary")
         });
-        var color = new SolidColorBrush(ColorOf(configurations.ToList().IndexOf(focus)));
+        var color = new SolidColorBrush(focusColor);
         foreach (var policy in focus.SchedulePolicies) {
             var content = new StackPanel { Orientation = WpfOrientation.Horizontal };
             content.Children.Add(new Ellipse {
@@ -306,15 +303,14 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         PolicyBar.Children.Add(add);
     }
 
-    private void RenderInspector(IReadOnlyList<TaskConfiguration> configurations, TaskConfiguration focus,
-        SchedulePolicy? policy)
+    private void RenderInspector(TaskConfiguration focus, SchedulePolicy? policy, WpfColor color)
     {
         Inspector.Visibility = policy is null ? Visibility.Collapsed : Visibility.Visible;
         EmptyHint.Visibility = policy is null ? Visibility.Visible : Visibility.Collapsed;
         if (policy is null) {
             return;
         }
-        Inspector.BorderBrush = new SolidColorBrush(ColorOf(configurations.ToList().IndexOf(focus)));
+        Inspector.BorderBrush = new SolidColorBrush(color);
         PolicyEnabled.IsChecked = policy.Enabled;
         if (!PolicyName.IsKeyboardFocusWithin) {
             PolicyName.Text = policy.Name;

@@ -190,12 +190,6 @@ public partial class MainWindow : FluentWindow
         KeyDown += MainWindow_KeyDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
-        ScheduledConfigurationActivated += (_, id) => {
-            RenderConfigurationChange(ConfigurationTabs.SelectedItem is not TabItem { Tag: Guid shown } || shown != id);
-            if (ScheduleView.IsVisible) {
-                ScheduleView.Refresh();
-            }
-        };
         StateChanged += MainWindow_StateChanged;
         SizeChanged += (_, _) => UpdateConfigurationLockText();
         RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);

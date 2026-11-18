@@ -16,6 +16,8 @@ public sealed record SchedulePolicy
         init => field = value.Select(time => new TimeOnly(time.Hour, time.Minute)).Distinct().Order()
             .ToList().AsReadOnly();
     }
+
+    public bool FiresAt(DayOfWeek day, TimeOnly time) => Enabled && Days.Contains(day) && Times.Contains(time);
 }
 
 public sealed partial class ProjectPlanModule

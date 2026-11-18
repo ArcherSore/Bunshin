@@ -39,8 +39,8 @@ public partial class MainWindow
             _lastCheckedMinute = minute;
             _checkedConfigurations.Clear();
         }
-        var due = project.Configurations.Select(c => (c.Id, c.Name, Policy: c.SchedulePolicies.FirstOrDefault(
-            p => p.Enabled && p.Days.Contains(minute.DayOfWeek) && p.Times.Contains(time))))
+        var due = project.Configurations.Select(c => (c.Id, c.Name,
+                Policy: c.SchedulePolicies.FirstOrDefault(p => p.FiresAt(minute.DayOfWeek, time))))
             .Where(c => c.Policy is not null && _checkedConfigurations.Add(c.Id)).ToArray();
         if (due.Length == 0) {
             return;
