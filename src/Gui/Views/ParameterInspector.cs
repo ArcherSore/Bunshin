@@ -50,13 +50,6 @@ internal static class ParameterInspector
     // An empty value is spelled out so a note never ends in nothing.
     internal static string ShowValue(string value) => value.Length == 0 ? "空" : value;
 
-    // Checked labels in declaration order.
-    internal static string ShowCases(ProjectOptionEditor option)
-    {
-        var labels = option.Cases.Where(item => option.SelectedCases.Contains(item.Name)).Select(item => item.Label);
-        return option.SelectedCases.Count == 0 ? "无" : string.Join("、", labels);
-    }
-
     internal static string? DescribeLimits(ProjectOptionEditor option) => (option.MinCount, option.MaxCount) switch {
         (0, null) => null,
         (0, { } max) => $"最多 {max} 项",
@@ -76,11 +69,13 @@ internal static class ParameterInspector
         }
     }
 
+    internal static string GetOptionLabel(ProjectOptionEditor option) =>
+        FirstNonBlank(option.Label, option.Inputs.FirstOrDefault()?.Label) ?? option.Name;
+
     private static InspectorRow CreateRow(ProjectOptionEditor option, int depth, bool global,
         IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts, IReadOnlyList<string> sharedWith)
     {
-        // A PI may declare either label as "": the option label, then the first input's, then the option name.
-        var label = FirstNonBlank(option.Label, option.Inputs.FirstOrDefault()?.Label) ?? option.Name;
+        var label = GetOptionLabel(option);
         var single = option.Inputs.Count == 1;
         var description = FirstNonBlank(option.Description, single ? option.Inputs[0].Description : null)
             ?? string.Empty;
