@@ -1502,20 +1502,30 @@ public partial class MainWindow : FluentWindow
             }
 
             var tag = new TextBlock {
-                MaxWidth = 140, Margin = new Thickness(0, 0, 8, 0),
+                FontSize = (double)FindResource("FontSize.Label"), MaxWidth = 140,
+                VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Foreground = (WpfBrush)FindResource(invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary"),
                 ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
             };
             if (isSwitch) {
-                tag.Inlines.Add(ShortenPreview(label, 6));
-                tag.Inlines.Add(new System.Windows.Documents.Run(" ●") {
-                    Foreground = (WpfBrush)FindResource(isOn ? "Brush.TasksAccent" : "Brush.Text.Muted"), FontSize = 10
+                tag.Text = ShortenPreview(label, 6);
+                var switchPreview = new StackPanel {
+                    Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 0, 8, 0),
+                    ToolTip = tag.ToolTip
+                };
+                switchPreview.Children.Add(tag);
+                switchPreview.Children.Add(new System.Windows.Shapes.Ellipse {
+                    Width = 6, Height = 6, Margin = new Thickness(4, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Fill = (WpfBrush)FindResource(isOn ? "Brush.TasksAccent" : "Brush.Text.Muted")
                 });
+                preview.Children.Add(switchPreview);
             } else {
                 tag.Text = $"{ShortenPreview(label, 4)}：{ShortenPreview(ParameterInspector.ShowValue(value), 6)}";
+                tag.Margin = new Thickness(0, 0, 8, 0);
+                preview.Children.Add(tag);
             }
-            preview.Children.Add(tag);
             if (preview.Children.Count == 3) {
                 break;
             }

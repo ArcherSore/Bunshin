@@ -257,11 +257,10 @@ internal static partial class SelfTestRunner
         var interfacePath = Path.Combine(projectDirectory, "interface.json");
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(interfacePath))!;
         json["global_option"]!.AsArray().Clear();
-        json["task"]![0]!["option"]!.AsArray().Add("ServerRange");
+        json["task"]![0]!["option"] = new System.Text.Json.Nodes.JsonArray("Nested", "ServerRange", "Team");
         var option = json["option"]!["ServerRange"]!;
         option["label"] = "";
         option["inputs"]![0]!["label"] = "";
-        json["task"]![0]!["option"]!.AsArray().Add("Team");
         json["option"]!["Team"] = System.Text.Json.Nodes.JsonNode.Parse("""
             {"type":"input","label":"","inputs":[{"name":"team","label":"出战队伍","default":"7"}]}
             """);
@@ -282,6 +281,15 @@ internal static partial class SelfTestRunner
             Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
                 && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7")),
                 "折叠预览应优先显示首个输入的标签，两级标签均为空时显示选项名称。");
+            var switchLabel = tags.Single(tag => Equals(tag.ToolTip, "Nested：开"));
+            var switchPreview = (System.Windows.FrameworkElement)switchLabel.Parent;
+            var dot = ConfigurationDescendants(switchPreview).OfType<System.Windows.Shapes.Ellipse>().Single();
+            switchPreview.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+            switchPreview.Arrange(new System.Windows.Rect(switchPreview.DesiredSize));
+            double CenterY(System.Windows.FrameworkElement element) =>
+                element.TranslatePoint(new System.Windows.Point(0, element.ActualHeight / 2), switchPreview).Y;
+            Require(Math.Abs(CenterY(switchLabel) - CenterY(dot)) <= PixelTolerance,
+                "开关预览圆点应与文字垂直居中。");
         });
     }
 
