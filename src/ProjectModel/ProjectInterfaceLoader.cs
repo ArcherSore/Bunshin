@@ -114,13 +114,13 @@ internal static partial class ProjectInterfaceLoader
         var resources = ParseResources(resourceElements, projectRoot);
         var (agentExec, agentArgs) = ParseAgent(RequireProperty(root, "agent", "$"));
         var agent = new AgentDefinition(agentExec, agentArgs, projectRoot);
-        var tasks = ParseTasks(RequireArray(root, "task", "$"));
-        var groups = ParseGroups(root);
         var translations = ReadChineseTranslations(root, projectRoot);
+        var tasks = ParseTasks(RequireArray(root, "task", "$"), translations);
+        var groups = ParseGroups(root, translations);
         var options = ParseOptions(RequireProperty(root, "option", "$"), translations);
         var globalOptions = ReadStringArray(root, "global_option", required: false, "$");
         ValidateReferences(globalOptions, tasks, options);
-        var pretasks = ParsePretasks(root, controller.Name, resources[0].Name);
+        var pretasks = ParsePretasks(root, controller.Name, resources[0].Name, translations);
         foreach (var pretask in pretasks) {
             ValidateReferences(pretask.Options, $"$.pretask.{pretask.Name}.option", options);
         }
@@ -168,7 +168,7 @@ internal static partial class ProjectInterfaceLoader
     }
 
     private static IReadOnlyList<PretaskDefinition> ParsePretasks(
-        JsonElement root, string controller, string resource)
+        JsonElement root, string controller, string resource, JsonElement translations)
     {
         if (!root.TryGetProperty("pretask", out var value)) {
             return [];
@@ -208,13 +208,19 @@ internal static partial class ProjectInterfaceLoader
             }
             var controllers = ReadStringArray(obj, "controller", required: false, path);
             var resources = ReadStringArray(obj, "resource", required: false, path);
-            var applicable = (!obj.TryGetProperty("controller", out _) || controllers.Contains(controller))
-                && (!obj.TryGetProperty("resource", out _) || resources.Contains(resource));
+            var reasons = new List<string>();
+            if (controllers.Count > 0 && !controllers.Contains(controller, StringComparer.OrdinalIgnoreCase)) {
+                reasons.Add($"不适用于控制器 {controller}");
+            }
+            if (resources.Count > 0 && !resources.Contains(resource, StringComparer.OrdinalIgnoreCase)) {
+                reasons.Add($"不适用于资源 {resource}");
+            }
             _ = ReadDisplayString(obj, "icon");
-            var label = ReadDisplayString(obj, "label");
+            var label = DisplayText(obj, "label", translations);
             result.Add(new PretaskDefinition(name, string.IsNullOrWhiteSpace(label) ? name : label,
                 ReadOptionalDescription(obj, "description") ?? string.Empty, executable, arguments,
-                ReadStringArray(obj, "option", required: false, path), applicable));
+                ReadStringArray(obj, "option", required: false, path),
+                reasons.Count == 0 ? null : string.Join("、", reasons)));
         }
         return result;
     }
@@ -268,7 +274,7 @@ internal static partial class ProjectInterfaceLoader
             ReadStringArray(obj, "child_args", required: false, "$.agent"));
     }
 
-    private static IReadOnlyList<ProjectTaskGroup> ParseGroups(JsonElement root)
+    private static IReadOnlyList<ProjectTaskGroup> ParseGroups(JsonElement root, JsonElement translations)
     {
         if (!root.TryGetProperty("group", out var array)) {
             return [];
@@ -287,14 +293,14 @@ internal static partial class ProjectInterfaceLoader
             }
             var defaultExpand = OptionalBoolean(obj, "default_expand", path, fallback: true);
             groups.Add(new ProjectTaskGroup(
-                name, OptionalString(obj, "label") ?? name,
+                name, DisplayText(obj, "label", translations) ?? name,
                 ReadOptionalDescription(obj, "description") ?? string.Empty,
                 ReadDisplayString(obj, "icon"), defaultExpand));
         }
         return groups;
     }
 
-    private static IReadOnlyList<TaskDefinition> ParseTasks(JsonElement array)
+    private static IReadOnlyList<TaskDefinition> ParseTasks(JsonElement array, JsonElement translations)
     {
         var tasks = new List<TaskDefinition>();
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -308,7 +314,7 @@ internal static partial class ProjectInterfaceLoader
                 throw new InvalidDataException($"重复 task.name：{name}。 ");
             }
             tasks.Add(new TaskDefinition(
-                name, OptionalString(obj, "label") ?? name,
+                name, DisplayText(obj, "label", translations) ?? name,
                 ReadOptionalDescription(obj, "description") ?? string.Empty,
                 RequireString(obj, "entry", path),
                 ReadStringArray(obj, "option", required: false, path),
@@ -338,12 +344,12 @@ internal static partial class ProjectInterfaceLoader
             var checkbox = kind == OptionDefinitionKind.Checkbox;
             result.Add(property.Name, new OptionDefinition(
                 property.Name,
-                ReadDisplayString(option, "label") ?? property.Name,
+                DisplayText(option, "label", translations) ?? property.Name,
                 ReadDisplayString(option, "description") ?? string.Empty,
                 kind, checkbox ? null : OptionalString(option, "default_case"),
                 checkbox ? ReadStringArray(option, "default_case", required: false, path) : [],
                 ReadCount(option, "min_count", path) ?? 0, ReadCount(option, "max_count", path),
-                ParseInputs(option, path, translations), ParseCases(option, path),
+                ParseInputs(option, path, translations), ParseCases(option, path, translations),
                 ReadObjectOrEmpty(option, "pipeline_override", path)));
         }
         return result;
@@ -383,15 +389,15 @@ internal static partial class ProjectInterfaceLoader
                 var value => throw new InvalidDataException($"不支持 input_type={value}（{inputPath}）。 ")
             };
             result.Add(new InputDefinition(
-                name, ReadDisplayString(input, "label") ?? name,
+                name, DisplayText(input, "label", translations) ?? name,
                 ReadDisplayString(input, "description") ?? string.Empty,
                 password ? string.Empty : defaultValue.GetString()!, pipelineKind, OptionalString(input, "verify"),
-                ResolvePatternMessage(input, translations), password ? ProjectInputType.Password : inputType));
+                DisplayText(input, "pattern_msg", translations), password ? ProjectInputType.Password : inputType));
         }
         return result;
     }
 
-    private static IReadOnlyList<CaseDefinition> ParseCases(JsonElement option, string path)
+    private static IReadOnlyList<CaseDefinition> ParseCases(JsonElement option, string path, JsonElement translations)
     {
         if (!option.TryGetProperty("cases", out var array)) {
             return [];
@@ -409,7 +415,7 @@ internal static partial class ProjectInterfaceLoader
                 throw new InvalidDataException($"重复 case.name：{name}（{casePath}）。 ");
             }
             result.Add(new CaseDefinition(
-                name, ReadDisplayString(item, "label") ?? name,
+                name, DisplayText(item, "label", translations) ?? name,
                 ReadDisplayString(item, "description") ?? string.Empty,
                 ReadStringArray(item, "option", required: false, casePath),
                 ReadObjectOrEmpty(item, "pipeline_override", casePath)));
@@ -685,9 +691,12 @@ internal static partial class ProjectInterfaceLoader
         }
     }
 
-    private static string? ResolvePatternMessage(JsonElement input, JsonElement translations)
+    private static string? DisplayText(JsonElement obj, string key, JsonElement translations)
     {
-        var message = ReadDisplayString(input, "pattern_msg")?.Trim();
+        var message = ReadDisplayString(obj, key)?.Trim();
+        if (key == "label" && message == string.Empty) {
+            return string.Empty;
+        }
         if (message?.StartsWith('$') == true) {
             message = translations.ValueKind == JsonValueKind.Object
                 && translations.TryGetProperty(message[1..], out var value) && value.ValueKind == JsonValueKind.String

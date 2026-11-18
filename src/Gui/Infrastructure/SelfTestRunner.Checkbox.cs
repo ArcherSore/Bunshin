@@ -44,9 +44,12 @@ internal static partial class SelfTestRunner
         option["cases"]!.AsArray().RemoveAt(0);
         File.WriteAllText(path, pi.ToJsonString());
         Check("Stop", "停止");
+        option["cases"]!.AsArray().Add(JsonNode.Parse("""{"name":"Yes","label":"继续"}"""));
+        File.WriteAllText(path, pi.ToJsonString());
         Check("Stop", "停止");
         Require(messages.Count(message => message.Contains("EscortContinueS") && message.Contains("Yes")
             && message.Contains("Stop")) == 1, "重载、重绘和重新创建计划只应记录一次具体的回退。");
+        VerifyOptionKindMigration(testDirectory);
     }
 
     private static void VerifyCheckboxRecovery(string testDirectory)
@@ -92,8 +95,14 @@ internal static partial class SelfTestRunner
         Check(retired, "Charged");
         Check(empty);
         Check(missing, "Charged");
-        Require(messages.Count(message => message.Contains("Features") && message.Contains("Combo")) == 2,
+        var recovery = string.Join("；", messages);
+        Require(recovery.Split("Combo", StringSplitOptions.None).Length == 3 && recovery.Contains("Features"),
             "部分或全部失效各应记录一次变化。");
+        option["cases"]!.AsArray().Add(JsonNode.Parse("""{"name":"Combo"}"""));
+        File.WriteAllText(path, pi.ToJsonString());
+        project = ProjectPlanModule.Open(directory, configPath);
+        Check(partial, "Normal");
+        Check(retired, "Charged");
 
         option["min_count"] = 2;
         File.WriteAllText(path, pi.ToJsonString());

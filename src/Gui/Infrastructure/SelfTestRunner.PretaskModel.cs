@@ -13,6 +13,7 @@ internal static partial class SelfTestRunner
         Directory.CreateDirectory(directory);
         VerifyPretaskDefinitions(directory);
         VerifyPretaskOrdering(directory);
+        VerifyScopedQueueEdits(directory);
         VerifyPretaskArguments(directory);
         VerifyPretaskInputDefaults(directory);
         VerifyPretaskSharedInputs(directory);
@@ -63,6 +64,51 @@ internal static partial class SelfTestRunner
             && project.GetConfiguration("RealTask", PlanItemKind.Pretask).TaskOptions.Single().Name == "StartupMode"
             && project.GetConfiguration("RealTask").TaskOptions.Single().Name == "Mode",
             "前置任务与普通任务的同名标识必须由 Kind 区分，编辑器不能串用选项。");
+    }
+
+    private static void VerifyScopedQueueEdits(string testDirectory)
+    {
+        var directory = CreatePretaskFixture(Path.Combine(testDirectory, "scoped-edits"), """
+            [{"name":"Boot","label":"$boot","exec":"boot-fixture","controller":[],"resource":[]}]
+            """);
+        var path = Path.Combine(directory, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        var task = pi["task"]![0]!;
+        task["label"] = "$first";
+        pi["global_option"] = new JsonArray();
+        task["option"] = new JsonArray("ServerRange");
+        pi["task"]!.AsArray().Add(new JsonObject { ["name"] = "Other", ["entry"] = "Other" });
+        pi["languages"] = new JsonObject { ["zh_cn"] = "labels.json" };
+        pi["option"]!["ServerRange"]!["label"] = "$range";
+        var input = pi["option"]!["ServerRange"]!["inputs"]![0]!;
+        input["label"] = "$server";
+        File.WriteAllText(Path.Combine(directory, "labels.json"),
+            """{"first":"日常任务","boot":"启动大厅","range":"区服设置","server":"服务器范围"}""");
+        File.WriteAllText(path, pi.ToJsonString());
+        var config = Path.Combine(directory, "config.json");
+        var project = ProjectPlanModule.Open(directory, config);
+        project.SetInputValue("ServerRange", "server_range", "123");
+        input["verify"] = "^978-1012$";
+        File.WriteAllText(path, pi.ToJsonString());
+        project = ProjectPlanModule.Open(directory, config);
+        var range = project.GetConfiguration("RealTask").TaskOptions.Single(item => item.Name == "ServerRange");
+        Require(project.Tasks[0].Label == "日常任务" && range.Label == "区服设置"
+            && range.Inputs[0].Label == "服务器范围" && range.Inputs[0].Error is not null,
+            "更新后的错误字段及其任务应显示翻译后的名称。");
+        project.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
+        project.AddTask("Other");
+        project.AddPretask("Boot");
+        project.MoveTask("Other", 0);
+        Require(project.CreateRunStartAttempt().Plan.Items.Select(item => item.TaskName)
+            .SequenceEqual(["Boot", "Other"]), "未启用任务的旧值不能妨碍添加、移动和执行无关项。");
+        pi["pretask"]![0]!["resource"] = new JsonArray("OtherResource");
+        File.WriteAllText(path, pi.ToJsonString());
+        var logs = new List<string>();
+        project = ProjectPlanModule.Open(directory, config, project, logs.Add);
+        Require(project.CreateRunStartAttempt().Plan.Items.Single().TaskName == "Other"
+            && project.SelectedPretaskNames.Contains("Boot")
+            && logs.Any(message => message.Contains("启动大厅") && message.Contains("资源")),
+            "暂不适用的前置项保留在配置中，并说明本次跳过的原因。");
     }
 
     private static void VerifyPretaskOrdering(string testDirectory)

@@ -34,7 +34,10 @@ internal sealed record PresetItem(string Name, bool Enabled, JsonElement Options
 
 internal sealed record PretaskDefinition(
     string Name, string Label, string Description, string Executable, IReadOnlyList<string> Arguments,
-    IReadOnlyList<string> Options, bool Applicable);
+    IReadOnlyList<string> Options, string? SkipReason)
+{
+    internal bool Applicable => SkipReason is null;
+}
 
 internal sealed record TaskDefinition(
     string Name, string Label, string Description, string Entry,

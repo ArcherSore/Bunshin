@@ -21,14 +21,14 @@ public sealed partial class ProjectPlanModule
 {
     private readonly ProjectDefinition _project;
     private readonly ConfigurationSetStore _configStore;
-    private readonly HashSet<(Guid Configuration, string Message)> _reportedCaseRecoveries = [];
     private readonly Action<string>? _log;
     private ConfigurationSet _config;
     private string? _initializationWarning;
     private Exception? _initializationException;
     private readonly HashSet<(Guid Configuration, PlanItemKind Kind, string Name)> _disabledItems = [];
 
-    private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore, Action<string>? log)
+    private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore, Action<string>? log,
+        ProjectDefinition? previousProject)
     {
         _log = log;
         _project = project;
@@ -41,7 +41,7 @@ public sealed partial class ProjectPlanModule
             .Select(item => new ProjectTaskChoice(item.Name, item.Label, item.Description) {
                 Kind = PlanItemKind.Pretask
             }).ToArray();
-        _config = configStore.Load(project);
+        _config = configStore.Load(project, previousProject);
         if (configStore.WasMissing) {
             try {
                 AddTask(Tasks[0].Name);
@@ -81,6 +81,15 @@ public sealed partial class ProjectPlanModule
         var tasks = config.SelectedTasks.Select(name => Tasks.SingleOrDefault(item => item.Name == name)
             ?? new ProjectTaskChoice(name, name, "任务已不在项目中，请移除。"));
         return pretasks.Concat(missing).Concat(tasks).ToArray();
+    }
+    public string? SkippedPretaskMessage
+    {
+        get
+        {
+            var skipped = _project.Pretasks.Where(item => !item.Applicable && SelectedPretaskNames.Contains(item.Name))
+                .Select(item => $"“{item.Label}”（{item.SkipReason}）").ToArray();
+            return skipped.Length == 0 ? null : $"已跳过前置任务：{string.Join("、", skipped)}。";
+        }
     }
     public int SelectedItemCount => SelectedItems.Count;
     public IReadOnlyList<ProjectTaskChoice> EnabledItems => GetExecutionItems();
@@ -162,6 +171,11 @@ public sealed partial class ProjectPlanModule
         return true;
     }
 
+    // Read the declaration even when its task or option branch is outside the current execution scope.
+    public ProjectInputType? GetInputType(string optionName, string inputName) =>
+        _project.Options.GetValueOrDefault(optionName)?.Inputs
+            .FirstOrDefault(input => input.Name == inputName)?.InputType;
+
     public void ValidateConfiguration(bool startupOnly = false) =>
         ValidateActiveConfiguration(ExecutionConfiguration(startupOnly));
 
@@ -172,9 +186,9 @@ public sealed partial class ProjectPlanModule
         if (previous is not null && previous.ProjectName != project.Provenance.Name) {
             throw new InvalidDataException("项目身份已改变。请恢复原项目的资源包后重试，原配置已保留。");
         }
-        var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log), log);
+        var store = new ConfigurationSetStore(configPath, log);
+        var module = new ProjectPlanModule(project, store, log, previous?._project);
         if (previous is not null) {
-            module._reportedCaseRecoveries.UnionWith(previous._reportedCaseRecoveries);
             module._disabledItems.UnionWith(previous._disabledItems.Where(item => module.Configurations.Any(config =>
                 config.Id == item.Configuration && (item.Kind == PlanItemKind.Pretask
                     ? config.SelectedPretasks : config.SelectedTasks).Contains(item.Name, StringComparer.Ordinal))));
@@ -191,7 +205,6 @@ public sealed partial class ProjectPlanModule
         }
 
         var updated = config with { SelectedTasks = config.SelectedTasks.Append(taskName).ToArray() };
-        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return true;
     }
@@ -222,7 +235,6 @@ public sealed partial class ProjectPlanModule
             return false;
         }
         var updated = config with { SelectedPretasks = config.SelectedPretasks.Append(name).ToArray() };
-        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return true;
     }
@@ -258,7 +270,6 @@ public sealed partial class ProjectPlanModule
         selected.RemoveAt(currentIndex);
         selected.Insert(targetIndex, taskName);
         var updated = config with { SelectedTasks = selected };
-        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return true;
     }
@@ -342,7 +353,8 @@ public sealed partial class ProjectPlanModule
         }
 
         var config = FindConfiguration(configurationId);
-        var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCase(selectedCase));
+        var intent = ExplicitOptionIntent.CreateSelectedCase(option, selectedCase);
+        var updated = ReplaceExplicit(config, optionName, intent);
         SaveConfiguration(updated);
         return BuildConfiguration(updated);
     }
@@ -385,6 +397,9 @@ public sealed partial class ProjectPlanModule
 
     public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false)
     {
+        if (SkippedPretaskMessage is { } skipped) {
+            _log?.Invoke(skipped);
+        }
         var config = ExecutionConfiguration(startupOnly);
         if (config.SelectedTasks.Count + config.SelectedPretasks.Count == 0) {
             throw new InvalidOperationException("请先勾选要执行的任务或前置任务。");
@@ -553,11 +568,7 @@ public sealed partial class ProjectPlanModule
                 explicitInputs.Count != 0, null, null, [], inputs, []);
         }
 
-        var active = ExplicitOptionIntent.ReadActiveCases(option, config, message => {
-            if (_log is not null && _reportedCaseRecoveries.Add((config.Id, message))) {
-                _log($"配置“{config.Name}”：{message}");
-            }
-        });
+        var active = ExplicitOptionIntent.ReadActiveCases(option, config);
         var checkbox = option.Kind == OptionDefinitionKind.Checkbox;
         var children = BuildEditors(active.SelectMany(item => item.Options).ToArray(), config, typed);
         return new ProjectOptionEditor(

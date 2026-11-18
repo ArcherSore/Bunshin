@@ -114,6 +114,80 @@ internal static partial class SelfTestRunner
         });
     }
 
+    private static void VerifyDraftMigration(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "draft-migration");
+        var root = CreateProjectFixture(directory);
+        var path = Path.Combine(root, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        var task = pi["task"]![0]!;
+        task["option"] = new JsonArray("Profile", "Legacy", "Vanished");
+        var options = pi["option"]!.AsObject();
+        options["Profile"] = JsonNode.Parse("""
+            {"type":"input","inputs":[{"name":"token","password":true,"verify":"^$"},
+              {"name":"keep","default":"kept","verify":"^kept$"},{"name":"alias","default":"new","verify":"^new$"}]}
+            """);
+        var textOption = JsonNode.Parse("""
+            {"type":"input","inputs":[{"name":"value","default":"new","verify":"^new$"}]}
+            """)!;
+        options["Legacy"] = textOption.DeepClone();
+        options["Vanished"] = textOption.DeepClone();
+        File.WriteAllText(path, pi.ToJsonString());
+
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, directory, window => {
+            var panel = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            System.Windows.Controls.TextBox Field(string name) => ConfigurationDescendants(panel)
+                .OfType<System.Windows.Controls.TextBox>().Single(field => AutomationProperties.GetName(field) == name);
+            void Expand()
+            {
+                if (!ConfigurationDescendants(panel).OfType<ParameterRowPanel>().Any()) {
+                    ToggleRealTask(panel);
+                }
+            }
+
+            Expand();
+            ((Wpf.Ui.Controls.PasswordBox)Field("Profile · token")).Password = SecretInputValue;
+            Field("Profile · alias").Text = "removed field draft";
+            Field("Profile · keep").Text = "sibling draft";
+            Field("Legacy").Text = "changed kind draft";
+            Field("Vanished").Text = "removed option draft";
+
+            File.WriteAllText(path, "{");
+            Click(window, "PrepareEnvironmentButton");
+            Require(Named<System.Windows.Controls.Button>(window, "RetryProjectLoadButton").IsVisible,
+                "项目损坏后应允许从原任务页重载。");
+            var fields = options["Profile"]!["inputs"]!.AsArray();
+            var alias = fields[2]!.DeepClone();
+            fields.RemoveAt(2);
+            fields[0] = JsonNode.Parse("""{"name":"token","default":"新版公开值"}""");
+            options["Legacy"] = JsonNode.Parse("""{"type":"select","default_case":"A","cases":[{"name":"A"}]}""");
+            options.Remove("Vanished");
+            task["option"] = new JsonArray("Profile", "Legacy");
+            File.WriteAllText(path, pi.ToJsonString());
+            Click(window, "RetryProjectLoadButton");
+            Require(!ConfigurationDescendants(panel).OfType<System.Windows.Documents.Run>()
+                .Any(run => run.Text.Contains(SecretInputValue)), "密码改为普通字段后，折叠摘要不能显示旧密码草稿。");
+            Expand();
+            Require(Field("Profile · token") is not Wpf.Ui.Controls.PasswordBox
+                && Field("Profile · token").Text == "新版公开值" && Field("Profile · keep").Text == "sibling draft",
+                "重试加载后应清除旧密码草稿，并保留同一输入尚未修正的草稿。");
+
+            fields.Add(alias);
+            options["Legacy"] = textOption.DeepClone();
+            options["Vanished"] = textOption.DeepClone();
+            task["option"] = new JsonArray("Profile", "Legacy", "Vanished");
+            File.WriteAllText(path, pi.ToJsonString());
+            Click(window, "PrepareEnvironmentButton");
+            Require(preparations == 0 && Field("Profile · alias").Text == "new" && Field("Legacy").Text == "new"
+                && Field("Vanished").Text == "new" && Field("Profile · keep").Text == "sibling draft",
+                "已消失的选项、字段或已改变类型的选项重新出现时应采用新默认值，仍存在的同名字段保留草稿。");
+        }, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(true));
+        }, projectDirectory: root);
+    }
+
     private static void AddRequiredInput(string directory)
     {
         var interfacePath = Path.Combine(directory, "interface.json");

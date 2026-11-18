@@ -28,6 +28,71 @@ internal static partial class SelfTestRunner
         PlanHeader(card).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
     }
 
+    private static void VerifyRunValidationSummary(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "run-validation-summary");
+        var root = CreatePretaskFixture(directory, """
+            [{"name":"Boot","label":"启动游戏","exec":"boot-fixture","option":["LaunchInput"]}]
+            """);
+        AddSecretAndPathInputs(root);
+        EditInterface(root, pi => {
+            var login = pi["option"]!["Login"]!;
+            login["label"] = "登录密码";
+            login["inputs"]![0]!["verify"] = "^$";
+            login["inputs"]![0]!["pattern_msg"] = "请修改登录密码";
+            var fields = pi["option"]!["LaunchInput"]!["inputs"]!;
+            foreach (var (index, label) in new[] { (0, "角色"), (1, "区服") }) {
+                fields[index]!["label"] = label;
+                fields[index]!["verify"] = "^1$";
+                fields[index]!["pattern_msg"] = $"请填写{label}";
+            }
+        });
+        var path = Path.Combine(root, "config", "configurations.json");
+        ProjectPlanModule.Open(root, path).AddPretask("Boot");
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, directory, window => {
+            var panel = Named<Panel>(window, "PlanItemsPanel");
+            var banner = Named<TextBlock>(window, "ProjectValidationText");
+            T Field<T>(string label) where T : FrameworkElement => ConfigurationDescendants(panel)
+                .OfType<T>().Single(field => AutomationProperties.GetName(field) == label);
+            Border Card(string name) => ConfigurationDescendants(panel).OfType<Border>()
+                .Single(card => card.Tag is ProjectTaskChoice task && task.Name == name);
+            bool Marked(string name) => AutomationProperties.GetItemStatus(Card(name)).Length != 0;
+            void Submit(Button button)
+            {
+                Require(button.IsEnabled && button.IsVisible && button.Focus(), "应能使用任务页启动入口。");
+                button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            }
+
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            if (!ConfigurationDescendants(Card("RealTask")).OfType<Wpf.Ui.Controls.PasswordBox>().Any()) {
+                ToggleRealTask(panel);
+            }
+            var password = Field<Wpf.Ui.Controls.PasswordBox>("登录密码");
+            Require(password.Focus(), "应能编辑普通任务的密码。");
+            password.Password = SecretInputValue;
+            Submit(Named<Button>(window, "PrepareEnvironmentButton"));
+            PumpUntil(() => ConfigurationDescendants(Card("Boot")).OfType<TextBox>().Any(field =>
+                field.IsKeyboardFocused && AutomationProperties.GetName(field).Contains("角色")),
+                "即使普通任务已展开，也应按执行顺序定位到启动项的第一个错误字段。");
+            Require(banner.IsVisible && new[] { "启动游戏", "请填写角色", "请填写区服", "Real task", "请修改登录密码" }
+                    .All(message => banner.Text.Contains(message)) && !banner.Text.Contains(SecretInputValue)
+                && Marked("Boot") && Marked("RealTask") && preparations == 0,
+                "开始前应汇总每张受影响卡片及所有字段的改法，标记所有卡片并保护密码。");
+            ToggleRealTask(panel);
+            Require(Field<Wpf.Ui.Controls.PasswordBox>("登录密码").Password == SecretInputValue
+                && Marked("Boot") && Marked("RealTask") && banner.Text.Contains("请填写角色"),
+                "手动打开其他卡片后应保留草稿、卡片标记和启动问题汇总。");
+            Submit(Field<Button>("仅执行启动"));
+            PumpUntil(() => Marked("Boot") && !Marked("RealTask"), "仅执行启动应只标记前置任务。");
+            Require(banner.Text.Contains("请填写角色") && banner.Text.Contains("请填写区服")
+                && !banner.Text.Contains("登录密码") && preparations == 0, "仅执行启动只应报告两个启动参数。");
+        }, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(true));
+        }, projectDirectory: root);
+    }
+
     private static void VerifyStartScopeWiring(AppLogger logger, string testDirectory)
     {
         var directory = Path.Combine(testDirectory, "start-scope");

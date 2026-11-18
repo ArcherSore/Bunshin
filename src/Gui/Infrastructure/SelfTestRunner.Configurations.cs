@@ -605,6 +605,7 @@ internal static partial class SelfTestRunner
         if (project.Configurations.Count != 1 || project.SelectedTaskNames.Count != 0) {
             throw new InvalidOperationException("空列表必须生成一份空配置。");
         }
+        path = Path.Combine(directory, "without-backups.json");
         foreach (var corrupt in new[] {
             "{}", "{\"SchemaVersion\":99}", "{\"SchemaVersion\":\"2\"}",
             "{\"SchemaVersion\":2,\"SchemaVersion\":2,\"Configurations\":[]}",
@@ -660,12 +661,13 @@ internal static partial class SelfTestRunner
         Require(locked.LoadWarning is not null, "迁移保存失败应留下警告。");
         Expect("保存失败不能写成已更新");
 
+        path = Path.Combine(directory, "without-backups.json");
         File.WriteAllText(path, "{ broken");
         var project = Open();
         Require(project.LoadWarning is not null, "读取回退应留下警告，由 GUI 写入日志。");
         Expect("回退时尚未备份，不应写备份");
         project.AddTask("RealTask");
-        var backup = Path.GetFileName(Directory.GetFiles(directory, "configurations.invalid-*.json").Single());
+        var backup = Path.GetFileName(Directory.GetFiles(directory, "without-backups.invalid-*.json").Single());
         Expect("备份应只写文件名", $"已备份无法读取的任务配置 [backup={backup}]");
     }
 
@@ -753,11 +755,10 @@ internal static partial class SelfTestRunner
         var id = configuration.GetProperty("Id").GetGuid();
         if (id == Guid.Empty || root.GetProperty("ActiveConfigurationId").GetGuid() != id
             || configuration.GetProperty("Name").GetString() != "配置 1"
-            || configuration.GetProperty("ExplicitOptions").GetProperty("OldOption")
-                .GetProperty("SelectedCase").GetString() != "Keep"
+            || configuration.GetProperty("ExplicitOptions").TryGetProperty("OldOption", out _)
             || project.CreateRunStartAttempt().Plan.ResolvedGlobalOptions.GetProperty("ServerRange")
                 .GetProperty("server_range").GetString() != "978") {
-            throw new InvalidOperationException("V1 包装必须保留原始意图并激活稳定身份。");
+            throw new InvalidOperationException("V1 迁移必须保留仍有效的意图、清理已删除的选项并激活稳定身份。");
         }
         _ = ProjectPlanModule.Open(projectDirectory, path);
         using var reopened = JsonDocument.Parse(File.ReadAllBytes(path));

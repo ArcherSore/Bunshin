@@ -57,6 +57,7 @@ internal static partial class SelfTestRunner
             "Run 计划日志不得包含密码原文。");
 
         VerifyUndecryptablePasswords(testDirectory);
+        VerifyInputMigration(testDirectory);
         var source = File.ReadAllText(Path.Combine(directory, "interface.json"));
         VerifyRejectedProjectInterface(testDirectory, source, "password-default", "不能声明 default",
             root => root["option"]!["Login"]!["inputs"]![0]!["default"] = "leaked");

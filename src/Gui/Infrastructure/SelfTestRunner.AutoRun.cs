@@ -214,7 +214,7 @@ internal static partial class SelfTestRunner
             Require(ran && prepared.Count == 0 && failures.Count == 1,
                 "任务配置读不出来时必须报告失败，不能悄悄跳过，也不能运行占位的配置。"),
             fixture: directory => {
-                twoConfigurations(directory);
+                Directory.CreateDirectory(Path.Combine(directory, "config"));
                 File.WriteAllText(Path.Combine(directory, "config", "configurations.json"), "{ not json");
             });
         string? secretProject = null;
@@ -225,7 +225,10 @@ internal static partial class SelfTestRunner
             Launch("resource-upgrade", boot, "日常", false, (window, ran) => {
                 Require(ran && failures.Count == 1 && prepared.Count == 0
                     && failures[0].Contains("Real task") && failures[0].Contains("登录密码")
-                    && failures[0].Contains("请重新填写") && reported.Contains(failures[0])
+                    && failures[0].Contains("请重新填写") && failures[0].Contains("领取奖励")
+                    && failures[0].Contains("请填写收件人") && reported.Contains(failures[0])
+                    && failures[0].Contains(Named<System.Windows.Controls.TextBlock>(window,
+                        "ProjectValidationText").Text)
                     && !reported.Concat(failures).Any(message => message.Contains(SecretInputValue)),
                     "无人值守应在准备前以同一条日志和通知说明任务、密码字段与改法，并保护密码原文。");
                 File.WriteAllText(Path.Combine(secretProject!, "interface.json"), "{");
@@ -245,7 +248,18 @@ internal static partial class SelfTestRunner
                 EditInterface(directory, root => root["option"]!["Login"]!["label"] = "登录密码");
                 twoConfigurations(directory);
                 var path = Path.Combine(directory, "config", "configurations.json");
-                ProjectPlanModule.Open(directory, path).SetInputValue("Login", "password", SecretInputValue);
+                EditInterface(directory, root => {
+                    root["task"]!.AsArray().Add(JsonNode.Parse("""
+                        {"name":"Collect","label":"领取奖励","entry":"Collect","option":["Recipient"]}
+                        """));
+                    root["option"]!["Recipient"] = JsonNode.Parse("""
+                        {"type":"input","label":"收件人","inputs":[
+                          {"name":"name","default":"","verify":".+","pattern_msg":"请填写收件人"}]}
+                        """);
+                });
+                var project = ProjectPlanModule.Open(directory, path);
+                project.SetInputValue("Login", "password", SecretInputValue);
+                project.AddTask("Collect");
             });
         } finally {
             logger.EntryWritten -= Capture;

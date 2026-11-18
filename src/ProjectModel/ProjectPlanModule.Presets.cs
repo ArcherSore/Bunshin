@@ -41,7 +41,7 @@ public sealed partial class ProjectPlanModule
                     group.ToDictionary(pair => pair.Key.Field!, pair => pair.Value)),
                 { Kind: OptionDefinitionKind.Checkbox } => ExplicitOptionIntent.CreateSelectedCases(
                     JsonSerializer.Deserialize<string[]>(group.Single().Value)!),
-                _ => ExplicitOptionIntent.CreateSelectedCase(group.Single().Value)
+                var option => ExplicitOptionIntent.CreateSelectedCase(option, group.Single().Value)
             }, StringComparer.Ordinal);
         var configuration = new TaskConfiguration {
             Id = Guid.NewGuid(), Name = preset.Label, SelectedTasks = tasks, SelectedPretasks = pretasks,
