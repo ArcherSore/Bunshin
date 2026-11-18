@@ -56,7 +56,6 @@ public partial class MainWindow : FluentWindow
 
     private readonly AppLogger _logger;
     private readonly ApplicationSettings _settings;
-    private readonly HelpPageModel _help;
     private MainSection _section;
     private readonly string _applicationDirectory;
     private readonly Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task> _prepareEnvironment;
@@ -155,8 +154,7 @@ public partial class MainWindow : FluentWindow
             ManageChildSessionCredentialsAsync, ClearDebugFilesAsync, ViewWelcome, OpenTaskDescriptionLink,
             ReadLicense, autostart);
         SettingsView.DataContext = _settings.Page;
-        HelpView.DataContext = _help = new HelpPageModel(
-            _settings.ExportDiagnostics, new SettingsAction(OpenIssuesAsync), ReportCopyFailure);
+        HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock);
         ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
@@ -1245,31 +1243,19 @@ public partial class MainWindow : FluentWindow
         AddDropIndicator();
     }
 
-    private Task OpenAfdianAsync() =>
-        OpenWebPageAsync(_settings.OpenAfdian, ProjectProfile.SponsorUrl, "爱发电", "爱发电赞助页面");
-
-    private Task OpenIssuesAsync() => OpenWebPageAsync(
-        _help.OpenIssues, ProjectProfile.IssuesUrl, "GitHub Issues", "GitHub Issues 页面");
-
-    private Task OpenWebPageAsync(SettingsAction action, string address, string site, string page)
+    private Task OpenAfdianAsync()
     {
+        var address = ProjectProfile.SponsorUrl;
         try {
             Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
-            action.Status = string.Empty;
+            _settings.OpenAfdian.Status = string.Empty;
         } catch (Exception exception) {
-            action.Status = $"无法打开{site}，请检查默认浏览器设置。";
-            _logger.Warn($"打开{page}失败。", exception);
+            _settings.OpenAfdian.Status = "无法打开爱发电，请检查默认浏览器设置。";
+            _logger.Warn("打开爱发电赞助页面失败。", exception);
             WpfMessageBox.Show(this, $"请手动访问：{address}\n\n按 Ctrl+C 可复制此提示中的网址。",
-                $"无法打开{site}", MessageBoxButton.OK, MessageBoxImage.Information);
+                "无法打开爱发电", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         return Task.CompletedTask;
-    }
-
-    private void ReportCopyFailure(Exception exception)
-    {
-        _logger.Warn("复制 QQ 号失败。", exception);
-        WpfMessageBox.Show(this, $"剪贴板暂时不可用，请手动记下 QQ 号：{_help.Qq}",
-            "无法复制 QQ 号", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void OpenTaskDescriptionLink(Uri uri)

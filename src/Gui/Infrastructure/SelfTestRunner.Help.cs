@@ -28,8 +28,7 @@ internal static partial class SelfTestRunner
             "Windows Hello 指引不应出现在与登录无关的操作上。");
     }
 
-    // Help sits between Update and Settings, each answer opens on its own, and the page exports diagnostics through
-    // the same action as Settings.
+    // Help sits between Update and Settings, and each answer opens on its own.
     private static void VerifyHelpPage(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "help-page"), (window, _) => {
@@ -41,8 +40,6 @@ internal static partial class SelfTestRunner
                 && !((UIElement)window.FindName("HomeView")).IsVisible
                 && !((UIElement)window.FindName("RuntimeSidebar")).IsVisible, "点击帮助应切换到常见问题页并标记选中项。");
             var page = (HelpPageModel)view.DataContext;
-            Require(ReferenceEquals(page.ExportDiagnostics, SettingsActionFor(window, "diagnostics.export")),
-                "常见问题页应复用诊断包导出。");
 
             var headers = SettingsVisualDescendants(view).OfType<ToggleButton>().ToArray();
             var answers = SettingsVisualDescendants(view).OfType<RevealDecorator>().ToArray();
