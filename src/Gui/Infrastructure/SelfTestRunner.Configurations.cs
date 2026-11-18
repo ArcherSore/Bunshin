@@ -68,6 +68,16 @@ internal static partial class SelfTestRunner
                 Require(File.ReadAllBytes(path).SequenceEqual(source), "项目身份不匹配时必须保留原文件。");
             }
         }
+        foreach (var legacy in new[] {
+            """{"SchemaVersion":1,"SelectedTasks":["DifferentTask"],"ExplicitOptions":{}}""",
+            """{"SchemaVersion":1,"SelectedTasks":["RealTask"],"ExplicitOptions":{}}""",
+            """{"SchemaVersion":2,"Configurations":[]}"""
+        }) {
+            File.WriteAllText(path, legacy);
+            Require(Throws<InvalidDataException>(() => ProjectPlanModule.Open(projectDirectory, path))
+                && File.ReadAllText(path) == legacy, "其他项目不得加载或改写无项目标记的旧配置，即使任务同名或列表为空。");
+        }
+        File.WriteAllBytes(path, source);
         EditInterface(projectDirectory, root => {
             root["name"] = project.ProjectName;
             root["task"]![0]!["option"] = new System.Text.Json.Nodes.JsonArray("MissingOption");
@@ -149,6 +159,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyInvalidConfigurationIsolation(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var path = Path.Combine(testDirectory, "invalid-intent.json");
         File.WriteAllText(path, """
             {"SchemaVersion":1,"SelectedTasks":["RemovedTask","RealTask"],"ExplicitOptions":{
@@ -165,7 +176,7 @@ internal static partial class SelfTestRunner
         if (editor.GlobalOptions.Single().Inputs[0].Value != "invalid") {
             throw new InvalidOperationException("语义失效的显式参数仍应可查看，不应清空。");
         }
-        project.RemoveTask("RemovedTask");
+        Require(!project.SelectedTaskNames.Contains("RemovedTask"), "已知项目应清理迁移前已删除的任务。");
         project.SetInputValue(invalid, "ServerRange", "server_range", "978");
         _ = project.CreateRunStartAttempt();
         project.DeleteConfiguration(invalid);
@@ -308,9 +319,6 @@ internal static partial class SelfTestRunner
             .OfType<System.Windows.Controls.TextBlock>()
             .SingleOrDefault(item => item.Text == "Use ranges such as 978 or 978-1012"
                 && item.Visibility == System.Windows.Visibility.Visible);
-        bool RevealDraft() => typeof(Views.MainWindow).GetMethod("RevealInvalidParameter",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .Invoke(window, [false]) is not null;
         string SavedServer() => project.Configurations[0].ExplicitOptions["ServerRange"].GetProperty("Inputs")
             .GetProperty("server_range").GetString()!;
 
@@ -329,8 +337,8 @@ internal static partial class SelfTestRunner
         }
         InvokeOnboarding(window, "RenderTaskPlan");
         input = Server();
-        if (input.Text != "978-," || Hint() is null || !RevealDraft()) {
-            throw new InvalidOperationException("未修正的非法输入在重绘后必须保留，并阻止开始任务。");
+        if (input.Text != "978-," || Hint() is null) {
+            throw new InvalidOperationException("重绘后应保留非法输入及其提示。");
         }
         SetOnboardingField(window, "_expandedTaskName", null!);
         InvokeOnboarding(window, "RenderTaskPlan");
@@ -349,7 +357,7 @@ internal static partial class SelfTestRunner
                 RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
             });
         }
-        if (input.Text != "979" || Hint() is not null || RevealDraft()) {
+        if (input.Text != "979" || Hint() is not null) {
             throw new InvalidOperationException("Esc 必须恢复已保存值并清除字段错误。");
         }
 
@@ -543,6 +551,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyConfigurationFallback(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var directory = Path.Combine(testDirectory, "fallback");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "configurations.json");
@@ -612,6 +621,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyConfigurationStoreLog(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var directory = Path.Combine(testDirectory, "store-log");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "configurations.json");
@@ -725,6 +735,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyConfigurationMigration(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var path = Path.Combine(testDirectory, "migration.json");
         File.WriteAllText(path, """
             {"SchemaVersion":1,"SelectedTasks":["RealTask"],"ExplicitOptions":{

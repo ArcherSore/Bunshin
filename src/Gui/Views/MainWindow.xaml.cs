@@ -1906,7 +1906,7 @@ public partial class MainWindow : FluentWindow
             if (_optionInputEditors.TryGetValue(
                 (_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name), out var editor)) {
                 ShowInputNotes(notes, editor, input.Error,
-                    input.Draft is not null && input.Error is not null ? input.Show(input.SavedValue) : null);
+                    input.Draft is not null && input.Draft != input.SavedValue ? input.Show(input.SavedValue) : null);
             }
         }
     }

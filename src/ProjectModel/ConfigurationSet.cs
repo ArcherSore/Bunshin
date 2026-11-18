@@ -106,7 +106,7 @@ internal sealed class ConfigurationSetStore
             LoadWarning = "无法读取任务配置，已显示临时空配置。原文件已保留，请检查配置文件后重新加载。";
             return CreateEmpty() with { ProjectName = project.Provenance.Name };
         }
-        if (savedProject is not null && savedProject != project.Provenance.Name) {
+        if ((savedProject ?? ProjectProfile.LegacyConfigurationProject) != project.Provenance.Name) {
             throw new InvalidDataException("任务配置属于其他项目。请恢复对应的资源包后重试，原配置已保留。");
         }
         var tasks = project.Tasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
@@ -119,19 +119,13 @@ internal sealed class ConfigurationSetStore
             }
             return selected.Where(defined.Contains).ToArray();
         }
-        var recovered = config with {
+        config = config with {
             ProjectName = project.Provenance.Name,
             Configurations = config.Configurations.Select(item => item with {
                 SelectedTasks = KeepDefined(item.SelectedTasks, tasks, "任务", item.Name),
                 SelectedPretasks = KeepDefined(item.SelectedPretasks, pretasks, "前置任务", item.Name)
             }).ToArray()
         };
-        // Older Bunshin releases shipped only with MaaNOP and recorded no project identity. An unbound file
-        // opened with another PI can still be edited, but missing names alone cannot authorize deletion.
-        if (removed.Count != 0 && savedProject is null && project.Provenance.Name != "MaaNOP") {
-            return config;
-        }
-        config = recovered;
         changes.AddRange(removed);
         if (changes.Count != 0) {
             _pendingChanges = $"已更新任务配置文件 [reason={string.Join("；", changes)}]";

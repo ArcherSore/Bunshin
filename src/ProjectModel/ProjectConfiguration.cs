@@ -167,12 +167,18 @@ internal static class ExplicitOptionIntent
         return ToElement(new JsonObject { ["Inputs"] = inputs });
     }
 
-    internal static JsonElement SetInput(OptionDefinition option, TaskConfiguration config, string name, string value)
+    // Update only the named field, preserving sibling values including their original password ciphertext.
+    internal static JsonElement? UpdateInput(OptionDefinition option, TaskConfiguration config, string name,
+        string? value)
     {
         var inputs = config.ExplicitOptions.TryGetValue(option.Name, out var current)
             ? current.GetProperty("Inputs").Deserialize<JsonObject>()! : new JsonObject();
-        inputs[name] = option.IsPassword(name) ? Protect(value) : value;
-        return ToElement(new JsonObject { ["Inputs"] = inputs });
+        if (value is null) {
+            inputs.Remove(name);
+        } else {
+            inputs[name] = option.IsPassword(name) ? Protect(value) : value;
+        }
+        return inputs.Count == 0 ? null : ToElement(new JsonObject { ["Inputs"] = inputs });
     }
 
     // Passwords stay DPAPI-encrypted for the current Windows user in the configuration, also in memory, and are

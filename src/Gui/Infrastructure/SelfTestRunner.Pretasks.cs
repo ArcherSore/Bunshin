@@ -126,6 +126,15 @@ internal static partial class SelfTestRunner
                     Require(FindControl<TextBox>("LaunchInput · caption").Text == "仍无法转换",
                         "前置项应使用已保存的原文，普通任务的无效草稿仍须保留。");
 
+                    caption["pipeline_type"] = "string";
+                    File.WriteAllText(interfacePath, definition.ToJsonString());
+                    VerifyStartupOnly("规则放宽后仍应提交已保存的前置参数。");
+                    var draft = FindControl<TextBox>("LaunchInput · caption");
+                    Require(draft.Text == "仍无法转换" && AutomationProperties.GetItemStatus(draft).Length == 0
+                        && ConfigurationDescendants(items).OfType<TextBlock>()
+                            .Any(note => note.IsVisible && note.Text.Contains("启动参数") && note.Text.Contains("Esc")),
+                        "有效的旧草稿仍应显示实际执行的已保存值，并提供 Esc 还原提示。");
+
                     File.WriteAllText(interfacePath, "{");
                     Click(window, "StartTaskHeaderButton");
                     Require(Named<UIElement>(window, "ProjectEmptyStatePanel").IsVisible

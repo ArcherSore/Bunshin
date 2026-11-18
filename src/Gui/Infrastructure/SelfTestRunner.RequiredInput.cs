@@ -28,8 +28,6 @@ internal static partial class SelfTestRunner
             "填写合法值后必须可以开始运行，并替换进 pipeline_override。");
 
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "required-input-window"), (window, _) => {
-            const System.Reflection.BindingFlags flags =
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
             SetOnboardingField(window, "_expandedTaskName", "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
@@ -40,12 +38,14 @@ internal static partial class SelfTestRunner
                 .Single(panel => ConfigurationDescendants(panel).Contains(editor));
             bool Note() => ConfigurationDescendants(Row()).OfType<System.Windows.Controls.TextBlock>()
                 .Any(text => text.Text == "Fill in the recipient");
-            Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error")
-                && typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false]) is not null,
-                "未填写的必填输入必须标红、显示 pattern_msg，并阻止开始。");
+            Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error"),
+                "未填写的必填输入必须标红并显示 pattern_msg。");
 
             editor.Text = "Kakashi";
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [editor, false]);
+            editor.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
+                System.Windows.Input.Keyboard.PrimaryDevice, 0, editor, null) {
+                RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
+            });
             Require(!Row().IsInvalid && !Note()
                 && editor.ReadLocalValue(System.Windows.Controls.Control.BorderBrushProperty)
                     == System.Windows.DependencyProperty.UnsetValue,

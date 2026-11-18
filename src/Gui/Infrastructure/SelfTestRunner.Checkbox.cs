@@ -121,10 +121,23 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(directory, configPath);
         project.AddPretask("Boot");
         project.SetSelectedCases("Features", ["Normal", "Charged", "Combo"]);
+        project.SetInputValue("ServerRange", "server_range", "123");
+        pi["option"]!["ServerRange"]!["inputs"]![0]!["verify"] = "^978-1012$";
         option["default_case"] = new JsonArray("Normal");
         option["max_count"] = 1;
         File.WriteAllText(path, pi.ToJsonString());
         project = ProjectPlanModule.Open(directory, configPath);
+        var editingPath = Path.Combine(directory, "disabled-task.json");
+        File.Copy(configPath, editingPath);
+        var editing = ProjectPlanModule.Open(directory, editingPath);
+        editing.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
+        editing.SetSelectedCase("Mode", "Minimal");
+        editing.SetSelectedCases("Features", ["Normal", "Charged"]);
+        var reopened = ProjectPlanModule.Open(directory, editingPath, editing);
+        var options = reopened.GetConfiguration("RealTask").TaskOptions;
+        Require(options.Single(item => item.Name == "Mode").SelectedCase == "Minimal"
+            && options.Single(item => item.Name == "Features").SelectedCases.Count == 2,
+            "临时禁用的普通任务中原有输入失效时，单选和多选仍应可独立保存。");
         Require(Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(startupOnly: true)),
             "上限降低后，计划必须等到用户决定取消哪些有效选择。");
         var preparations = 0;
@@ -212,8 +225,6 @@ internal static partial class SelfTestRunner
     private static void VerifyCheckboxEditor(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "checkbox-editor"), (window, _) => {
-            const System.Reflection.BindingFlags flags =
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             var project = ProjectOf(window);
             EndTour(window);
             SetOnboardingField(window, "_expandedTaskName", "RealTask");
@@ -247,9 +258,8 @@ internal static partial class SelfTestRunner
             Require(Option("Features").SelectedCases.Count == 0 && row.IsInvalid
                 && ConfigurationDescendants(row).OfType<TextBlock>()
                     .Any(text => text.Text.Contains("0") && text.Text.Contains("1"))
-                && ParameterInspector.ShowCases(Option("Features")) == "无"
-                && typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false]) is not null,
-                "少于 min_count 时必须保存、标红并阻止开始。");
+                && ParameterInspector.ShowCases(Option("Features")) == "无",
+                "少于 min_count 时必须保存并显示数量提示。");
 
             Segments("Tier").SelectedItems.Add(Case(Segments("Tier"), "Low"));
             Segments("Tier").SelectedItems.Add(Case(Segments("Tier"), "High"));

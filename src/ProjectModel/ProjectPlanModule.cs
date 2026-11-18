@@ -298,7 +298,7 @@ public sealed partial class ProjectPlanModule
         if (CheckInputValue(config, option, inputName, value, kind) is { } error) {
             throw new InvalidDataException(error);
         }
-        var intent = ExplicitOptionIntent.SetInput(option, config, inputName, value);
+        var intent = ExplicitOptionIntent.UpdateInput(option, config, inputName, value);
         var updated = ReplaceExplicit(config, optionName, intent);
         var view = BuildConfiguration(updated);
         SaveConfiguration(updated);
@@ -317,17 +317,10 @@ public sealed partial class ProjectPlanModule
             return;
         }
 
-        JsonElement? remaining = null;
-        if (inputName is not null) {
-            // Keep sibling fields exactly as saved, including encrypted passwords.
-            var inputs = current.GetProperty("Inputs").Deserialize<System.Text.Json.Nodes.JsonObject>()!;
-            if (!inputs.Remove(inputName)) {
-                return;
-            }
-            if (inputs.Count > 0) {
-                remaining = JsonSerializer.SerializeToElement(new { Inputs = inputs });
-            }
+        if (inputName is not null && !current.GetProperty("Inputs").TryGetProperty(inputName, out _)) {
+            return;
         }
+        var remaining = inputName is null ? null : ExplicitOptionIntent.UpdateInput(option, config, inputName, null);
         SaveConfiguration(ReplaceExplicit(config, optionName, remaining));
     }
 
@@ -350,7 +343,6 @@ public sealed partial class ProjectPlanModule
 
         var config = FindConfiguration(configurationId);
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCase(selectedCase));
-        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return BuildConfiguration(updated);
     }
@@ -382,7 +374,6 @@ public sealed partial class ProjectPlanModule
         }
 
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCases(ordered));
-        ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
         return BuildConfiguration(updated);
     }

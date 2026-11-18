@@ -279,6 +279,7 @@ internal static partial class SelfTestRunner
               {"name":"Finish","exec":"finish-fixture"}
             ]
             """);
+        EditInterface(directory, root => root["name"] = "MaaNOP");
         var path = Path.Combine(directory, "config.json");
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
