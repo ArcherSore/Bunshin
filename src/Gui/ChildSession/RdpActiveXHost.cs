@@ -119,6 +119,13 @@ internal sealed class RdpActiveXHost : AxHost
         RunComStep("启用 CredSSP", () => SetComProperty(advancedSettings, "EnableCredSspSupport", true));
         RunComStep("启用远程 Windows 键", () => SetComProperty(advancedSettings, "EnableWindowsKey", 1));
         RunComStep("设置显示缩放 (SmartSizing)", () => SetComProperty(advancedSettings, "SmartSizing", _smartSizingEnabled));
+        RunComStep("设置 RDP 图形小缓存", () =>
+        {
+            // SmallCacheMode retains the full protocol and hardware path while reducing the graphics cache.
+            var graphicsSettings = GetComProperty(client, "AdvancedSettings9")
+                ?? throw new COMException("RDP ActiveX 未返回 AdvancedSettings9。");
+            SetComProperty(graphicsSettings, "ClientProtocolSpec", 2);
+        });
 
         object connectToChildSession = true;
         RunComStep("设置 ConnectToChildSession", () =>

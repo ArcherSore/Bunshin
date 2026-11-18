@@ -559,12 +559,12 @@
             </Grid>
         </ControlTemplate>
         <!-- Runtime console: one card whose sections are divided by hairlines. -->
-        <Style x:Key="Console.Card" TargetType="Border">
+        <Style x:Key="Console.Card" TargetType="views:ShadowBorder">
             <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
             <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
-            <Setter Property="Effect">
+            <Setter Property="Shadow">
                 <Setter.Value>
                     <DropShadowEffect BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.06"
                                       Color="#182230" />
@@ -1177,7 +1177,7 @@
                                       AutomationProperties.HelpText="拖动或使用左右方向键调整宽度" />
                         <!-- One runtime console: run control and grouped activity as sections. The desktop viewer
                              is its own window, toggled from the run control header. -->
-                        <Border x:Name="RuntimeSidebar" Grid.Column="1" Margin="0,14,16,16"
+                        <views:ShadowBorder x:Name="RuntimeSidebar" Grid.Column="1" Margin="0,14,16,16"
                                 Style="{StaticResource Console.Card}">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -1768,7 +1768,7 @@
                                     </Grid>
                                 </Grid>
                             </Grid>
-                        </Border>
+                        </views:ShadowBorder>
                     </Grid>
 
                     <views:SettingsView x:Name="SettingsView" Visibility="Collapsed" />
@@ -1838,13 +1838,13 @@
                     </ControlTemplate>
                 </Button.Template>
             </Button>
-            <Border x:Name="UpdateDialog" Width="440" MaxHeight="600" Margin="24"
+            <views:ShadowBorder x:Name="UpdateDialog" Width="440" MaxHeight="600" Margin="24"
                     HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24"
                     Background="{StaticResource Brush.Surface}" BorderBrush="{StaticResource Preview.Border}"
                     BorderThickness="1" CornerRadius="{StaticResource Radius.Section}">
-                <Border.Effect>
+                <views:ShadowBorder.Shadow>
                     <DropShadowEffect BlurRadius="24" ShadowDepth="8" Opacity="0.2" Color="#0F172A" />
-                </Border.Effect>
+                </views:ShadowBorder.Shadow>
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -1950,7 +1950,7 @@
                         </Grid>
                     </StackPanel>
                 </Grid>
-            </Border>
+            </views:ShadowBorder>
         </Grid>
         <Grid x:Name="WelcomeOverlay" Panel.ZIndex="210" Visibility="Collapsed" Focusable="True"
               KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
@@ -1969,12 +1969,12 @@
                 <Grid.RenderTransform>
                     <ScaleTransform x:Name="WelcomeDialogScale" />
                 </Grid.RenderTransform>
-                <!-- The shadow sits on its own layer so the effect does not soften the text above it. -->
-                <Border Background="{StaticResource Brush.Surface}" CornerRadius="16">
-                    <Border.Effect>
+                <!-- The shadow is drawn behind the opaque background without a full-dialog effect texture. -->
+                <views:ShadowBorder Background="{StaticResource Brush.Surface}" CornerRadius="16">
+                    <views:ShadowBorder.Shadow>
                         <DropShadowEffect BlurRadius="50" ShadowDepth="25" Direction="270" Opacity="0.25" />
-                    </Border.Effect>
-                </Border>
+                    </views:ShadowBorder.Shadow>
+                </views:ShadowBorder>
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -2033,9 +2033,10 @@
                 </Border>
                 <Path x:Name="OnboardingArrow" Fill="{StaticResource Brush.Surface}" />
             </Canvas>
-            <Border x:Name="OnboardingPopover" Width="312" HorizontalAlignment="Left" VerticalAlignment="Top"
+            <views:ShadowBorder x:Name="OnboardingPopover" Width="312"
+                    HorizontalAlignment="Left" VerticalAlignment="Top"
                     Padding="18" Background="{StaticResource Brush.Surface}"
-                    CornerRadius="{StaticResource Radius.Section}" Effect="{StaticResource Effect.Surface.Light}"
+                    CornerRadius="{StaticResource Radius.Section}" Shadow="{StaticResource Effect.Surface.Light}"
                     KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -2078,7 +2079,7 @@
                                 AutomationProperties.Name="下一步" />
                     </Grid>
                 </Grid>
-            </Border>
+            </views:ShadowBorder>
         </Grid>
     </Grid>
 </ui:FluentWindow>
