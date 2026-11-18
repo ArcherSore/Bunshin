@@ -115,7 +115,7 @@ public partial class MainWindow : FluentWindow
         "ConfigurationEditable", typeof(bool), typeof(MainWindow), new PropertyMetadata(true));
 
     private sealed record OptionInputTag(Guid ConfigurationId, string OptionName, string InputName, string Value,
-        string? PatternMessage, bool Submitted = false)
+        string? PatternMessage, bool Submitted, bool Edited = false)
     {
         internal (Guid, string, string) Key => (ConfigurationId, OptionName, InputName);
     }
@@ -944,7 +944,7 @@ public partial class MainWindow : FluentWindow
     private void OptionInputTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         if (sender is WpfTextBox editor) {
-            _ = CommitOptionInput(editor);
+            _ = CommitChangedInput(editor);
         }
     }
 
@@ -962,6 +962,7 @@ public partial class MainWindow : FluentWindow
         }
         _invalidInputDrafts.Remove(tag.Key);
         SetInputText(editor, tag.Value);
+        editor.Tag = tag with { Edited = false };
         editor.SelectAll();
         ShowOptionInputError(editor, null);
         RefreshParameterDisplays();
@@ -1553,7 +1554,7 @@ public partial class MainWindow : FluentWindow
         if (row.Kind == ProjectOptionKind.Input) {
             value.Children.Add(CreateInputCells(row, inputNotes));
         } else {
-            value.Children.Add(CreateCaseSelector(row));
+            value.Children.Add(WithDefaultButton(CreateCaseSelector(row), row));
             value.Children.Add(caseNotes);
         }
         var panel = new ParameterRowPanel {
@@ -1600,7 +1601,8 @@ public partial class MainWindow : FluentWindow
         if (row.Inputs.Count == 1) {
             var input = row.Inputs[0];
             notes[input.Input.Name] = new StackPanel();
-            return new StackPanel { Children = { LimitWidth(CreateInputEditor(row, input)), notes[input.Input.Name] } };
+            var editor = WithDefaultButton(CreateInputEditor(row, input), row, input);
+            return new StackPanel { Children = { LimitWidth(editor), notes[input.Input.Name] } };
         }
         var panel = new ParameterInputsPanel();
         foreach (var input in row.Inputs) {
@@ -1614,18 +1616,47 @@ public partial class MainWindow : FluentWindow
                 });
             }
             notes[input.Input.Name] = new StackPanel();
+            var editor = WithDefaultButton(CreateInputEditor(row, input), row, input);
             panel.Children.Add(new StackPanel {
-                Children = { header, CreateInputEditor(row, input), notes[input.Input.Name] }
+                Children = { header, editor, notes[input.Input.Name] }
             });
         }
         return panel;
+    }
+
+    private Grid WithDefaultButton(FrameworkElement editor, InspectorRow row, InspectorInput? input = null)
+    {
+        var id = RequireProject().ActiveConfigurationId;
+        var label = input?.AccessibleName ?? row.Label;
+        var reset = CreateIconButton(WpfSymbolRegular.ArrowCounterclockwise16, $"恢复项目默认值：{label}", "恢复项目默认值");
+        BindConfigurationEditable(reset);
+        reset.Click += (_, _) => {
+            if (!CurrentControls.ConfigurationEditable) {
+                return;
+            }
+            try {
+                RequireProject().RestoreOptionDefault(id, row.Option.Name, input?.Input.Name);
+                if (input is not null) {
+                    _invalidInputDrafts.Remove((id, row.Option.Name, input.Input.Name));
+                }
+                _pendingStartAttempt = null;
+                RefreshAfterOptionSaved(rebuildCards: true);
+            } catch (Exception exception) {
+                HandleOperationError("恢复项目默认值失败", exception);
+            }
+        };
+        Grid.SetColumn(reset, 1);
+        return new Grid {
+            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } },
+            Children = { editor, reset }
+        };
     }
 
     // A password is masked and cannot be revealed; a file or folder path can be typed or picked.
     private FrameworkElement CreateInputEditor(InspectorRow row, InspectorInput input)
     {
         var tag = new OptionInputTag(_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name,
-            input.SavedValue, input.Input.PatternMessage);
+            input.SavedValue, input.Input.PatternMessage, input.Input.IsExplicit);
         var editor = input.Input.IsPassword
             ? new Wpf.Ui.Controls.PasswordBox { PasswordChar = '●', RevealButtonEnabled = false }
             : new Wpf.Ui.Controls.TextBox();
@@ -1637,6 +1668,11 @@ public partial class MainWindow : FluentWindow
         if (!string.IsNullOrWhiteSpace(input.HelpText)) {
             AutomationProperties.SetHelpText(editor, input.HelpText);
         }
+        editor.TextChanged += (_, _) => {
+            if (editor.Tag is OptionInputTag { Edited: false } current) {
+                editor.Tag = current with { Edited = true };
+            }
+        };
         editor.LostKeyboardFocus += OptionInputTextBox_LostKeyboardFocus;
         editor.PreviewKeyDown += OptionInputTextBox_PreviewKeyDown;
         BindConfigurationEditable(editor);

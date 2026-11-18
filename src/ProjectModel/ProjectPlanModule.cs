@@ -304,6 +304,32 @@ public sealed partial class ProjectPlanModule
         return BuildConfiguration(updated);
     }
 
+    public void RestoreOptionDefault(Guid configurationId, string optionName, string? inputName = null)
+    {
+        var option = FindOption(optionName);
+        var config = FindConfiguration(configurationId);
+        if ((option.Kind == OptionDefinitionKind.Input) != (inputName is not null)
+            || inputName is not null && option.Inputs.All(input => input.Name != inputName)) {
+            throw new ArgumentException($"无法恢复 {optionName} 的指定字段。", nameof(inputName));
+        }
+        if (!config.ExplicitOptions.TryGetValue(optionName, out var current)) {
+            return;
+        }
+
+        JsonElement? remaining = null;
+        if (inputName is not null) {
+            // Keep sibling fields exactly as saved, including encrypted passwords.
+            var inputs = current.GetProperty("Inputs").Deserialize<System.Text.Json.Nodes.JsonObject>()!;
+            if (!inputs.Remove(inputName)) {
+                return;
+            }
+            if (inputs.Count > 0) {
+                remaining = JsonSerializer.SerializeToElement(new { Inputs = inputs });
+            }
+        }
+        SaveConfiguration(ReplaceExplicit(config, optionName, remaining));
+    }
+
     public ProjectConfigurationView SetSelectedCase(string optionName, string selectedCase)
         => SetSelectedCase(ActiveConfigurationId, optionName, selectedCase);
 
@@ -588,10 +614,14 @@ public sealed partial class ProjectPlanModule
         _project.Options.GetValueOrDefault(optionName)
         ?? throw new ArgumentException($"PI 中不存在 option：{optionName}。", nameof(optionName));
 
-    private static TaskConfiguration ReplaceExplicit(TaskConfiguration config, string optionName, JsonElement value)
+    private static TaskConfiguration ReplaceExplicit(TaskConfiguration config, string optionName, JsonElement? value)
     {
         var values = config.ExplicitOptions.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        values[optionName] = value;
+        if (value is { } intent) {
+            values[optionName] = intent;
+        } else {
+            values.Remove(optionName);
+        }
         return config with { ExplicitOptions = values };
     }
 }

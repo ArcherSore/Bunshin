@@ -236,7 +236,7 @@ public partial class MainWindow
         if (Keyboard.FocusedElement is not WpfTextBox editor) {
             return true;
         }
-        return editor.Tag is OptionInputTag ? CommitOptionInput(editor, deferDraftCheck)
+        return editor.Tag is OptionInputTag ? CommitChangedInput(editor, deferDraftCheck)
             : editor == _configurationNameEditor ? CommitConfigurationName() : true;
     }
 
@@ -435,11 +435,21 @@ public partial class MainWindow
         }
     }
 
+    private bool CommitChangedInput(WpfTextBox editor, bool deferDraftCheck = false)
+    {
+        if (editor.Tag is OptionInputTag { Edited: false } tag && GetInputText(editor) == tag.Value
+            && !_invalidInputDrafts.ContainsKey(tag.Key)) {
+            return true;
+        }
+        return CommitOptionInput(editor, deferDraftCheck);
+    }
+
     private bool CommitOptionInput(WpfTextBox textBox, bool deferDraftCheck = false)
     {
         var text = GetInputText(textBox);
         if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
-            || textBox.Tag is not OptionInputTag tag || tag.Submitted && text == tag.Value) {
+            || textBox.Tag is not OptionInputTag tag
+            || tag.Submitted && text == tag.Value && !_invalidInputDrafts.ContainsKey(tag.Key)) {
             return true;
         }
         if (_invalidInputDrafts.TryGetValue(tag.Key, out var draft) && draft.Text == text) {
@@ -459,14 +469,14 @@ public partial class MainWindow
             }
             _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text);
             _invalidInputDrafts.Remove(tag.Key);
-            textBox.Tag = tag with { Value = text, Submitted = true };
+            textBox.Tag = tag with { Value = text, Submitted = true, Edited = false };
             _pendingStartAttempt = null;
             ShowOptionInputError(textBox, null);
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;
         } catch (Exception exception) {
             SetInputText(textBox, tag.Value);
-            textBox.Tag = tag with { Submitted = true };
+            textBox.Tag = tag with { Edited = false };
             HandleOperationError("保存 input option 失败", exception);
             ShowProjectValidationError(exception);
             return false;

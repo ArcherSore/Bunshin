@@ -92,6 +92,7 @@ internal static partial class SelfTestRunner
             var retry = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Retry count");
+            retry.Clear();
             retry.Text = "3";
             retry.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, retry, tabs) {
