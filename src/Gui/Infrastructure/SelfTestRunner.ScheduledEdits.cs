@@ -4,6 +4,7 @@ using System.Windows.Automation;
 using System.Windows.Input;
 using Gui.Views;
 using Protocol;
+using Button = System.Windows.Controls.Button;
 using TextBox = System.Windows.Controls.TextBox;
 
 namespace Gui.Infrastructure;
@@ -17,33 +18,35 @@ internal static partial class SelfTestRunner
             EndTour(window);
             var project = ProjectOf(window);
             var id = project.ActiveConfigurationId;
+            var other = project.CreateConfiguration();
             project.AddTask("Plain");
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            project.ActivateConfiguration(id);
+            project.AddTask("Plain");
+            OpenScheduledTask(window);
             var editor = ConfigurationDescendants(Named<DependencyObject>(window, "PlanItemsPanel"))
                 .OfType<TextBox>().Single(box => AutomationProperties.GetName(box) == "Recipient");
+            window.Activate();
+            Require(ReferenceEquals(Keyboard.Focus(editor), editor), "切换前应正在编辑原配置的参数。");
             editor.Text = " ";
-            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, null) {
-                RoutedEvent = Keyboard.LostKeyboardFocusEvent
-            });
-            ScheduledRunDisposition Start()
+            ScheduledRunDisposition Start(Guid target)
             {
-                var start = window.TryStartScheduledRunAsync(id);
+                var start = window.TryStartScheduledRunAsync(target);
                 PumpUntil(() => start.IsCompleted, "定时配置校验和模拟准备必须返回。");
                 return start.Result.Disposition;
             }
-            Require(Start() == ScheduledRunDisposition.Invalid, "当前可执行任务中的无效输入应阻止定时执行。");
-            var other = project.CreateConfiguration();
-            Require(Start() == ScheduledRunDisposition.Invalid && project.ActiveConfigurationId == other,
+            Require(Start(other) == ScheduledRunDisposition.Admitted && project.ActiveConfigurationId == other,
+                "原配置正在编辑的无效输入应保存为草稿，并允许定时配置启动。");
+            Require(Start(id) == ScheduledRunDisposition.Invalid && project.ActiveConfigurationId == other,
                 "非当前配置中可以执行到的无效输入也应阻止切换。");
             project.ActivateConfiguration(id);
+            Require(Start(id) == ScheduledRunDisposition.Invalid, "当前可执行任务中的无效输入应阻止定时执行。");
             project.SetSelectedCase("Mode", "Minimal");
-            Require(Start() == ScheduledRunDisposition.Admitted, "已离开的分支中的旧草稿不应阻止定时执行。");
+            Require(Start(id) == ScheduledRunDisposition.Admitted, "已离开的分支中的旧草稿不应阻止定时执行。");
             project.SetSelectedCase("Mode", "Default");
             project.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
-            Require(Start() == ScheduledRunDisposition.Admitted, "临时取消执行的任务中的草稿不得影响其他任务。");
+            Require(Start(id) == ScheduledRunDisposition.Admitted, "临时取消执行的任务中的草稿不得影响其他任务。");
             project.RemoveTask("RealTask");
-            Require(Start() == ScheduledRunDisposition.Admitted, "被移除任务的草稿不得影响剩余任务。");
+            Require(Start(id) == ScheduledRunDisposition.Admitted, "被移除任务的草稿不得影响剩余任务。");
         }, beforeLoad: projectDirectory => {
             AddRequiredInput(projectDirectory);
             var file = Path.Combine(projectDirectory, "interface.json");
@@ -64,10 +67,14 @@ internal static partial class SelfTestRunner
                 EndTour(window);
                 var project = ProjectOf(window);
                 var id = project.ActiveConfigurationId;
+                var target = project.CreateConfiguration();
+                project.AddTask("RealTask");
+                project.SetInputValue("Recipient", "recipient", "target");
+                project.RenameConfiguration(target, "目标");
+                project.ActivateConfiguration(id);
                 project.RenameConfiguration(id, "日常");
                 project.SetInputValue("Recipient", "recipient", "saved");
-                SetOnboardingField(window, "_expandedTaskName", "RealTask");
-                InvokeOnboarding(window, "RenderTaskPlan");
+                OpenScheduledTask(window);
                 window.Activate();
                 window.UpdateLayout();
                 TextBox editor;
@@ -88,11 +95,12 @@ internal static partial class SelfTestRunner
                 window.AutoRunFailed += (_, message) => failures.Add(message);
                 using (File.Open(Path.Combine(projectDirectory, "config", "configurations.json"),
                     FileMode.Open, FileAccess.Read, FileShare.Read)) {
-                    var start = window.TryStartScheduledRunAsync(id);
+                    var start = window.TryStartScheduledRunAsync(target);
                     Require(start.IsCompletedSuccessfully && start.Result.Disposition == ScheduledRunDisposition.Invalid
-                        && failures.Count == 1 && failures[0].Contains("日常"), "编辑保存失败应立即在无人值守入口返回并提醒。");
+                        && project.ActiveConfigurationId == id && failures.Count == 1 && failures[0].Contains("目标"),
+                        "离开当前配置前保存失败应保留编辑并提醒。");
                 }
-                var next = window.TryStartScheduledRunAsync(id);
+                var next = window.TryStartScheduledRunAsync(target);
                 PumpUntil(() => next.IsCompleted, "配置恢复可写后，仍在编辑的值应能保存并用于本次启动。");
                 Require(next.Result.Disposition == ScheduledRunDisposition.Admitted && (rename
                     ? project.Configurations.Single(c => c.Id == id).Name == "changed"
@@ -101,5 +109,18 @@ internal static partial class SelfTestRunner
             }, beforeLoad: AddRequiredInput,
                 prepareEnvironment: (_, _, _) => throw new InvalidOperationException("模拟准备结束"));
         }
+    }
+
+    private static void OpenScheduledTask(MainWindow window)
+    {
+        window.UpdateLayout();
+        var controls = ConfigurationDescendants(Named<DependencyObject>(window, "PlanItemsPanel")).ToList();
+        if (controls.OfType<TextBox>().Any(box => AutomationProperties.GetName(box) == "Recipient")) {
+            return;
+        }
+        var label = ProjectOf(window).SelectedItems.Single(task => task.Name == "RealTask").Label;
+        var header = controls.OfType<Button>().Single(b => AutomationProperties.GetName(b).StartsWith(label));
+        header.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        window.UpdateLayout();
     }
 }

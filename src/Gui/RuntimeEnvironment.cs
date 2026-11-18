@@ -95,6 +95,18 @@ internal sealed class RuntimeEnvironment
                 or WorkerObservation.WorkerExited;
     }
 
+    // Called inside the end confirmation so a queued cleanup cannot close a newer Run or Child Session.
+    internal bool CanEndSuccessfulRun(Guid workerId, Guid runId)
+    {
+        var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
+        var (current, awaitingStart) = _coordinator.ReadRunObservation();
+        return !Closing && !EndUnconfirmed && !awaitingStart
+            && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+                WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, LastRun: { State: RunState.Succeeded } last,
+                    WorkerState: WorkerState.Ready or WorkerState.NotReady } idle }
+            && idle.WorkerInstanceId == workerId && last.RunId == runId && sessionId == idle.ChildSessionId;
+    }
+
     // Runs inside an exclusive operation the caller has already entered. The framework options are read once the
     // Child Session is connected, just before the Worker is prepared.
     internal async Task PrepareAsync(

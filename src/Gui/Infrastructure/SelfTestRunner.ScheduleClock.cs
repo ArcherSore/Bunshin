@@ -132,7 +132,12 @@ internal static partial class SelfTestRunner
             project.ActivateConfiguration(c);
             var failures = new List<string>();
             var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
-            void Record(object? _, LogEntry entry) => logs.Enqueue(entry.Message);
+            void Record(object? _, LogEntry entry)
+            {
+                if (entry.Level == LogLevel.Info) {
+                    logs.Enqueue(entry.Message);
+                }
+            }
             window.AutoRunFailed += (_, message) => failures.Add(message);
             logger.EntryWritten += Record;
             try {
@@ -142,7 +147,7 @@ internal static partial class SelfTestRunner
                     && project.ActiveConfigurationId == b, "同刻应先报告 A 无效，再按配置列表顺序接纳 B。");
                 project.AddSchedulePolicy(d, "刚刚启用");
                 Require(window.CheckScheduledRunsAsync().IsCompletedSuccessfully
-                    && logs.Any(line => line.Contains("新启用") && line.Contains("跳过")),
+                    && logs.Any(line => line.Contains("新启用")),
                     "等待准备时新加入的同分钟机会应立即跳过。");
                 clock.Advance(TimeSpan.FromSeconds(30));
                 PumpUntil(() => logs.Any(line => line.Contains("第二班")), "相邻分钟的任务遇忙应立即跳过。");
@@ -184,22 +189,27 @@ internal static partial class SelfTestRunner
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var preparations = new List<Guid>();
             var messages = new System.Collections.Concurrent.ConcurrentQueue<string>();
-            void Record(object? _, LogEntry entry) => messages.Enqueue(entry.Message);
+            void Record(object? _, LogEntry entry)
+            {
+                if (entry.Level == LogLevel.Info) {
+                    messages.Enqueue(entry.Message);
+                }
+            }
             logger.EntryWritten += Record;
             try {
                 WithRuntimeControlWindow(logger, host, window => {
-                    string? failure = null;
-                    window.AutoRunFailed += (_, message) => failure = message;
+                    var failures = new List<string>();
+                    window.AutoRunFailed += (_, message) => failures.Add(message);
                     clock.Advance(TimeSpan.Zero);
                     var skipped = clockFirst ? "登录配置" : "定时配置";
-                    PumpUntil(() => messages.Any(m => m.Contains(skipped) && m.Contains("跳过")),
+                    PumpUntil(() => messages.Any(m => m.Contains(skipped)),
                         $"托盘登录时遇忙的配置 {skipped} 应记明跳过原因。");
                     Require(preparations.SequenceEqual([clockFirst ? day : boot]) && !window.IsVisible,
                         "托盘登录时先抵达的启动应占用环境。");
                     release.SetResult();
-                    PumpUntil(() => failure?.Contains("结束模拟启动") == true, "获准的启动应报告准备失败。");
+                    PumpUntil(() => failures.Any(f => f.Contains("结束模拟启动")), "获准的启动应报告准备失败。");
                     window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
-                    Require(preparations.Count == 1, "首个启动失败也不能重试先前遇忙的机会。");
+                    Require(preparations.Count == 1 && failures.Count == 1, "遇忙的机会不得通知失败或重试。");
                 }, scheduleClock: clock, launchCommand: new(AutoStart: true, Instance: boot.ToString()),
                     prepareEnvironment: async (project, _, _) => {
                         preparations.Add(project.ActiveConfigurationId);

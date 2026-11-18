@@ -165,6 +165,18 @@ internal static partial class SelfTestRunner
                     PumpUntil(() => connected.IsCompleted && coordinator.Snapshot.SnapshotFresh, "模拟 Worker 应重连。");
                     pipe = connected.Result;
                     ExpectBusy();
+                } else if (terminal == RunState.Succeeded) {
+                    // Keep IPC up and omit only the start reply: the state event is authoritative.
+                    var running = snapshot with { StateRevision = 3, RunState = RunState.Running, ActiveRun = own };
+                    Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
+                    var refresh = Task.Run(async () => {
+                        var read = await WorkerCoordinatorSelfTest.ReadRequestAsync(
+                            pipe, ProtocolOperations.WorkerGetSnapshot, token);
+                        await pipe.WriteAsync(WireEnvelope.Response(read.Operation, read.RequestId!.Value,
+                            new GetSnapshotResponse(running)), token);
+                    });
+                    PumpUntil(() => start.IsCompleted && refresh.IsCompletedSuccessfully, "丢失回包后应按快照确认。");
+                    Require(failures.Count == 0 && start.Result.Reason is null, "Worker 已运行时回复超时不得报告启动失败。");
                 } else {
                     var accepted = WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
                         new RunStartResponse("accepted"));
@@ -201,7 +213,27 @@ internal static partial class SelfTestRunner
                         && wts.LogoffAttempts.SequenceEqual([sessionId]), "下次清理不得吞掉上一 Run 的失败提醒。");
                     return;
                 } else {
-                    Publish(done, lostReply ? 4 : 3);
+                    var completions = new List<Guid>();
+                    window.ScheduledRunCompleted += (_, e) => {
+                        completions.Add(e.Run.RunId);
+                        if (lostReply && completions.Count == 1) {
+                            wts.DuringEnumeration = () => {
+                                wts.DuringEnumeration = null;
+                                pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                                AwaitWorker(coordinator, s => s.Observation == WorkerObservation.IpcDisconnected,
+                                    "成功后检查分身身份期间 Worker 可暂时断线。");
+                            };
+                        }
+                    };
+                    Publish(done, terminal == RunState.Succeeded ? 4 : 3);
+                    if (lostReply) {
+                        Require(session.HasChildSession, "未重新确认 Worker 身份前必须保留现场。");
+                        connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
+                            pipeName, record!, 0, token, stateRevision: 5, lastRun: done));
+                        PumpUntil(() => connected.IsCompleted && !session.HasChildSession,
+                            "同一 Worker 重连并确认定时 Run 成功后应继续收尾。");
+                    }
+                    Require(completions.SequenceEqual([own.RunId]), "同一 Run 应只发出一次终态。");
                 }
                 var quit = new QuitAfterRunTracker(DateTime.MinValue);
                 var observed = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true,

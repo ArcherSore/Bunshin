@@ -11,7 +11,11 @@ internal sealed record ScheduledRunResult(
 
 public partial class MainWindow
 {
-    private sealed record ScheduledSubmission(Guid ConfigurationId, string Name, Guid WorkerId, Guid RunId);
+    private sealed record ScheduledSubmission(Guid ConfigurationId, string Name, Guid WorkerId, Guid RunId)
+    {
+        public bool CompletionReported { get; set; }
+    }
+
     private ScheduledSubmission? _scheduledSubmission;
 
     internal Guid? LastScheduledRunId { get; private set; }
@@ -61,6 +65,10 @@ public partial class MainWindow
             var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == configurationId)
                 .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value.Message);
             attempt = project.CreateRunStartAttempt(configurationId, inputErrors: drafts);
+            if (configurationId != project.ActiveConfigurationId) {
+                // Preserve the outgoing editor before locking the workspace. Its validation belongs to its own plan.
+                CommitFocusedConfigurationInput(unattended: true);
+            }
         } catch (Exception exception) {
             ReportUnattendedFailure($"定时执行“{name}”失败", exception);
             return new(configurationId, ScheduledRunDisposition.Invalid, Reason: exception.Message);
@@ -90,13 +98,22 @@ public partial class MainWindow
                 }
             }
             return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
-        } catch (Exception exception) when (submitted.HasValue && exception is not WorkerProtocolErrorException
-            && (_workerCoordinator.StartAwaitingObservation
-                || exception is OperationCanceledException or IOException)) {
-            var detail = $"开始请求未确认，等待 Worker 快照：{exception.Message}";
-            _logger.Warn($"定时执行“{name}”（Run {submitted}）：{detail}");
-            return new(configurationId, ScheduledRunDisposition.Admitted, submitted, detail);
         } catch (Exception exception) {
+            if (submitted.HasValue && _scheduledSubmission is { } own) {
+                var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
+                if (current is { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } w }
+                    && w.WorkerInstanceId == own.WorkerId
+                    && (w.ActiveRun?.RunId == own.RunId || w.LastRun?.RunId == own.RunId)) {
+                    return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
+                }
+                if (exception is not WorkerProtocolErrorException
+                    && (awaitingStart || exception is OperationCanceledException or IOException or TimeoutException)) {
+                    var detail = $"开始请求未确认，等待 Worker 快照：{exception.Message}";
+                    _logger.Warn($"定时执行“{name}”（Run {submitted}）：{detail}");
+                    return new(configurationId, ScheduledRunDisposition.Admitted, submitted, detail);
+                }
+                _scheduledSubmission = null;
+            }
             ReportUnattendedFailure($"定时执行“{name}”失败", exception);
             return new(configurationId, ScheduledRunDisposition.Admitted, submitted, exception.Message);
         } finally {
@@ -117,30 +134,33 @@ public partial class MainWindow
             || run.State is not (RunState.Succeeded or RunState.Failed or RunState.Cancelled)) {
             return;
         }
-        _scheduledSubmission = null;
-        ScheduledRunCompleted?.Invoke(this, (own.ConfigurationId, run));
+        if (run.State != RunState.Succeeded) {
+            _scheduledSubmission = null;
+        }
+        if (!own.CompletionReported) {
+            own.CompletionReported = true;
+            ScheduledRunCompleted?.Invoke(this, (own.ConfigurationId, run));
+        }
         if (run.State == RunState.Failed) {
             var item = run.Items.FirstOrDefault(i => i.State == PlanItemState.Failed);
             var detail = run.Error?.Message ?? item?.Error?.Message ?? item?.Reason ?? item?.TaskLabel ?? "任务运行失败";
             ReportUnattendedFailure($"定时执行“{own.Name}”失败", new InvalidOperationException(detail));
         } else if (run.State == RunState.Succeeded) {
             try {
-                bool CanClose()
-                {
-                    var sessionId = _sessionManager.QueryChildSessionId(requireEnumeration: true);
-                    var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
-                    return !_environment.Closing && !OperationOrExitInProgress && !awaitingStart
-                        && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-                            WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, LastRun: { } last } idle }
-                        && idle.WorkerInstanceId == own.WorkerId && last.RunId == own.RunId
-                        && last.State == RunState.Succeeded && sessionId == idle.ChildSessionId;
-                }
+                bool CanClose() => _scheduledSubmission == own && !OperationOrExitInProgress
+                    && _environment.CanEndSuccessfulRun(own.WorkerId, own.RunId);
                 var ended = gateHeld ? await _environment.EndWhileExclusiveAsync(CanClose)
                     : await _environment.EndAsync(CanClose);
+                if (ended.Outcome != EnvironmentEndOutcome.Declined && _scheduledSubmission == own) {
+                    _scheduledSubmission = null;
+                }
                 if (ended.Error is { } error) {
                     throw error;
                 }
             } catch (Exception exception) {
+                if (_scheduledSubmission == own) {
+                    _scheduledSubmission = null;
+                }
                 ReportUnattendedFailure($"定时执行“{own.Name}”收尾失败", exception);
             }
         }
