@@ -23,6 +23,7 @@ public sealed partial class ProjectPlanModule
     private readonly ConfigurationSetStore _configStore;
     private ConfigurationSet _config;
     private string? _initializationWarning;
+    private Exception? _initializationException;
     private readonly HashSet<(Guid Configuration, PlanItemKind Kind, string Name)> _disabledItems = [];
 
     private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore)
@@ -37,13 +38,14 @@ public sealed partial class ProjectPlanModule
             .Select(item => new ProjectTaskChoice(item.Name, item.Label, item.Description) {
                 Kind = PlanItemKind.Pretask
             }).ToArray();
-        _config = configStore.Load();
+        _config = configStore.Load(project);
         if (configStore.WasMissing) {
             try {
                 AddTask(Tasks[0].Name);
                 InitializedTaskName = Tasks[0].Name;
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
-                _initializationWarning = $"无法保存首次默认任务，已提供空配置。{exception.Message}";
+                _initializationWarning = "首次默认任务未保存，已显示空配置。请检查目录写入权限后重新加载。";
+                _initializationException = exception;
             }
         }
     }
@@ -111,6 +113,7 @@ public sealed partial class ProjectPlanModule
     }
     public IReadOnlyList<string> SelectedTaskNames => LoadConfig().SelectedTasks;
     public Guid ActiveConfigurationId => _config.ActiveConfigurationId;
+    public Exception? LoadException => _initializationException ?? _configStore.LoadException;
     public string? LoadWarning => _initializationWarning ?? _configStore.LoadWarning;
     // The file could not be read, so Configurations is a placeholder until the first save.
     public bool ConfigurationsUnreadable => _configStore.Unreadable;
@@ -163,6 +166,9 @@ public sealed partial class ProjectPlanModule
         Action<string>? log = null)
     {
         var project = ProjectInterfaceLoader.Load(projectDirectory);
+        if (previous is not null && previous.ProjectName != project.Provenance.Name) {
+            throw new InvalidDataException("项目身份已改变。请恢复原项目的资源包后重试，原配置已保留。");
+        }
         var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log));
         if (previous is not null) {
             module._disabledItems.UnionWith(previous._disabledItems.Where(item => module.Configurations.Any(config =>
@@ -454,9 +460,11 @@ public sealed partial class ProjectPlanModule
 
     private void SaveConfig(ConfigurationSet config)
     {
+        config = config with { ProjectName = ProjectName };
         _configStore.Save(config);
         _config = config;
         _initializationWarning = null;
+        _initializationException = null;
     }
 
     private void ValidateActiveConfiguration(TaskConfiguration config)
