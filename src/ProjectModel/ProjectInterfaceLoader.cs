@@ -11,7 +11,7 @@ internal static partial class ProjectInterfaceLoader
         "interface_version", "name", "label", "title", "version", "description", "icon", "github", "contact",
         "license",
         "controller", "resource", "agent", "global_option", "task", "option", "group", "pretask", "preset", "welcome",
-        "telemetry"
+        "telemetry", "languages"
     };
 
     private static readonly HashSet<string> AllowedControllerProperties = new(StringComparer.Ordinal)
@@ -116,7 +116,8 @@ internal static partial class ProjectInterfaceLoader
         var agent = new AgentDefinition(agentExec, agentArgs, projectRoot);
         var tasks = ParseTasks(RequireArray(root, "task", "$"));
         var groups = ParseGroups(root);
-        var options = ParseOptions(RequireProperty(root, "option", "$"));
+        var translations = ReadChineseTranslations(root, projectRoot);
+        var options = ParseOptions(RequireProperty(root, "option", "$"), translations);
         var globalOptions = ReadStringArray(root, "global_option", required: false, "$");
         ValidateReferences(globalOptions, tasks, options);
         var pretasks = ParsePretasks(root, controller.Name, resources[0].Name);
@@ -320,7 +321,8 @@ internal static partial class ProjectInterfaceLoader
         return tasks;
     }
 
-    private static IReadOnlyDictionary<string, OptionDefinition> ParseOptions(JsonElement element)
+    private static IReadOnlyDictionary<string, OptionDefinition> ParseOptions(JsonElement element,
+        JsonElement translations)
     {
         var obj = RequireObject(element, "$.option");
         var result = new Dictionary<string, OptionDefinition>(StringComparer.Ordinal);
@@ -341,13 +343,13 @@ internal static partial class ProjectInterfaceLoader
                 kind, checkbox ? null : OptionalString(option, "default_case"),
                 checkbox ? ReadStringArray(option, "default_case", required: false, path) : [],
                 ReadCount(option, "min_count", path) ?? 0, ReadCount(option, "max_count", path),
-                ParseInputs(option, path), ParseCases(option, path),
+                ParseInputs(option, path, translations), ParseCases(option, path),
                 ReadObjectOrEmpty(option, "pipeline_override", path)));
         }
         return result;
     }
 
-    private static IReadOnlyList<InputDefinition> ParseInputs(JsonElement option, string path)
+    private static IReadOnlyList<InputDefinition> ParseInputs(JsonElement option, string path, JsonElement translations)
     {
         if (!option.TryGetProperty("inputs", out var array)) {
             return [];
@@ -384,7 +386,7 @@ internal static partial class ProjectInterfaceLoader
                 name, ReadDisplayString(input, "label") ?? name,
                 ReadDisplayString(input, "description") ?? string.Empty,
                 password ? string.Empty : defaultValue.GetString()!, pipelineKind, OptionalString(input, "verify"),
-                ReadDisplayString(input, "pattern_msg"), password ? ProjectInputType.Password : inputType));
+                ResolvePatternMessage(input, translations), password ? ProjectInputType.Password : inputType));
         }
         return result;
     }
@@ -665,6 +667,33 @@ internal static partial class ProjectInterfaceLoader
             throw new InvalidDataException($"{path}.{name} 必须是 boolean。 ");
         }
         return value.GetBoolean();
+    }
+
+    private static JsonElement ReadChineseTranslations(JsonElement root, string projectRoot)
+    {
+        if (!root.TryGetProperty("languages", out var languages) || languages.ValueKind != JsonValueKind.Object
+            || !languages.TryGetProperty("zh_cn", out var language) || language.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(language.GetString())) {
+            return default;
+        }
+        try {
+            using var document = JsonDocument.Parse(ProjectContent.ReadFile(projectRoot, language.GetString()!));
+            return document.RootElement.Clone();
+        } catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+            or ArgumentException or NotSupportedException) {
+            return default;
+        }
+    }
+
+    private static string? ResolvePatternMessage(JsonElement input, JsonElement translations)
+    {
+        var message = ReadDisplayString(input, "pattern_msg")?.Trim();
+        if (message?.StartsWith('$') == true) {
+            message = translations.ValueKind == JsonValueKind.Object
+                && translations.TryGetProperty(message[1..], out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()?.Trim() : null;
+        }
+        return string.IsNullOrWhiteSpace(message) || message.StartsWith('$') ? null : message;
     }
 
     private static string? ReadDisplayString(JsonElement obj, string name)

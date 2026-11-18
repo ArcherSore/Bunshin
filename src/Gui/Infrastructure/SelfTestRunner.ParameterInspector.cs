@@ -8,7 +8,7 @@ internal static partial class SelfTestRunner
 {
     private static void VerifyParameterInspector(string testDirectory, string projectDirectory)
     {
-        var none = new Dictionary<(string, string), InputDraft>();
+        var none = new Dictionary<(string, string), string>();
         var simple = ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "inspector-simple.json"));
         var rows = ParameterInspector.Derive(simple.GetConfiguration("RealTask"), none, []);
         Require(rows.Select(row => (row.Option.Name, row.Depth, row.IsGlobal)).SequenceEqual(new[] {
@@ -48,12 +48,12 @@ internal static partial class SelfTestRunner
         project.SetInputValue("ServerRange", "retry_count", "3");
         project.SetInputValue("ServerRange", "server_range", "979");
         project.SetSelectedCase("Mode", "Default");
-        var drafts = new Dictionary<(string, string), InputDraft> {
-            [("ServerRange", "enabled")] = new("maybe", "必须是 true 或 false")
+        var drafts = new Dictionary<(string, string), string> {
+            [("ServerRange", "enabled")] = "maybe"
         };
         rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts, others);
         var inputs = rows[0].Inputs;
-        Require(rows[0].IsInvalid && inputs[2].Draft?.Text == "maybe" && inputs[2].SavedValue == "true"
+        Require(rows[0].IsInvalid && inputs[2].Draft == "maybe" && inputs[2].SavedValue == "true"
             && inputs[2].DisplayValue == "maybe" && !rows[1].IsInvalid,
             "草稿状态必须给出草稿文本、提示与已保存值。");
 

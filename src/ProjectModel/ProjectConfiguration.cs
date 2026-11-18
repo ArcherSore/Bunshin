@@ -10,17 +10,33 @@ public enum ProjectOptionKind { Input, Select, Switch, Checkbox }
 // The editor an input asks for; the value is a plain string either way. A password is never a file or folder.
 public enum ProjectInputType { Text, Password, File, Directory }
 
-public sealed record ProjectInputEditor(
-    string Name, string Label, string Description, string DefaultValue, string Value,
-    bool IsExplicit, string? Verify, string? PatternMessage)
+public sealed class ProjectInputEditor
 {
-    // Shown in place of a filled password, in the GUI and in logs alike.
-    public const string PasswordMask = "••••••";
+    private readonly InputDefinition _definition;
+    private readonly bool _typed;
 
-    // Set when the value still fails verify; it may be shown and saved around, but blocks Start.
-    public string? Error { get; init; }
-    public ProjectInputType InputType { get; init; }
-    public bool IsPassword => InputType == ProjectInputType.Password;
+    internal ProjectInputEditor(InputDefinition input, string value, bool isExplicit, bool typed)
+    {
+        _definition = input;
+        _typed = typed;
+        Value = value;
+        IsExplicit = isExplicit;
+        Error = CheckValue(value);
+    }
+
+    public const string PasswordMask = "••••••";
+    public string Name => _definition.Name;
+    public string Label => _definition.Label;
+    public string Description => _definition.Description;
+    public string DefaultValue => _definition.Default;
+    public string? Verify => _definition.Verify;
+    public string? PatternMessage => _definition.PatternMessage;
+    public ProjectInputType InputType => _definition.InputType;
+    public bool IsPassword => _definition.Password;
+    public string Value { get; }
+    public bool IsExplicit { get; }
+    public string? Error { get; }
+    public string? CheckValue(string value) => ProjectInputValue.CheckValue(_definition, value, _typed);
 }
 
 public sealed record ProjectCaseEditor(string Name, string Label, string Description);
@@ -133,6 +149,14 @@ internal static class ExplicitOptionIntent
         foreach (var (name, value) in values.OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
             inputs[name] = option.IsPassword(name) ? Protect(value) : value;
         }
+        return ToElement(new JsonObject { ["Inputs"] = inputs });
+    }
+
+    internal static JsonElement SetInput(OptionDefinition option, TaskConfiguration config, string name, string value)
+    {
+        var inputs = config.ExplicitOptions.TryGetValue(option.Name, out var current)
+            ? current.GetProperty("Inputs").Deserialize<JsonObject>()! : new JsonObject();
+        inputs[name] = option.IsPassword(name) ? Protect(value) : value;
         return ToElement(new JsonObject { ["Inputs"] = inputs });
     }
 

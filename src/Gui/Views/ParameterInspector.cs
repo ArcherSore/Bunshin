@@ -2,17 +2,13 @@ using ProjectModel;
 
 namespace Gui.Views;
 
-// An invalid, unsaved text for one input; the saved configuration still holds the previous value.
-internal sealed record InputDraft(string Text, string Message);
-
 // A lone input is named and described by its row; one of several also names its own label.
 internal sealed record InspectorInput(
-    ProjectInputEditor Input, string Label, string AccessibleName, string HelpText, InputDraft? Draft)
+    ProjectInputEditor Input, string Label, string AccessibleName, string HelpText, string? Draft)
 {
     internal string SavedValue => Input.Value;
-    internal string DisplayValue => Draft?.Text ?? Input.Value;
-    // An unsaved draft's problem, otherwise a saved default that still fails verify.
-    internal string? Error => Draft?.Message ?? Input.Error;
+    internal string DisplayValue => Draft ?? Input.Value;
+    internal string? Error { get; } = Draft is null ? Input.Error : Input.CheckValue(Draft);
     // A password is never shown as text, only whether it is set.
     internal string Show(string value) => Input.IsPassword && value.Length != 0 ? ProjectInputEditor.PasswordMask : value;
 }
@@ -23,7 +19,8 @@ internal sealed record InspectorRow(
     string? CaseDescription, IReadOnlyList<string> SharedWith, IReadOnlyList<InspectorInput> Inputs)
 {
     internal ProjectOptionKind Kind => Option.Kind;
-    internal bool IsInvalid => Option.StartBlocker is not null || Inputs.Any(input => input.Draft is not null);
+    internal bool IsInvalid => Kind == ProjectOptionKind.Input ? Inputs.Any(input => input.Error is not null)
+        : Option.StartBlocker is not null;
     internal ProjectCaseEditor? SelectedCase => Option.Cases.SingleOrDefault(item => item.Name == Option.SelectedCase);
 }
 
@@ -32,7 +29,7 @@ internal static class ParameterInspector
     // Global options first, then task options, each in declared order; a selected case's sub-options follow their
     // parent one level deeper. Drafts are keyed by (option, input) of the configuration being shown.
     internal static IReadOnlyList<InspectorRow> Derive(
-        ProjectConfigurationView configuration, IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts,
+        ProjectConfigurationView configuration, IReadOnlyDictionary<(string Option, string Input), string> drafts,
         IReadOnlyList<(string Label, ProjectConfigurationView Configuration)> otherTasks)
     {
         var otherOptions = otherTasks
@@ -77,7 +74,7 @@ internal static class ParameterInspector
     }
 
     private static InspectorRow CreateRow(ProjectOptionEditor option, int depth, bool global,
-        IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts, IReadOnlyList<string> sharedWith)
+        IReadOnlyDictionary<(string Option, string Input), string> drafts, IReadOnlyList<string> sharedWith)
     {
         // A PI may declare either label as "": the option label, then the first input's, then the option name.
         var label = FirstNonBlank(option.Label, option.Inputs.FirstOrDefault()?.Label) ?? option.Name;

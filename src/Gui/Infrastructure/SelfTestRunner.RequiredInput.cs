@@ -53,6 +53,67 @@ internal static partial class SelfTestRunner
         }, AddRequiredInput);
     }
 
+    private static void VerifyUpgradedInputEditors(AppLogger logger, string testDirectory)
+    {
+        var directory = CreateProjectFixture(Path.Combine(testDirectory, "upgraded-input-editors"));
+        var path = Path.Combine(directory, "interface.json");
+        var root = JsonNode.Parse(File.ReadAllText(path))!;
+        root["task"]![0]!["option"] = new JsonArray("Profile");
+        root["option"]!["Profile"] = JsonNode.Parse("""
+            {"type":"input","inputs":[{"name":"name","default":"guest"},{"name":"code","password":true},
+              {"name":"alias","default":"guest"}]}
+            """);
+        File.WriteAllText(path, root.ToJsonString());
+        var config = Path.Combine(directory, "config.json");
+        var previous = ProjectPlanModule.Open(directory, config);
+        previous.SetInputValue("Profile", "name", "");
+        previous.SetInputValue("Profile", "code", SecretInputValue);
+        var inputs = root["option"]!["Profile"]!["inputs"]!;
+        inputs[0]!["verify"] = "^admin$";
+        inputs[0]!["pattern_msg"] = "$name_hint";
+        root["languages"] = new JsonObject { ["zh_cn"] = "zh.json" };
+        File.WriteAllText(Path.Combine(directory, "zh.json"), """{"name_hint":"请填写管理员名称"}""");
+        inputs[1]!["verify"] = "^[0-9]+$";
+        inputs[1]!["pattern_msg"] = "$missing_hint";
+        inputs[2]!["default"] = "新版默认";
+        File.WriteAllText(path, root.ToJsonString());
+        var project = ProjectPlanModule.Open(directory, config);
+        WithPlanWindow(logger, testDirectory, project, (window, items) => {
+            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            InvokeOnboarding(window, "RenderTaskPlan");
+            System.Windows.Controls.TextBox Editor(string name) => ConfigurationDescendants(items)
+                .OfType<System.Windows.Controls.TextBox>().Single(box => AutomationProperties.GetName(box) == name);
+            var name = Editor("Profile · name");
+            var code = (Wpf.Ui.Controls.PasswordBox)Editor("Profile · code");
+            var alias = Editor("Profile · alias");
+            string Status(System.Windows.Controls.TextBox editor) => AutomationProperties.GetItemStatus(editor);
+            bool HasNote(string message) => ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
+                .Any(note => note.Text == message);
+            var codeHint = Status(code);
+            Require(name.Text == "" && Status(name) == "请填写管理员名称" && HasNote(Status(name))
+                && code.Password == SecretInputValue && codeHint.Any(c => c is >= '一' and <= '鿿')
+                && !codeHint.Contains(SecretInputValue) && !codeHint.Contains("$missing_hint") && HasNote(codeHint)
+                && alias.Text == "新版默认" && Status(alias).Length == 0,
+                "首次打开新版字段应定位已存空串及非空旧值的错误，缺键字段跟随新默认值。");
+
+            code.Password = "draft";
+            name.Text = "admin";
+            Require(Status(name).Length == 0 && !HasNote("请填写管理员名称") && Status(code).Length != 0,
+                "输入时应立即更新本字段错误，修好一个字段不应清除另一字段的错误。");
+            name.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
+                System.Windows.Input.Keyboard.PrimaryDevice, 0, name, null) {
+                RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
+            });
+            InvokeOnboarding(window, "RenderTaskPlan");
+            var saved = ProjectPlanModule.Open(directory, config).GetConfiguration("RealTask")
+                .TaskOptions.Single(option => option.Name == "Profile").Inputs;
+            Require(saved[0].Value == "admin" && saved[0].Error is null && saved[1].Value == SecretInputValue
+                && saved[1].Error is not null
+                && ((Wpf.Ui.Controls.PasswordBox)Editor("Profile · code")).Password == "draft",
+                "逐项保存后，另一字段的已存密码与尚未保存的草稿必须分别保留。");
+        });
+    }
+
     private static void AddRequiredInput(string directory)
     {
         var interfacePath = Path.Combine(directory, "interface.json");
