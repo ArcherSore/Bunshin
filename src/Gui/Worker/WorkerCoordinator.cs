@@ -552,7 +552,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         try {
             var response = await SendRequestAsync<object, GetSnapshotResponse>(
                 ProtocolOperations.WorkerGetSnapshot, new { }, connectionLifetime.Token);
-            ApplyFreshSnapshot(response.Snapshot, admission, previousStart);
+            ApplyFreshSnapshot(response.Snapshot, admission, connection, previousStart);
             _ = SynchroniseFrameworkOptionsAsync(connectionLifetime.Token);
             await EnsureLogRecoveryAsync(
                 admission.WorkerInstanceId, logRecoveryGeneration,
@@ -749,11 +749,12 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     private void ApplyFreshSnapshot(WorkerSnapshot snapshot, WorkerAdmissionRecord admission,
-        Guid? reconciledStart = null)
+        ProtocolConnection connection, Guid? reconciledStart)
     {
         ValidateSnapshot(snapshot, admission);
         lock (_gate) {
-            if (_admission?.WorkerInstanceId != admission.WorkerInstanceId) {
+            if (_admission?.WorkerInstanceId != admission.WorkerInstanceId
+                || !ReferenceEquals(connection, _connection)) {
                 return;
             }
             if (_startAwaitingObservation == reconciledStart) {
@@ -812,12 +813,14 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     {
         try {
             WorkerAdmissionRecord admission;
+            ProtocolConnection connection;
             lock (_gate) {
+                connection = _connection ?? throw new InvalidOperationException("Worker IPC 尚未连接。");
                 admission = _admission ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
             }
             var response = await SendRequestAsync<object, GetSnapshotResponse>(
                 ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token);
-            ApplyFreshSnapshot(response.Snapshot, admission, reconciledStart: reconciledStart);
+            ApplyFreshSnapshot(response.Snapshot, admission, connection, reconciledStart);
         } catch (Exception exception) {
             _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
         }

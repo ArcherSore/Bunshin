@@ -83,6 +83,12 @@ public partial class MainWindow
                 }
             }
             return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
+        } catch (Exception exception) when (submitted.HasValue && exception is not WorkerProtocolErrorException
+            && (_workerCoordinator.StartAwaitingObservation
+                || exception is OperationCanceledException or IOException)) {
+            var detail = $"开始请求未确认，等待 Worker 快照：{exception.Message}";
+            _logger.Warn($"定时执行“{name}”（Run {submitted}）：{detail}");
+            return new(configurationId, ScheduledRunDisposition.Admitted, submitted, detail);
         } catch (Exception exception) {
             ReportUnattendedFailure($"定时执行“{name}”失败", exception);
             return new(configurationId, ScheduledRunDisposition.Admitted, submitted, exception.Message);

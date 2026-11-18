@@ -186,6 +186,10 @@ internal static partial class SelfTestRunner
                     Require(terminal == RunState.Cancelled ? failures.Count == 0
                         : failures.Single().Contains(name) && failures[0].Contains("计划项模拟失败"),
                         "任务失败通知必须包含配置与失败原因。");
+                    wts.ReportedId = sessionId + 97;
+                    wts.Sessions.Add(wts.ReportedId.Value);
+                    ExpectBusy();
+                    Require(wts.LogoffAttempts.Count == 0, "已知空闲的 Worker 不属于当前 WTS 分身时不得注销。");
                 }
             }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
                 prepareEnvironment: async (project, options, show) => {
