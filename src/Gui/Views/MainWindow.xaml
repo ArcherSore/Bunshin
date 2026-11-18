@@ -890,6 +890,14 @@
                             <TextBlock Text="首页" Style="{StaticResource Rail.Label}" />
                         </StackPanel>
                     </views:RailItem>
+                    <views:RailItem x:Name="ScheduleNavigationItem" DockPanel.Dock="Top" Tag="Schedule"
+                                    Style="{StaticResource Rail.Item}" ToolTip="定时"
+                                    AutomationProperties.Name="定时" Click="NavigationItem_Click">
+                        <StackPanel>
+                            <ui:SymbolIcon Symbol="Clock24" FontSize="20" HorizontalAlignment="Center" />
+                            <TextBlock Text="定时" Style="{StaticResource Rail.Label}" />
+                        </StackPanel>
+                    </views:RailItem>
                     <views:RailItem x:Name="SettingsNavigationItem" DockPanel.Dock="Bottom" Tag="Settings"
                                     Style="{StaticResource Rail.Item}" ToolTip="设置"
                                     AutomationProperties.Name="设置" Click="NavigationItem_Click">
@@ -1771,6 +1779,7 @@
                         </Border>
                     </Grid>
 
+                    <views:ScheduleView x:Name="ScheduleView" Visibility="Collapsed" />
                     <views:SettingsView x:Name="SettingsView" Visibility="Collapsed" />
                     <views:HelpView x:Name="HelpView" Visibility="Collapsed" />
 

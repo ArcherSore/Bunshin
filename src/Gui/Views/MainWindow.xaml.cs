@@ -49,6 +49,7 @@ public partial class MainWindow : FluentWindow
     private enum MainSection
     {
         Home,
+        Schedule,
         Help,
         Settings
     }
@@ -156,6 +157,8 @@ public partial class MainWindow : FluentWindow
         SettingsView.DataContext = _settings.Page;
         HelpView.DataContext = _help = new HelpPageModel(
             _settings.ExportDiagnostics, new SettingsAction(OpenIssuesAsync), ReportCopyFailure);
+        ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock);
+        ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
         _sessionManager = sessionManager;
         _workerCoordinator = workerCoordinator;
@@ -341,12 +344,14 @@ public partial class MainWindow : FluentWindow
             ? Visibility.Visible
             : Visibility.Collapsed;
         HelpView.Visibility = section == MainSection.Help ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleView.Visibility = section == MainSection.Schedule ? Visibility.Visible : Visibility.Collapsed;
         if (section == MainSection.Settings) {
             RefreshChildSessionCredentialStatus();
             RefreshDebugFileUsage();
         }
 
         HomeNavigationItem.IsActive = section == MainSection.Home;
+        ScheduleNavigationItem.IsActive = section == MainSection.Schedule;
         HelpNavigationItem.IsActive = section == MainSection.Help;
         SettingsNavigationItem.IsActive = section == MainSection.Settings;
         ReevaluateOnboarding();
@@ -2548,6 +2553,7 @@ public partial class MainWindow : FluentWindow
         RuntimeStatusText.Foreground = (WpfBrush)FindResource(foreground);
         RuntimeStatusText.Text = pill;
         AutomationProperties.SetName(RuntimeStatusPill, $"运行状态：{pill}");
+        ApplyScheduleCapsule(tone);
         RuntimeStatusTitle.Text = title;
         RuntimeStatusDetail.Text = detail;
         RuntimeStatusDetail.Visibility = detail.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
