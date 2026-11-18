@@ -11,7 +11,8 @@ internal sealed class RunTerminalNotificationTracker
     private readonly HashSet<Guid> _completedRuns = [];
     private readonly HashSet<Guid> _faultedRuns = [];
 
-    internal RunTerminalNotification? Observe(WorkerCoordinatorSnapshot observation)
+    internal RunTerminalNotification? Observe(
+        WorkerCoordinatorSnapshot observation, Guid? separatelyReportedFailure = null)
     {
         if (!observation.SnapshotFresh || observation.WorkerSnapshot is not { } snapshot) {
             return null;
@@ -29,7 +30,7 @@ internal sealed class RunTerminalNotificationTracker
             || !_observedRuns.Remove(run.RunId) || !_completedRuns.Add(run.RunId)) {
             return null;
         }
-        if (run.State == RunState.Cancelled) {
+        if (run.State == RunState.Cancelled || run.State == RunState.Failed && run.RunId == separatelyReportedFailure) {
             return null;
         }
         if (run.State == RunState.Succeeded) {

@@ -194,7 +194,7 @@ internal static partial class WorkerCoordinatorSelfTest
     internal static async Task<ProtocolConnection> OpenConnectionAsync(
         string pipeName, WorkerAdmissionRecord record, long lastLogSequence,
         CancellationToken cancellationToken, RunSnapshot? activeRun = null,
-        WorkerState initialState = WorkerState.Ready)
+        WorkerState initialState = WorkerState.Ready, long stateRevision = 1)
     {
         var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
@@ -220,7 +220,7 @@ internal static partial class WorkerCoordinatorSelfTest
                 WireEnvelope.Response(
                     ProtocolOperations.WorkerGetSnapshot, snapshotRequest.RequestId!.Value,
                     new GetSnapshotResponse(CreateSnapshot(record, lastLogSequence, activeRun) with {
-                        WorkerState = initialState
+                        WorkerState = initialState, StateRevision = stateRevision
                     })),
                 cancellationToken);
             return connection;

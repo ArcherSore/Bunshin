@@ -13,8 +13,9 @@ internal sealed class QuitAfterRunTracker(DateTime armedAtUtc)
     // Narrows the wait to one Run, for a start request whose answer was lost.
     internal void Await(Guid runId) => _runId = runId;
 
-    internal bool Observe(WorkerCoordinatorSnapshot observation) => observation.SnapshotFresh
-        && observation.WorkerSnapshot?.LastRun is { } run && !(run.StartedAtUtc < armedAtUtc)
+    internal bool Observe(WorkerCoordinatorSnapshot observation, Guid? scheduledRunId = null) =>
+        observation.SnapshotFresh && observation.WorkerSnapshot?.LastRun is { } run && run.RunId != scheduledRunId
+        && !(run.StartedAtUtc < armedAtUtc)
         && (_runId is not { } runId || run.RunId == runId)
         && run.State is RunState.Succeeded or RunState.Failed or RunState.Cancelled;
 }

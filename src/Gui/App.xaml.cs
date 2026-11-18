@@ -77,7 +77,7 @@ public partial class App : System.Windows.Application
         _mainWindow.ProjectIdentityChanged += MainWindow_ProjectIdentityChanged;
         _mainWindow.AutoRunStarted += (_, _) =>
             _quitAfterRun = command.QuitAfterRun ? new QuitAfterRunTracker(DateTime.UtcNow) : null;
-        _mainWindow.AutoRunFailed += (_, message) => ShowBalloon("自动启动未能完成", message, failed: true);
+        _mainWindow.AutoRunFailed += (_, message) => ShowBalloon("自动执行未能完成", message, failed: true);
         // The Run this launch meant to start never began, so --quit-after-run has nothing to wait for; a Run the
         // user starts later in this session must not end the program.
         _mainWindow.AutoRunAbandoned += (_, _) => _quitAfterRun = null;
@@ -214,13 +214,13 @@ public partial class App : System.Windows.Application
     {
         Dispatcher.BeginInvoke(() => {
             // --quit-after-run: the Run this launch started has ended, so nothing is left to confirm or announce.
-            if (_quitAfterRun?.Observe(snapshot) == true) {
+            if (_quitAfterRun?.Observe(snapshot, _mainWindow?.LastScheduledRunId) == true) {
                 _quitAfterRun = null;
                 _logger?.Info("--quit-after-run：任务已结束，正在退出程序。");
                 _ = ExitAsync(confirm: false);
                 return;
             }
-            if (_terminalNotifications.Observe(snapshot) is { } notification) {
+            if (_terminalNotifications.Observe(snapshot, _mainWindow?.LastScheduledRunId) is { } notification) {
                 ShowBalloon(notification.Title, notification.Message, notification.Failed);
             }
         });

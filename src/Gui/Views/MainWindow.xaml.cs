@@ -554,37 +554,40 @@ public partial class MainWindow : FluentWindow
             LogIgnoredAction();
             return;
         }
+        await RunOperationAsync(PendingOperation.PreparingEnvironment,
+            () => PrepareCurrentEnvironmentAsync(startRun, startupOnly, showDesktop), unattended);
+    }
+
+    private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool startupOnly = false, bool showDesktop = false)
+    {
         _environmentPreparationFailed = false;
-        await RunOperationAsync(
-            PendingOperation.PreparingEnvironment,
-            async () =>
-            {
-                try {
-                    LoadProject();
-                    await _prepareEnvironment(RequireProject(), _settings.CreateFrameworkOptions, showDesktop);
-                } catch {
-                    _environmentPreparationFailed = true;
-                    throw;
-                }
-                if (startRun && !_exitInProgress && !_environment.Closing) {
-                    // Keep the operation gate and configuration lock through admission of the Run.
-                    // UI snapshot notifications may still be queued when preparation completes.
-                    _logger.Info("等待 Worker 依赖检查完成后自动开始当前任务计划。");
-                    using var readyWait = new CancellationTokenSource();
-                    _workerReadyWait = readyWait;
-                    try {
-                        await _workerCoordinator.WaitForReadyAsync(readyWait.Token);
-                    } finally {
-                        _workerReadyWait = null;
-                    }
-                    if (_exitInProgress || _environment.Closing) {
-                        return;
-                    }
-                    SetPendingOperation(PendingOperation.StartingRun);
-                    await StartCurrentPlanAsync(startupOnly);
-                }
-            },
-            unattended);
+        try {
+            LoadProject();
+            await _prepareEnvironment(RequireProject(), _settings.CreateFrameworkOptions, showDesktop);
+        } catch {
+            _environmentPreparationFailed = true;
+            throw;
+        }
+        if (startRun && !_exitInProgress && !_environment.Closing && await WaitForRunStartAsync()) {
+            await StartCurrentPlanAsync(startupOnly);
+        }
+    }
+
+    private async Task<bool> WaitForRunStartAsync()
+    {
+        _logger.Info("等待 Worker 依赖检查完成后自动开始当前任务计划。");
+        using var readyWait = new CancellationTokenSource();
+        _workerReadyWait = readyWait;
+        try {
+            await _workerCoordinator.WaitForReadyAsync(readyWait.Token);
+        } finally {
+            _workerReadyWait = null;
+        }
+        if (_exitInProgress || _environment.Closing) {
+            return false;
+        }
+        SetPendingOperation(PendingOperation.StartingRun);
+        return true;
     }
 
     // RuntimeControls chooses what Retry means; this handler only carries it out.
@@ -636,25 +639,28 @@ public partial class MainWindow : FluentWindow
         }
         _pendingStartupOnly = startupOnly;
         _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
-        RunResultLog.WritePlan(_logger, _pendingStartAttempt, ActiveConfigurationName, startupOnly);
-        _telemetry.Register(_pendingStartAttempt.RedactionValues);
-        RunStartResponse response;
         try {
-            response = await _workerCoordinator.StartRunAsync(_pendingStartAttempt);
+            await SubmitRunAsync(_pendingStartAttempt, ActiveConfigurationName, startupOnly);
         } catch (Exception exception)
             when (exception is not (WorkerProtocolErrorException or InvalidOperationException)) {
-            // Sent, but no answer: the Worker may have started it, so a retry reuses the same Run ID.
             _unconfirmedRunId = _pendingStartAttempt.RunId;
             throw;
         }
+        _pendingStartAttempt = null;
+        _runAccepted = true;
+    }
+
+    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, bool startupOnly)
+    {
+        RunResultLog.WritePlan(_logger, attempt, name, startupOnly);
+        _telemetry.Register(attempt.RedactionValues);
+        var response = await _workerCoordinator.StartRunAsync(attempt);
         if (response.Disposition is not ("accepted" or "already_accepted")) {
             throw new InvalidDataException($"未知 run.start disposition：{response.Disposition}。 ");
         }
         _logger.Info(
-            $"run.start {response.Disposition}：runId={_pendingStartAttempt.RunId:D}；"
-            + $"planDigest={_pendingStartAttempt.PlanDigest}。 ");
-        _pendingStartAttempt = null;
-        _runAccepted = true;
+            $"run.start {response.Disposition}：runId={attempt.RunId:D}；"
+            + $"planDigest={attempt.PlanDigest}。 ");
     }
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
@@ -1938,10 +1944,24 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
+        if (pending is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment) {
+            await RunWindowOperationAsync(pending, async () => {
+                if (!await _environment.TryRunExclusiveAsync(operation)) {
+                    LogIgnoredAction(caller);
+                }
+            }, unattended);
+        } else {
+            await RunWindowOperationAsync(pending, () => _environment.RunExclusiveAsync(operation), unattended);
+        }
+        await ObserveScheduledRunAsync();
+    }
+
+    private async Task RunWindowOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended)
+    {
         using var scope = _logger.Scope(OperationLabel(pending));
         SetPendingOperation(pending);
         try {
-            await _environment.RunExclusiveAsync(operation);
+            await operation();
         } catch (OperationCanceledException) {
             _logger.Warn($"操作已取消：正在{OperationLabel(pending)}...");
         } catch (Exception exception) when (unattended) {
@@ -2126,6 +2146,7 @@ public partial class MainWindow : FluentWindow
         // coordinator's current snapshot is applied rather than the one the event carried.
         _workerSnapshot = _workerCoordinator.Snapshot;
         RefreshRuntimeControls();
+        _ = ObserveScheduledRunAsync();
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -2262,7 +2283,10 @@ public partial class MainWindow : FluentWindow
             ? new ProjectReadiness(true, project.EnabledItems.Count, _projectConfigurationValid,
                 project.RuntimeProfileDigest)
             : ProjectReadiness.NotLoaded,
-        _pendingOperation, _environmentPreparationFailed, _exitInProgress, _environment.Ending,
+        _pendingOperation == PendingOperation.None && _workerCoordinator.StartAwaitingObservation
+            && _workerSnapshot is { Observation: WorkerObservation.Connected, SnapshotFresh: true }
+            ? PendingOperation.StartingRun : _pendingOperation,
+        _environmentPreparationFailed, _exitInProgress, _environment.Ending,
         _environment.EndUnconfirmed));
 
     // The only refresh path for runtime inputs.

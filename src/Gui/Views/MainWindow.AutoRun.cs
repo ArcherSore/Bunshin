@@ -1,4 +1,5 @@
 using Gui.Infrastructure;
+using ProjectModel;
 
 namespace Gui.Views;
 
@@ -47,29 +48,41 @@ public partial class MainWindow
             }
             return false;
         }
+        var entered = await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
+        if (!entered) {
+            _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
+        }
+        await ObserveScheduledRunAsync();
+        return entered;
+    }
+
+    private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)
+    {
         // A refusal is reported by the change itself: the other configuration must never be run instead.
         if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
-            return true;
+            return;
         }
         if (project.EnabledItems.Count == 0) {
             ReportAutoRunFailure("所选配置没有可执行的任务。");
-            return true;
+            return;
         }
         if (!_projectConfigurationValid) {
             ReportAutoRunFailure("所选配置未通过校验，请打开程序检查参数。");
-            return true;
+            return;
         }
         _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
         _runAccepted = false;
         _unconfirmedRunId = null;
         AutoRunStarted?.Invoke(this, EventArgs.Empty);
         if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(), unattended: true);
+            await RunWindowOperationAsync(PendingOperation.StartingRun,
+                () => StartCurrentPlanAsync(), unattended: true);
         } else {
-            await PrepareFromPanelAsync(startRun: true, unattended: true);
+            await RunWindowOperationAsync(PendingOperation.PreparingEnvironment,
+                () => PrepareCurrentEnvironmentAsync(startRun: true), unattended: true);
         }
         if (_runAccepted) {
-            return true;
+            return;
         }
         // Otherwise no Run is known to have begun, whatever the reason, unless the Worker never answered.
         if (_unconfirmedRunId is { } runId) {
@@ -77,7 +90,6 @@ public partial class MainWindow
         } else {
             AutoRunAbandoned?.Invoke(this, EventArgs.Empty);
         }
-        return true;
     }
 
     // Loaded starts everything and needs a shown window, so the window is shown and hidden before it is ever drawn,

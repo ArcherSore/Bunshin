@@ -100,13 +100,14 @@ public sealed partial class ProjectPlanModule
         }
     }
 
-    private TaskConfiguration ExecutionConfiguration()
+    private TaskConfiguration ExecutionConfiguration(Guid id)
     {
-        var config = LoadConfig();
+        var config = FindConfiguration(id);
         return config with {
-            SelectedTasks = config.SelectedTasks.Where(name => IsItemEnabled(PlanItemKind.MaaTask, name)).ToArray(),
+            SelectedTasks = config.SelectedTasks
+                .Where(name => !_disabledItems.Contains((id, PlanItemKind.MaaTask, name))).ToArray(),
             SelectedPretasks = config.SelectedPretasks
-                .Where(name => IsItemEnabled(PlanItemKind.Pretask, name)).ToArray()
+                .Where(name => !_disabledItems.Contains((id, PlanItemKind.Pretask, name))).ToArray()
         };
     }
     public IReadOnlyList<string> SelectedTaskNames => LoadConfig().SelectedTasks;
@@ -156,7 +157,7 @@ public sealed partial class ProjectPlanModule
         return true;
     }
 
-    public void ValidateConfiguration() => ValidateActiveConfiguration(ExecutionConfiguration());
+    public void ValidateConfiguration() => ValidateActiveConfiguration(ExecutionConfiguration(ActiveConfigurationId));
 
     public static ProjectPlanModule Open(string projectDirectory, string configPath, ProjectPlanModule? previous = null,
         Action<string>? log = null)
@@ -355,14 +356,17 @@ public sealed partial class ProjectPlanModule
         _project.RuntimeProfileDigest, _project.ProjectRoot, _project.Provenance,
         _project.Controller, _project.Resources, _project.Agent);
 
-    public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false)
+    public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false) =>
+        CreateRunStartAttempt(ActiveConfigurationId, startupOnly);
+
+    public RunStartAttempt CreateRunStartAttempt(Guid configurationId, bool startupOnly = false)
     {
-        var config = ExecutionConfiguration();
+        var config = ExecutionConfiguration(configurationId);
         if (startupOnly) {
             config = config with { SelectedTasks = [] };
         }
         ValidateActiveConfiguration(config);
-        if (config.SelectedTasks.Count + config.SelectedPretasks.Count == 0) {
+        if (config.SelectedTasks.Count == 0 && !SelectedPretaskDefinitions(config).Any()) {
             throw new InvalidOperationException("请先勾选要执行的任务或前置任务。");
         }
         RequireRunnableOptions(config);

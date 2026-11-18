@@ -382,15 +382,46 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    internal async Task<RunStartResponse> StartRunAsync(RunStartAttempt attempt, CancellationToken cancellationToken = default)
+    // A response can precede the first state event, or be lost altogether. Cached idle is then inconclusive.
+    private Guid? _startAwaitingObservation;
+
+    internal bool StartAwaitingObservation
     {
-        EnsureStartAllowed(attempt.Plan.RuntimeProfileDigest);
-        return await SendRequestAsync<RunStartRequest, RunStartResponse>(
-            ProtocolOperations.RunStart,
-            new RunStartRequest(attempt.RunId, attempt.PlanDigest, attempt.Plan) {
-                RedactionValues = attempt.RedactionValues
-            },
-            cancellationToken);
+        get {
+            lock (_gate) {
+                return _startAwaitingObservation.HasValue;
+            }
+        }
+    }
+
+    internal async Task<RunStartResponse> StartRunAsync(
+        RunStartAttempt attempt, CancellationToken cancellationToken = default)
+    {
+        lock (_gate) {
+            EnsureStartAllowedLocked(attempt.Plan.RuntimeProfileDigest);
+            if (_startAwaitingObservation is Guid pending && pending != attempt.RunId) {
+                throw new InvalidOperationException("上一次开始请求尚未确认。");
+            }
+            _startAwaitingObservation = attempt.RunId;
+        }
+        try {
+            return await SendRequestAsync<RunStartRequest, RunStartResponse>(
+                ProtocolOperations.RunStart,
+                new RunStartRequest(attempt.RunId, attempt.PlanDigest, attempt.Plan) {
+                    RedactionValues = attempt.RedactionValues
+                }, cancellationToken);
+        } catch (WorkerProtocolErrorException) {
+            lock (_gate) {
+                if (_startAwaitingObservation == attempt.RunId) {
+                    _startAwaitingObservation = null;
+                }
+            }
+            throw;
+        } catch {
+            // Worker handles requests in wire order. This read, or the snapshot on reconnect, follows run.start.
+            _ = RefreshSnapshotAsync(attempt.RunId);
+            throw;
+        }
     }
 
     internal async Task<RunStopResponse> StopRunAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -503,6 +534,10 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             return;
         }
         var (admission, logRecoveryGeneration) = admitted;
+        Guid? previousStart;
+        lock (_gate) {
+            previousStart = _startAwaitingObservation;
+        }
         RaiseStateChanged();
 
         using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -517,7 +552,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         try {
             var response = await SendRequestAsync<object, GetSnapshotResponse>(
                 ProtocolOperations.WorkerGetSnapshot, new { }, connectionLifetime.Token);
-            ApplyFreshSnapshot(response.Snapshot, admission);
+            ApplyFreshSnapshot(response.Snapshot, admission, previousStart);
             _ = SynchroniseFrameworkOptionsAsync(connectionLifetime.Token);
             await EnsureLogRecoveryAsync(
                 admission.WorkerInstanceId, logRecoveryGeneration,
@@ -713,12 +748,16 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         return admission;
     }
 
-    private void ApplyFreshSnapshot(WorkerSnapshot snapshot, WorkerAdmissionRecord admission)
+    private void ApplyFreshSnapshot(WorkerSnapshot snapshot, WorkerAdmissionRecord admission,
+        Guid? reconciledStart = null)
     {
         ValidateSnapshot(snapshot, admission);
         lock (_gate) {
             if (_admission?.WorkerInstanceId != admission.WorkerInstanceId) {
                 return;
+            }
+            if (_startAwaitingObservation == reconciledStart) {
+                _startAwaitingObservation = null;
             }
             if (Snapshot.WorkerSnapshot is { } current && current.WorkerInstanceId == snapshot.WorkerInstanceId
                 && current.StateRevision > snapshot.StateRevision) {
@@ -751,7 +790,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
                 });
-                _ = Task.Run(RefreshSnapshotAfterGapAsync);
+                _ = Task.Run(() => RefreshSnapshotAsync());
                 revisionGapFrom = currentRevision;
             } else {
                 ValidateSnapshot(state.Snapshot, admission);
@@ -769,17 +808,16 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
     }
 
-    private async Task RefreshSnapshotAfterGapAsync()
+    private async Task RefreshSnapshotAsync(Guid? reconciledStart = null)
     {
         try {
-            var response = await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token);
             WorkerAdmissionRecord admission;
             lock (_gate) {
-                admission = _admission
-                            ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
+                admission = _admission ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
             }
-            ApplyFreshSnapshot(response.Snapshot, admission);
+            var response = await SendRequestAsync<object, GetSnapshotResponse>(
+                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token);
+            ApplyFreshSnapshot(response.Snapshot, admission, reconciledStart: reconciledStart);
         } catch (Exception exception) {
             _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
         }
@@ -1016,15 +1054,13 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         _abandonedRequests.Clear();
     }
 
-    private void EnsureStartAllowed(string desiredRuntimeProfileDigest)
+    private void EnsureStartAllowedLocked(string desiredRuntimeProfileDigest)
     {
-        lock (_gate) {
-            var worker = Snapshot.WorkerSnapshot;
-            if (Snapshot.Observation != WorkerObservation.Connected || !Snapshot.SnapshotFresh || worker is null
-                || worker.WorkerState != WorkerState.Ready || worker.ActiveRun is not null
-                || worker.RunState != RunState.Idle || worker.RuntimeProfileDigest != desiredRuntimeProfileDigest) {
-                throw new InvalidOperationException("当前 Worker/Snapshot/Run 状态不允许 Start。 ");
-            }
+        var worker = Snapshot.WorkerSnapshot;
+        if (Snapshot.Observation != WorkerObservation.Connected || !Snapshot.SnapshotFresh || worker is null
+            || worker.WorkerState != WorkerState.Ready || worker.ActiveRun is not null
+            || worker.RunState != RunState.Idle || worker.RuntimeProfileDigest != desiredRuntimeProfileDigest) {
+            throw new InvalidOperationException("当前 Worker/Snapshot/Run 状态不允许 Start。 ");
         }
     }
 
@@ -1202,7 +1238,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     // The primary guard against a second live Worker; the Worker's per-session mutex is only a backstop.
-    private void EnsureSessionHasNoWorker(uint childSessionId)
+    internal void EnsureSessionHasNoWorker(uint childSessionId)
     {
         IReadOnlyList<WorkerProcessEntry> processes;
         try {
@@ -1237,6 +1273,11 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
 
     private void UpdateSnapshotLocked(WorkerCoordinatorSnapshot snapshot)
     {
+        if (snapshot.Observation is WorkerObservation.WorkerExited or WorkerObservation.ChildSessionEnded
+            || snapshot.SnapshotFresh && _startAwaitingObservation is Guid id
+                && (snapshot.WorkerSnapshot?.ActiveRun?.RunId == id || snapshot.WorkerSnapshot?.LastRun?.RunId == id)) {
+            _startAwaitingObservation = null;
+        }
         Snapshot = snapshot;
     }
 
