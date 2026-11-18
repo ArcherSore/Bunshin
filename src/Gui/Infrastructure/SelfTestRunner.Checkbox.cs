@@ -67,11 +67,18 @@ internal static partial class SelfTestRunner
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             var project = ProjectOf(window);
             EndTour(window);
+            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            string[] Previews() => ConfigurationDescendants(items).OfType<TextBlock>()
+                .Select(tag => tag.ToolTip).OfType<string>().ToArray();
+            SetOnboardingField(window, "_expandedTaskName", null!);
+            InvokeOnboarding(window, "RenderTaskPlan");
+            Require(Previews().SequenceEqual(["Mode：Default mode", "Features：2/3", "Tier：0/2"]),
+                "折叠预览必须按声明顺序最多显示三个顶层选项，并显示多选计数。");
             SetOnboardingField(window, "_expandedTaskName", "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             PumpOnboarding();
             SaveWindowScreenshot(window, "checkbox.png");
-            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            Require(!Previews().Contains("Features：2/3"), "展开时应隐藏折叠预览。");
             // Saving may rebuild the card, so each step looks the editor up again.
             ListBox Segments(string name) => ConfigurationDescendants(items).OfType<ListBox>()
                 .Single(list => AutomationProperties.GetName(list) == name);
@@ -98,7 +105,6 @@ internal static partial class SelfTestRunner
             Require(Option("Features").SelectedCases.Count == 0 && row.IsInvalid
                 && ConfigurationDescendants(row).OfType<TextBlock>()
                     .Any(text => text.Text == "至少选择 1 项，否则不能开始任务")
-                && ParameterInspector.ShowCases(Option("Features")) == "无"
                 && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
                 "少于 min_count 时必须保存、标红并阻止开始。");
 
@@ -110,8 +116,11 @@ internal static partial class SelfTestRunner
             Segments("Finish").SelectedItems.Add(Case(Segments("Finish"), "Enabled"));
             Require(Option("Single").SelectedCases.SequenceEqual(["Enabled"])
                 && !ConfigurationDescendants(items).OfType<CheckBox>().Any(box => AutomationProperties.GetName(box)
-                    == "Finish") && ParameterInspector.ShowCases(Option("Single")) == "Finish directly",
-                "单 case checkbox 也必须显示为分段，摘要显示 case 标签。");
+                    == "Finish"), "单 case checkbox 也必须显示为分段。");
+            SetOnboardingField(window, "_expandedTaskName", null!);
+            InvokeOnboarding(window, "RenderTaskPlan");
+            Require(Previews().SequenceEqual(["Mode：Default mode", "Features：0/3", "Tier：1/2"]),
+                "重新折叠后，多选预览必须反映当前的勾选数。");
         }, AddCheckboxOptions);
     }
 

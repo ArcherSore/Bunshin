@@ -1,24 +1,11 @@
-using Gui.Infrastructure;
 using Gui.Settings;
 using Protocol;
 
 namespace Gui.Views;
 
 // The FAQ page. Inline markup in answers: 「a → b」 is a UI path, 「x」 a UI label, [[Win]] a key, **x** emphasis.
-internal sealed class HelpPageModel : SettingsObservable
+internal sealed class HelpPageModel
 {
-    private readonly Action<Exception> _copyFailed;
-    private bool _qqCopied;
-    private int _copies;
-
-    public HelpPageModel(SettingsAction exportDiagnostics, SettingsAction openIssues, Action<Exception> copyFailed)
-    {
-        ExportDiagnostics = exportDiagnostics;
-        OpenIssues = openIssues;
-        CopyQq = new SettingsAction(CopyQqAsync);
-        _copyFailed = copyFailed;
-    }
-
     public IReadOnlyList<HelpSection> Sections { get; } = [
         new("运行环境与桌面分身", [
             new("首次安装后，准备运行环境失败怎么办？", $"先重启电脑，再重新打开 {AppIdentity.Name} 准备运行环境。",
@@ -46,39 +33,8 @@ internal sealed class HelpPageModel : SettingsObservable
                     "双击安装目录中的 **DependencySetup_依赖库安装.bat**，并允许管理员权限。",
                     $"等待窗口显示安装完成，然后重新打开 {AppIdentity.Name}。",
                     "如果仍然无法运行，请重启电脑后再试。"))
-        ]),
-        new("任务运行", [
-            new("脚本启动后不执行任务怎么办？", "关闭 Windows 任务栏的「自动隐藏」，然后重新运行任务。",
-                new HelpParagraph("请先检查 Windows 底部任务栏是否开启了 **自动隐藏**。"),
-                HelpSteps.Of(null,
-                    "打开 Windows「设置 → 个性化 → 任务栏」，展开「任务栏行为」。",
-                    "关闭「自动隐藏任务栏」。",
-                    $"回到 {AppIdentity.Name}，重新运行任务。"))
         ])
     ];
-
-    public SettingsAction ExportDiagnostics { get; }
-    public SettingsAction OpenIssues { get; }
-    public SettingsAction CopyQq { get; }
-    public string Qq { get; } = ProjectProfile.SupportGroupQq;
-    public bool QqCopied { get => _qqCopied; private set => Set(ref _qqCopied, value); }
-
-    // The copy button reads 已复制 for two seconds; a later click restarts that period.
-    private async Task CopyQqAsync()
-    {
-        try {
-            System.Windows.Clipboard.SetText(Qq);
-        } catch (Exception exception) {
-            _copyFailed(exception);
-            return;
-        }
-        var copy = ++_copies;
-        QqCopied = true;
-        await Task.Delay(TimeSpan.FromSeconds(2));
-        if (copy == _copies) {
-            QqCopied = false;
-        }
-    }
 }
 
 internal sealed record HelpSection(string Title, IReadOnlyList<HelpQuestion> Questions);
