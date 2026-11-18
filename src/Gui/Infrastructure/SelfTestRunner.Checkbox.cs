@@ -49,6 +49,9 @@ internal static partial class SelfTestRunner
         Check("Stop", "停止");
         Require(messages.Count(message => message.Contains("EscortContinueS") && message.Contains("Yes")
             && message.Contains("Stop")) == 1, "重载、重绘和重新创建计划只应记录一次具体的回退。");
+        option["default_case"] = "Yes";
+        File.WriteAllText(path, pi.ToJsonString());
+        Check("Yes", "继续");
         VerifyOptionKindMigration(testDirectory);
     }
 
@@ -104,12 +107,20 @@ internal static partial class SelfTestRunner
         Check(partial, "Normal");
         Check(retired, "Charged");
 
+        option["default_case"] = new JsonArray("Combo");
+        File.WriteAllText(path, pi.ToJsonString());
+        project = ProjectPlanModule.Open(directory, configPath);
+        Check(partial, "Normal");
+        Check(retired, "Combo");
+        Check(empty);
+        Check(missing, "Combo");
+
         option["min_count"] = 2;
         File.WriteAllText(path, pi.ToJsonString());
         project = ProjectPlanModule.Open(directory, configPath, project, messages.Add);
         project.ActivateConfiguration(partial);
         var group = project.GetConfiguration("RealTask").TaskOptions.Single(item => item.Name == "Features");
-        Require(group.SelectedCases.SequenceEqual(["Normal"]) && group.StartBlocker is { } countError
+        Require(group.SelectedCases.SequenceEqual(["Normal"]) && group.SelectionCountError is { } countError
             && countError.Contains("2") && countError.Contains("1")
             && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
             "过滤后不足下限时应说明所需数量和当前数量，保留有效选择供用户补选。");
@@ -216,7 +227,7 @@ internal static partial class SelfTestRunner
             "checkbox 不得保存超过 max_count、不存在的 case 或 select 形式的值。");
 
         project.SetSelectedCases("Features", []);
-        Require(Option(project, "Features").IsBelowMinimum
+        Require(Option(project, "Features").SelectionCountError is not null
             && Option(ProjectPlanModule.Open(directory, configPath), "Features").SelectedCases.Count == 0
             && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
             "少于 min_count 的勾选可以保存，但不能开始运行。");

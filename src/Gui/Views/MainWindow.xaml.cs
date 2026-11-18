@@ -117,8 +117,10 @@ public partial class MainWindow : FluentWindow
     private static readonly DependencyProperty ConfigurationEditableProperty = DependencyProperty.Register(
         "ConfigurationEditable", typeof(bool), typeof(MainWindow), new PropertyMetadata(true));
 
+    private enum InputEdit { Idle, Edited, Rejected }
+
     private sealed record OptionInputTag(Guid ConfigurationId, string OptionName, string InputName, string Value,
-        PlanItemKind Kind, bool Submitted, bool Edited = false, bool Rejected = false)
+        bool IsExplicit, InputEdit Edit = InputEdit.Idle)
     {
         internal (Guid, string, string) Key => (ConfigurationId, OptionName, InputName);
     }
@@ -599,16 +601,13 @@ public partial class MainWindow : FluentWindow
                     return;
                 }
                 if (RevealInvalidParameters(project, startupOnly, focus: !unattended) is { } problem) {
-                    if (unattended) {
-                        ReportAutoRunFailure(problem);
-                    } else {
-                        _logger.Info(problem);
-                    }
+                    ReportRunBlocker(problem, unattended);
                     return;
                 }
                 if (project.GetExecutionItems(startupOnly).Count == 0) {
                     const string noItems = "本次没有可执行的任务。请勾选适用的任务后重试。";
-                    ReportRunBlocker(_configurationNotice is { } notice ? $"{notice}{Environment.NewLine}{noItems}"
+                    ReportRunBlocker(!string.IsNullOrEmpty(_configurationNotice)
+                        ? $"{_configurationNotice}{Environment.NewLine}{noItems}"
                         : noItems, unattended);
                     return;
                 }
@@ -879,27 +878,6 @@ public partial class MainWindow : FluentWindow
             new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
     }
 
-    private sealed record RunFieldProblem(ProjectTaskChoice Task, string Option, string? Input, string Message);
-
-    private IEnumerable<RunFieldProblem> GetRunFieldProblems(ProjectPlanModule project, bool startupOnly)
-    {
-        foreach (var task in project.GetExecutionItems(startupOnly)) {
-            var configuration = GetConfigurationOrEmpty(task.Name, task.Kind);
-            foreach (var row in DeriveInspectorRows(task.Name, configuration, shared: false, task.Kind)) {
-                if (row.Option.SelectionCountError is { } countError) {
-                    yield return new(task, row.Option.Name, null, $"“{row.Label}”：{countError}");
-                }
-                foreach (var field in row.Inputs) {
-                    // A corrected draft can look valid while the value the Run would use still needs to be saved.
-                    var reason = field.Error ?? (field.Input.Error is null ? null : "请按 Enter 保存当前已修正的输入。");
-                    if (reason is not null) {
-                        yield return new(task, row.Option.Name, field.Input.Name, $"“{field.AccessibleName}”：{reason}");
-                    }
-                }
-            }
-        }
-    }
-
     private string? RevealInvalidParameters(ProjectPlanModule project, bool startupOnly, bool focus)
     {
         _blockedRunScope = (project.ActiveConfigurationId, startupOnly);
@@ -930,12 +908,14 @@ public partial class MainWindow : FluentWindow
     private RunFieldProblem[] RefreshRunFieldProblems(ProjectPlanModule project)
     {
         var problems = _blockedRunScope is { } scope && scope.Configuration == project.ActiveConfigurationId
-            ? GetRunFieldProblems(project, scope.StartupOnly).ToArray() : [];
+            ? project.GetExecutionItems(scope.StartupOnly)
+                .SelectMany(task => InspectorRows(task.Name, task.Kind).SelectMany(row => row.RunProblems(task)))
+                .ToArray() : [];
         if (problems.Length == 0) {
             _blockedRunScope = null;
         }
         var messages = new List<string>();
-        if (_configurationNotice is not null) {
+        if (!string.IsNullOrEmpty(_configurationNotice)) {
             messages.Add(_configurationNotice);
         }
         var byTask = problems.ToLookup(problem => (problem.Task.Kind, problem.Task.Name));
@@ -954,8 +934,7 @@ public partial class MainWindow : FluentWindow
     // The header is the only expansion toggle; a task without parameters has nothing to expand.
     private void PlanItemHeader_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not WpfButton { Tag: ProjectTaskChoice task }
-            || !IsExpanded(task) && !HasParameters(GetConfigurationOrEmpty(task.Name, task.Kind))) {
+        if (sender is not WpfButton { Tag: ProjectTaskChoice task }) {
             return;
         }
         _expandedTaskName = IsExpanded(task) ? null : task.Name;
@@ -1061,7 +1040,7 @@ public partial class MainWindow : FluentWindow
     private void OptionInputTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         if (sender is WpfTextBox editor) {
-            _ = CommitChangedInput(editor);
+            _ = CommitOptionInput(editor);
         }
     }
 
@@ -1069,7 +1048,7 @@ public partial class MainWindow : FluentWindow
     private void OptionInputTextBox_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
         if (e.Key == Key.Enter && sender is WpfTextBox { Tag: OptionInputTag } submitted) {
-            _ = CommitOptionInput(submitted);
+            _ = CommitOptionInput(submitted, submitDefault: true);
             e.Handled = true;
             return;
         }
@@ -1079,13 +1058,8 @@ public partial class MainWindow : FluentWindow
         }
         _inputDrafts.Remove(tag.Key);
         SetInputText(editor, tag.Value);
-        editor.Tag = tag with { Edited = false, Rejected = false };
+        editor.Tag = tag with { Edit = InputEdit.Idle };
         editor.SelectAll();
-        ShowOptionInputError(editor, null);
-        RefreshParameterDisplays();
-        if (_blockedRunScope.HasValue) {
-            RefreshRunFieldProblems(RequireProject());
-        }
         e.Handled = true;
     }
 
@@ -1113,10 +1087,10 @@ public partial class MainWindow : FluentWindow
         }
 
         try {
-            var before = GetExpandedOptionNames();
+            var before = GetExpandedOptionLayout();
             save(RequireProject());
             InvalidatePendingStart();
-            RefreshAfterOptionSaved(!before.SequenceEqual(GetExpandedOptionNames()));
+            RefreshAfterOptionSaved(!before.SequenceEqual(GetExpandedOptionLayout()));
             _logger.Info($"已保存 explicit case：option={optionName}。 ");
         } catch (Exception exception) {
             HandleOperationError("保存 select/switch/checkbox option 失败", exception);
@@ -1145,37 +1119,24 @@ public partial class MainWindow : FluentWindow
             RenderConfigurationTabs();
             RenderAvailableTaskShelf(project);
             RenderPlanItems(project);
-            RefreshConfigurationValidity(project);
+            RefreshPlanStatus(project);
         } finally {
             _updatingOptionEditors = false;
         }
     }
 
-    private void RefreshConfigurationValidity(ProjectPlanModule project)
+    private void RefreshPlanStatus(ProjectPlanModule project)
     {
         // Field problems belong to the inspector. Leave Start available so a click can locate the field.
         _projectConfigurationValid = true;
-        var warning = project.LoadWarning;
-        if (warning is null) {
-            try {
-                project.ValidateConfiguration();
-            } catch (Exception) {
-                if (!GetRunFieldProblems(project, startupOnly: false).Any()) {
-                    warning = "当前配置无法生成运行计划。请检查任务参数及项目资源包后重试。";
-                }
-            }
-        }
         RetryProjectLoadButton.Visibility = project.LoadWarning is null ? Visibility.Collapsed : Visibility.Visible;
-        _configurationNotice = warning;
-        if (project.SkippedPretaskMessage is { } skipped) {
-            _configurationNotice = warning is null ? skipped : $"{warning}{Environment.NewLine}{skipped}";
-        }
+        _configurationNotice = string.Join(Environment.NewLine,
+            new[] { project.LoadWarning, project.SkippedPretaskMessage }.OfType<string>());
         RefreshRunFieldProblems(project);
         RefreshRuntimeControls();
     }
 
-    // Option edits never change the task shelf or tabs. Plan cards are rebuilt only when nested options appear or
-    // vanish; otherwise the edited control stays in place and keeps its animation and focus.
+    // Option edits only rebuild cards when the expanded rows change order, visibility or depth.
     private void RefreshAfterOptionSaved(bool rebuildCards)
     {
         var project = RequireProject();
@@ -1189,13 +1150,11 @@ public partial class MainWindow : FluentWindow
         } else {
             RefreshParameterDisplays();
         }
-        RefreshConfigurationValidity(project);
+        RefreshPlanStatus(project);
     }
 
-    private string[] GetExpandedOptionNames() => _expandedTaskName is not { } taskName ? []
-        : DeriveInspectorRows(taskName, GetConfigurationOrEmpty(taskName, _expandedTaskKind),
-            shared: false, _expandedTaskKind)
-            .Select(row => row.Option.Name).ToArray();
+    private (string Name, int Depth)[] GetExpandedOptionLayout() => _expandedTaskName is not { } taskName ? []
+        : InspectorRows(taskName, _expandedTaskKind).Select(row => (row.Option.Name, row.Depth)).ToArray();
 
     private void RenderAvailableTaskShelf(ProjectPlanModule project)
     {
@@ -1391,23 +1350,10 @@ public partial class MainWindow : FluentWindow
     private bool IsExpanded(ProjectTaskChoice task) =>
         _expandedTaskName == task.Name && _expandedTaskKind == task.Kind;
 
-    private ProjectConfigurationView GetConfigurationOrEmpty(string taskName, PlanItemKind kind)
-    {
-        try {
-            return RequireProject().GetConfiguration(taskName, kind);
-        } catch (Exception exception) when (exception is InvalidDataException or ArgumentException) {
-            return new ProjectConfigurationView([], []);
-        }
-    }
-
-    private static bool HasParameters(ProjectConfigurationView configuration) =>
-        configuration.GlobalOptions.Count + configuration.TaskOptions.Count != 0;
-
     private Border CreatePlanItem(ProjectTaskChoice task, bool expanded)
     {
-        var configuration = GetConfigurationOrEmpty(task.Name, task.Kind);
-        var hasParameters = HasParameters(configuration);
-        expanded &= hasParameters;
+        var rows = InspectorRows(task.Name, task.Kind, shared: expanded);
+        expanded &= rows.Count != 0;
         var container = new Border {
             Tag = task,
             Style = (Style)FindResource(expanded ? "PlanItemExpandedStyle" : "PlanItemStyle")
@@ -1429,12 +1375,12 @@ public partial class MainWindow : FluentWindow
             layout.Children.Add(accentLine);
         }
 
-        layout.Children.Add(CreatePlanItemHeader(task, expanded, hasParameters, configuration, container));
+        layout.Children.Add(CreatePlanItemHeader(task, expanded, rows, container));
 
         if (expanded) {
             var editor = new Border {
                 Style = (Style)FindResource("ParameterEditorStyle"),
-                Child = CreateParameterInspector(task.Name, configuration, task.Kind)
+                Child = CreateParameterInspector(rows)
             };
             // A wide card lines the inspector up with the task label; a narrow one gives it the full width.
             container.SizeChanged += (_, args) =>
@@ -1446,9 +1392,10 @@ public partial class MainWindow : FluentWindow
         return container;
     }
 
-    private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, bool hasParameters,
-        ProjectConfigurationView configuration, Border container)
+    private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, IReadOnlyList<InspectorRow> rows,
+        Border container)
     {
+        var hasParameters = rows.Count != 0;
         var header = new Grid {
             MinHeight = 44,
             Margin = new Thickness(expanded ? 6 : 4, 0, 4, 0)
@@ -1459,25 +1406,19 @@ public partial class MainWindow : FluentWindow
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var dragHandle = CreateIconButton(WpfSymbolRegular.ReOrderDotsVertical20, "拖动以调整顺序", "拖动以调整顺序");
-        dragHandle.Tag = task;
-        dragHandle.Width = dragHandle.MinWidth = 24;
-        if (task.Kind == PlanItemKind.Pretask) {
-            dragHandle.Visibility = Visibility.Hidden;
-            dragHandle.IsHitTestVisible = false;
-        } else {
+        if (task.Kind == PlanItemKind.MaaTask) {
+            var dragHandle = CreateIconButton(WpfSymbolRegular.ReOrderDotsVertical20, "拖动以调整顺序", "拖动以调整顺序");
+            dragHandle.Tag = task;
+            dragHandle.Width = dragHandle.MinWidth = 24;
             dragHandle.Cursor = WpfCursors.SizeAll;
             dragHandle.PreviewMouseLeftButtonDown += PlanDragHandle_PreviewMouseLeftButtonDown;
             dragHandle.PreviewMouseMove += PlanDragHandle_PreviewMouseMove;
             BindConfigurationEditable(dragHandle);
-        }
-        header.Children.Add(dragHandle);
-        if (task.Kind == PlanItemKind.Pretask) {
-            dragHandle.Visibility = Visibility.Collapsed;
+            header.Children.Add(dragHandle);
+            header.Children.Add(CreatePlanItemSelection(task));
+        } else {
             header.Margin = new Thickness(10, 0, 4, 0);
             header.Children.Add(CreateStartupSelection(task));
-        } else {
-            header.Children.Add(CreatePlanItemSelection(task));
         }
 
         var label = new TextBlock {
@@ -1512,7 +1453,7 @@ public partial class MainWindow : FluentWindow
                 VerticalAlignment = VerticalAlignment.Center
             };
             _planItemSummaries.Add((summaryText, task));
-            FillParameterSummary(summaryText, task.Name, configuration, task.Kind);
+            FillParameterSummary(summaryText, rows);
             Grid.SetColumn(summaryText, 2);
             title.Children.Add(summaryText);
         }
@@ -1525,7 +1466,9 @@ public partial class MainWindow : FluentWindow
         AutomationProperties.SetName(main,
             $"{task.Label}，{(hasParameters ? (expanded ? "已展开" : "已折叠") : "没有可配置的参数")}");
         AutomationProperties.SetHelpText(main, hasParameters ? (expanded ? "点击收起参数" : "点击展开参数") : string.Empty);
-        main.Click += PlanItemHeader_Click;
+        if (hasParameters) {
+            main.Click += PlanItemHeader_Click;
+        }
         Grid.SetColumn(main, 2);
         header.Children.Add(main);
         if (!string.IsNullOrWhiteSpace(task.Description)) {
@@ -1538,7 +1481,7 @@ public partial class MainWindow : FluentWindow
             header.Children.Add(information);
         }
 
-        if (task.Kind == PlanItemKind.Pretask && RequireProject().Pretasks.Any(item => item.Name == task.Name)) {
+        if (task.Kind == PlanItemKind.Pretask) {
             return header;
         }
 
@@ -1584,31 +1527,26 @@ public partial class MainWindow : FluentWindow
             }
             RequireProject().SetItemEnabled(task.Kind, task.Name, selection.IsChecked == true);
             InvalidatePendingStart();
-            RefreshConfigurationValidity(RequireProject());
+            RefreshPlanStatus(RequireProject());
         };
         Grid.SetColumn(selection, 1);
         return selection;
     }
 
-    // Drafts are those of the active configuration; sharing is only worked out for the expanded card.
-    private IReadOnlyList<InspectorRow> DeriveInspectorRows(
-        string taskName, ProjectConfigurationView configuration, bool shared, PlanItemKind kind)
+    private IReadOnlyList<InspectorRow> InspectorRows(string taskName, PlanItemKind kind, bool shared = false)
     {
         var project = RequireProject();
-        var drafts = _inputDrafts.Where(pair => pair.Key.Configuration == project.ActiveConfigurationId)
-            .ToDictionary(pair => (pair.Key.Option, pair.Key.Input), pair => pair.Value);
-        (string, ProjectConfigurationView)[] others = !shared ? [] : project.SelectedItems
-            .Where(task => task.Name != taskName || task.Kind != kind)
-            .Select(task => (task.Label, GetConfigurationOrEmpty(task.Name, task.Kind))).ToArray();
-        return ParameterInspector.Derive(configuration, drafts, others);
+        var others = shared ? project.SelectedItems.Where(task => task.Name != taskName || task.Kind != kind)
+            .Select(task => (task.Label, project.GetConfiguration(task.Name, task.Kind))).ToArray() : [];
+        return ParameterInspector.Derive(project.GetConfiguration(taskName, kind),
+            (option, input) => _inputDrafts.GetValueOrDefault((project.ActiveConfigurationId, option, input)), others);
     }
 
     // An unfixed invalid draft replaces the saved value in red, so folded cards agree with the field and Start block.
-    private void FillParameterSummary(TextBlock summary, string taskName, ProjectConfigurationView configuration,
-        PlanItemKind kind)
+    private void FillParameterSummary(TextBlock summary, IReadOnlyList<InspectorRow> rows)
     {
         summary.Inlines.Clear();
-        foreach (var row in DeriveInspectorRows(taskName, configuration, shared: false, kind)) {
+        foreach (var row in rows) {
             var parts = row.Kind == ProjectOptionKind.Input
                 ? row.Inputs.Select(input =>
                     (input.Label, Value: input.Show(input.DisplayValue), Invalid: input.Error is not null))
@@ -1632,23 +1570,19 @@ public partial class MainWindow : FluentWindow
     private void RefreshParameterDisplays()
     {
         foreach (var (summary, task) in _planItemSummaries) {
-            FillParameterSummary(summary, task.Name, GetConfigurationOrEmpty(task.Name, task.Kind), task.Kind);
+            FillParameterSummary(summary, InspectorRows(task.Name, task.Kind));
         }
-        if (_expandedTaskName is not { } expanded || _inspectorRows.Count == 0) {
-            return;
-        }
-        foreach (var row in DeriveInspectorRows(expanded, GetConfigurationOrEmpty(expanded, _expandedTaskKind),
-            shared: false, _expandedTaskKind)) {
-            if (_inspectorRows.TryGetValue(row.Option.Name, out var view)) {
-                ApplyInspectorRow(view, row);
+        if (_inspectorRows.Count != 0 && _expandedTaskName is { } expanded) {
+            foreach (var row in InspectorRows(expanded, _expandedTaskKind)) {
+                ApplyInspectorRow(_inspectorRows[row.Option.Name], row);
             }
         }
     }
 
-    private Border CreateParameterInspector(string taskName, ProjectConfigurationView configuration, PlanItemKind kind)
+    private Border CreateParameterInspector(IReadOnlyList<InspectorRow> rows)
     {
         var table = new StackPanel();
-        foreach (var row in DeriveInspectorRows(taskName, configuration, shared: true, kind)) {
+        foreach (var row in rows) {
             table.Children.Add(CreateInspectorRow(row, separated: table.Children.Count != 0));
         }
         return new Border { Style = (Style)FindResource("Inspector.Table"), Child = table };
@@ -1746,7 +1680,7 @@ public partial class MainWindow : FluentWindow
     private FrameworkElement CreateInputEditor(InspectorRow row, InspectorInput input)
     {
         var tag = new OptionInputTag(_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name,
-            input.SavedValue, _expandedTaskKind, input.Input.IsExplicit);
+            input.SavedValue, input.Input.IsExplicit);
         var editor = input.Input.IsPassword
             ? new Wpf.Ui.Controls.PasswordBox { PasswordChar = '●', RevealButtonEnabled = false }
             : new Wpf.Ui.Controls.TextBox();
@@ -1760,23 +1694,18 @@ public partial class MainWindow : FluentWindow
         }
         void OnInputChanged()
         {
-            if (_updatingOptionEditors || _committingConfigurationInput || editor.Tag is not OptionInputTag current
-                || !_inspectorRows.TryGetValue(row.Option.Name, out var view)) {
+            if (_updatingOptionEditors || _committingConfigurationInput) {
                 return;
             }
+            var current = (OptionInputTag)editor.Tag;
             var text = GetInputText(editor);
             if (text == current.Value) {
                 _inputDrafts.Remove(current.Key);
             } else {
                 _inputDrafts[current.Key] = text;
             }
-            editor.Tag = current with { Edited = true, Rejected = false };
-            var message = input.Input.CheckValue(text);
-            ShowInputNotes(view.InputNotes[input.Input.Name], editor, message,
-                text != current.Value && message is not null ? input.Show(current.Value) : null);
-            view.Row.IsInvalid = row.Inputs.Any(field => _optionInputEditors.TryGetValue(
-                (tag.ConfigurationId, row.Option.Name, field.Input.Name), out var box)
-                && AutomationProperties.GetItemStatus(box).Length > 0);
+            editor.Tag = current with { Edit = InputEdit.Edited };
+            RefreshParameterDisplays();
             if (_blockedRunScope.HasValue) {
                 RefreshRunFieldProblems(RequireProject());
             }
@@ -1803,7 +1732,7 @@ public partial class MainWindow : FluentWindow
         browse.Click += (_, _) => {
             if (PickPath(folder) is { } path) {
                 editor.Text = path;
-                _ = CommitOptionInput(editor);
+                _ = CommitOptionInput(editor, submitDefault: true);
             }
         };
         return new Grid {
@@ -1916,26 +1845,21 @@ public partial class MainWindow : FluentWindow
             view.CaseNotes.Children.Add(CreateInspectorNote(limits, "Inspector.Note"));
         }
         foreach (var input in row.Inputs) {
-            if (!view.InputNotes.TryGetValue(input.Input.Name, out var notes)) {
-                continue;
-            }
-            if (_optionInputEditors.TryGetValue(
-                (_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name), out var editor)) {
-                ShowInputNotes(notes, editor, input.Error,
-                    input.Draft is not null && input.Draft != input.SavedValue ? input.Show(input.SavedValue) : null);
-            }
+            var key = (RequireProject().ActiveConfigurationId, row.Option.Name, input.Input.Name);
+            var editor = _optionInputEditors[key];
+            ShowInputNotes(view.InputNotes[input.Input.Name], editor, input);
         }
     }
 
-    private void ShowInputNotes(StackPanel notes, WpfTextBox editor, string? message, string? saved)
+    private void ShowInputNotes(StackPanel notes, WpfTextBox editor, InspectorInput input)
     {
         notes.Children.Clear();
-        ShowOptionInputError(editor, message);
-        if (message is not null) {
+        ShowOptionInputError(editor, input.Error);
+        if (input.Error is { } message) {
             notes.Children.Add(CreateInspectorNote(message, "Inspector.Error"));
         }
-        if (saved is not null) {
-            var previous = ParameterInspector.ShowValue(saved);
+        if (input.Draft is { } draft && draft != input.SavedValue) {
+            var previous = ParameterInspector.ShowValue(input.Show(input.SavedValue));
             notes.Children.Add(CreateInspectorNote($"未保存，仍使用「{previous}」· Esc 还原", "Inspector.DraftNote"));
         }
     }

@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using Panel = System.Windows.Controls.Panel;
@@ -116,12 +117,20 @@ internal static partial class SelfTestRunner
             tabs.SelectedIndex = 1;
             Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[1].Id,
                 "任务配置校验失败时标签条保持显示，并能切换配置。");
-            var drafts = (System.Collections.IDictionary)typeof(MainWindow).GetField("_inputDrafts", flags)!
-                .GetValue(window)!;
-            drafts[(project.ActiveConfigurationId, "ServerRange", "server_range")] = "978-,";
-            InvokeOnboarding(window, "RenderTaskPlan");
             tabs.SelectedIndex = 0;
-            Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[0].Id,
+            var items = Named<Panel>(window, "PlanItemsPanel");
+            ToggleRealTask(items);
+            var card = ConfigurationDescendants(items).OfType<Border>().Single(item => item.Tag is ProjectTaskChoice);
+            var input = ConfigurationDescendants(card).OfType<System.Windows.Controls.TextBox>().Single(box =>
+                AutomationProperties.GetName(box) == "Server range · Server");
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            PumpUntil(() => input.IsLoaded, "任务卡片应加载参数输入框。");
+            Require(input.Focus(), "应能编辑当前任务参数。");
+            input.Text = "978-,";
+            Require(PlanHeader(card).Focus() && AutomationProperties.GetItemStatus(input).Length != 0,
+                "离开输入框后应保留未通过校验的草稿。");
+            tabs.SelectedIndex = 1;
+            Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[1].Id,
                 "参数存在无效草稿时标签条保持显示，并能切换配置。");
             typeof(MainWindow).GetMethod("ShowProjectUnavailableState", flags)!
                 .Invoke(window, new object[] { "项目无法加载", "detail" });

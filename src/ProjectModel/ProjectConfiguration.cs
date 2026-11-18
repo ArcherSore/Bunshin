@@ -13,15 +13,14 @@ public enum ProjectInputType { Text, Password, File, Directory }
 public sealed class ProjectInputEditor
 {
     private readonly InputDefinition _definition;
-    private readonly bool _typed;
 
-    internal ProjectInputEditor(InputDefinition input, string value, bool isExplicit, bool typed)
+    internal ProjectInputEditor(InputDefinition input, string value, bool isExplicit)
     {
         _definition = input;
-        _typed = typed;
         Value = value;
         IsExplicit = isExplicit;
-        Error = CheckValue(value);
+        Error = ProjectInputValue.Parse(input, value, out var parsed);
+        ParsedValue = parsed;
     }
 
     public const string PasswordMask = "••••••";
@@ -29,14 +28,15 @@ public sealed class ProjectInputEditor
     public string Label => _definition.Label;
     public string Description => _definition.Description;
     public string DefaultValue => _definition.Default;
-    public string? Verify => _definition.Verify;
+    public string? Verify => _definition.Verify?.ToString();
     public string? PatternMessage => _definition.PatternMessage;
     public ProjectInputType InputType => _definition.InputType;
     public bool IsPassword => _definition.Password;
     public string Value { get; }
     public bool IsExplicit { get; }
     public string? Error { get; }
-    public string? CheckValue(string value) => ProjectInputValue.CheckValue(_definition, value, _typed);
+    internal JsonNode? ParsedValue { get; }
+    public string? CheckValue(string value) => ProjectInputValue.Parse(_definition, value, out _);
 }
 
 public sealed record ProjectCaseEditor(string Name, string Label, string Description);
@@ -52,42 +52,63 @@ public sealed record ProjectOptionEditor(
     public int MinCount { get; init; }
     public int? MaxCount { get; init; }
 
-    public bool IsBelowMinimum => SelectedCases.Count < MinCount;
-    public string? SelectionCountError => IsBelowMinimum
-        ? $"至少选 {MinCount} 项，当前选了 {SelectedCases.Count} 项。请再选 {MinCount - SelectedCases.Count} 项。"
-        : MaxCount is { } max && SelectedCases.Count > max
-            ? $"最多选 {max} 项，当前选了 {SelectedCases.Count} 项。请取消 {SelectedCases.Count - max} 项。"
-            : null;
-
-    // Why a Run cannot start with this option yet, or null when it can.
-    public string? StartBlocker => SelectionCountError
-        ?? Inputs.Select(input => input.Error).FirstOrDefault(error => error is not null);
+    public string? SelectionCountError => CheckSelectionCount(SelectedCases.Count, MinCount, MaxCount);
+    internal static string? CheckSelectionCount(int count, int min, int? max) => count < min
+        ? $"至少选 {min} 项，当前选了 {count} 项。请再选 {min - count} 项。"
+        : count > max ? $"最多选 {max} 项，当前选了 {count} 项。请取消 {count - max} 项。" : null;
 }
 
 public sealed record ProjectConfigurationView(
-    IReadOnlyList<ProjectOptionEditor> GlobalOptions, IReadOnlyList<ProjectOptionEditor> TaskOptions);
+    IReadOnlyList<ProjectOptionEditor> GlobalOptions, IReadOnlyList<ProjectOptionEditor> TaskOptions)
+{
+    public IEnumerable<(ProjectOptionEditor Option, int Depth, bool Global)> ActiveOptions => EnumerateActiveOptions();
+
+    private IEnumerable<(ProjectOptionEditor Option, int Depth, bool Global)> EnumerateActiveOptions()
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in Walk(GlobalOptions, 0, true, visited).Concat(Walk(TaskOptions, 0, false, visited))) {
+            yield return item;
+        }
+    }
+
+    private static IEnumerable<(ProjectOptionEditor Option, int Depth, bool Global)> Walk(
+        IReadOnlyList<ProjectOptionEditor> options, int depth, bool global, HashSet<string> visited)
+    {
+        foreach (var option in options) {
+            if (!visited.Add(option.Name)) {
+                continue;
+            }
+            yield return (option, depth, global);
+            foreach (var child in Walk(option.ActiveChildren, depth + 1, global, visited)) {
+                yield return child;
+            }
+        }
+    }
+}
 
 internal static partial class ExplicitOptionIntent
 {
-    internal static IReadOnlyDictionary<string, string> ReadInputs(OptionDefinition option, TaskConfiguration config)
+    internal static IReadOnlyList<ProjectInputEditor> ReadInputs(OptionDefinition option, TaskConfiguration config)
     {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (config.ExplicitOptions.TryGetValue(option.Name, out var intent)) {
-            foreach (var field in intent.GetProperty("Inputs").EnumerateObject()) {
-                var value = field.Value.GetString()!;
-                if ((option.IsPassword(field.Name) ? Unprotect(value) : value) is { } read) {
-                    result.Add(field.Name, read);
+        var saved = config.ExplicitOptions.TryGetValue(option.Name, out var intent)
+            ? intent.GetProperty("Inputs") : (JsonElement?)null;
+        return option.Inputs.Select(input => {
+            string? value = null;
+            if (saved is { } fields && fields.TryGetProperty(input.Name, out var field)) {
+                value = field.GetString()!;
+                if (input.Password) {
+                    value = Unprotect(value);
                 }
             }
-        }
-        return result;
+            return new ProjectInputEditor(input, value ?? input.Default, value is not null);
+        }).ToArray();
     }
 
     // Both the editor and the Run resolve choices in declaration order from the reconciled configuration.
     internal static IReadOnlyList<CaseDefinition> ReadActiveCases(OptionDefinition option, TaskConfiguration config)
     {
         var saved = config.ExplicitOptions.TryGetValue(option.Name, out var intent);
-        IEnumerable<string> names = option.Kind == OptionDefinitionKind.Checkbox
+        IEnumerable<string> names = option.Kind == ProjectOptionKind.Checkbox
             ? saved ? ReadCaseNames(intent) : option.DefaultCases
             : [saved ? intent.GetProperty("SelectedCase").GetString()! : option.DefaultCase!];
         return option.Cases.Where(item => names.Contains(item.Name)).ToArray();

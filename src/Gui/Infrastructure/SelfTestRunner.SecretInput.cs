@@ -3,7 +3,6 @@ using System.Windows.Automation;
 using Gui.Models;
 using ProjectModel;
 using Protocol;
-using Gui.Views;
 using Gui.Worker;
 
 namespace Gui.Infrastructure;
@@ -111,12 +110,11 @@ internal static partial class SelfTestRunner
     private static void VerifyPasswordAndPathEditors(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "secret-input-window"), (window, _) => {
-            const System.Reflection.BindingFlags flags =
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            if (!ConfigurationDescendants(items).OfType<Wpf.Ui.Controls.PasswordBox>().Any()) {
+                ToggleRealTask(items);
+            }
             var boxes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>().ToArray();
             System.Windows.Controls.TextBox Editor(string name) =>
                 boxes.Single(box => AutomationProperties.GetName(box) == name);
@@ -128,14 +126,17 @@ internal static partial class SelfTestRunner
 
             var password = Editor("Login") as Wpf.Ui.Controls.PasswordBox;
             Require(password is not null && !HasBrowse(password), "密码字段必须使用不带选择按钮的密码框。");
-            password!.Password = SecretInputValue;
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [password, false]);
-            Require(!password.Text.Contains(SecretInputValue, StringComparison.Ordinal),
-                "密码框不得显示密码原文。");
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            PumpUntil(() => password!.IsLoaded, "任务卡片应加载密码框。");
+            Require(password!.Focus(), "密码框应可获得编辑焦点。");
+            password.Password = SecretInputValue;
+            Require(Editor("Paths · Launcher").Focus() && ProjectOf(window).GetConfiguration("RealTask")
+                .TaskOptions.Single(option => option.Name == "Login").Inputs.Single().Value == SecretInputValue
+                && !password.Text.Contains(SecretInputValue, StringComparison.Ordinal),
+                "离开密码框应保存输入，密码框不得显示密码原文。");
             SaveWindowScreenshot(window, "secret-and-path-inputs.png");
 
-            SetOnboardingField(window, "_expandedTaskName", null!);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            ToggleRealTask(items);
             var texts = ConfigurationDescendants(items).OfType<System.Windows.Documents.Run>()
                 .Select(run => run.Text).ToArray();
             Require(texts.Any(text => text.StartsWith("password：", StringComparison.Ordinal) && text.Length > 9)

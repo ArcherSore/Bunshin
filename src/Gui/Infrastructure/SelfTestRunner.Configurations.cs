@@ -404,44 +404,40 @@ internal static partial class SelfTestRunner
 
     private static void VerifyDraftSummarySync(AppLogger logger, string testDirectory)
     {
-        var projectDirectory = CreateProjectFixture(Path.Combine(testDirectory, "draft-summary"));
-        var interfacePath = Path.Combine(projectDirectory, "interface.json");
-        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(interfacePath))!;
-        var other = json["task"]![0]!.DeepClone();
-        other["name"] = "OtherTask";
-        json["task"]!.AsArray().Add(other);
-        File.WriteAllText(interfacePath, json.ToJsonString());
-        var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
-        project.AddTask("OtherTask");
-        WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            System.Windows.Documents.Run? OtherSummary(string text) => ConfigurationDescendants(items)
-                .OfType<System.Windows.Documents.Run>().SingleOrDefault(run => run.Text == text);
+        var directory = Path.Combine(testDirectory, "draft-summary");
+        var projectDirectory = CreateProjectFixture(directory);
+        EditInterface(projectDirectory, json => {
+            var other = json["task"]![0]!.DeepClone();
+            other["name"] = "OtherTask";
+            json["task"]!.AsArray().Add(other);
+        });
+        var path = Path.Combine(projectDirectory, "config", "configurations.json");
+        ProjectPlanModule.Open(projectDirectory, path).AddTask("OtherTask");
+        WithRuntimeControlWindow(logger, directory, window => {
+            var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            ToggleRealTask(items);
+            var other = ConfigurationDescendants(items).OfType<System.Windows.Controls.Border>()
+                .Single(card => card.Tag is ProjectTaskChoice { Name: "OtherTask" });
+            System.Windows.Documents.Run? Summary(string value) => ConfigurationDescendants(other)
+                .OfType<System.Windows.Documents.Run>().SingleOrDefault(run => run.Text.EndsWith(value));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
+            var saved = input.Text;
+            var savedBrush = Summary(saved)!.Foreground;
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            PumpUntil(() => input.IsLoaded, "任务卡片应加载共享参数输入框。");
+            Require(input.Focus(), "应能聚焦共享参数输入框。");
             input.Text = "978-,";
-            input.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
-                System.Windows.Input.Keyboard.PrimaryDevice, 0, input, null) {
-                RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
+            Require(input.IsKeyboardFocused && Summary(input.Text) is { } invalid && invalid.Foreground != savedBrush,
+                "输入框仍有焦点时，共享参数的非法草稿及错误标记应同步到另一张折叠卡片。");
+            input.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
+                System.Windows.PresentationSource.FromVisual(input), 0, System.Windows.Input.Key.Escape) {
+                RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
             });
-            if (OtherSummary("Server：978-,")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
-                throw new InvalidOperationException("共享参数的非法草稿必须立即以错误色同步到其他折叠任务摘要。");
-            }
-            using (var source = new System.Windows.Interop.HwndSource(
-                new System.Windows.Interop.HwndSourceParameters("self-test"))) {
-                input.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
-                    source, 0, System.Windows.Input.Key.Escape) {
-                    RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
-                });
-            }
-            if (OtherSummary("Server：978-1012") is not { } restored
-                || restored.Foreground == window.FindResource("Brush.Error.Foreground")
-                || !ConfigurationDescendants(items).Contains(input)) {
-                throw new InvalidOperationException("Esc 必须立即恢复其他摘要的已保存值，且不重建正在编辑的输入框。");
-            }
-        });
+            Require(input.IsKeyboardFocused && input.Text == saved && Summary(saved)?.Foreground == savedBrush,
+                "Esc 应恢复折叠卡片的已保存值和正常样式，并保留编辑焦点。");
+        }, projectDirectory: projectDirectory);
     }
 
     // Enter submits like losing focus; an unchanged value or draft is not submitted, validated or logged again.

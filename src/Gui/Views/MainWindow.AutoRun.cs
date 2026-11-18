@@ -16,19 +16,15 @@ public partial class MainWindow
     {
         // The list is a placeholder then, so nothing can be matched; say so instead of skipping silently. Asked for
         // means what Decide would look up: --instance only with --autostart, otherwise the chosen configuration.
-        var requested = _launchCommand is { AutoStart: true, Instance: not null }
-            || _settings.AutoRunConfigurationId is not null;
-        if (_projectPlan is not { } project) {
+        var project = _projectPlan;
+        if (project is null || project.ConfigurationsUnreadable) {
+            var requested = _launchCommand is { AutoStart: true, Instance: not null }
+                || _settings.AutoRunConfigurationId is not null;
             if (requested && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
-                ReportAutoRunFailure(ProjectEmptyStateDetailText.Text);
+                ReportAutoRunFailure(project?.LoadWarning ?? ProjectEmptyStateDetailText.Text);
                 return true;
             }
             return false;
-        }
-        if (project.ConfigurationsUnreadable && requested
-            && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
-            ReportAutoRunFailure(project.LoadWarning ?? "无法读取任务配置文件，请检查后重试。");
-            return true;
         }
         var canStart = AutoRunPlanner.RuntimeAllows(CurrentControls);
         var decision = AutoRunPlanner.Decide(

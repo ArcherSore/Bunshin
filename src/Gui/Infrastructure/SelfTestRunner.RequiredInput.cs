@@ -14,16 +14,15 @@ internal static partial class SelfTestRunner
         var directory = CreateProjectFixture(Path.Combine(testDirectory, "required-input"));
         AddRequiredInput(directory);
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        ProjectOptionEditor Recipient() =>
-            project.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == "Recipient");
+        ProjectInputEditor Recipient() => project.GetConfiguration("RealTask").TaskOptions
+            .Single(option => option.Name == "Recipient").Inputs.Single();
         project.SetSelectedCase("Mode", "Minimal");
-        Require(Recipient().Inputs.Single().Error == "Fill in the recipient"
-            && Recipient().StartBlocker == "Fill in the recipient"
+        Require(Recipient().Error == "Fill in the recipient"
             && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt())
-            && project.CheckInputValue("Recipient", "recipient", " ") is not null,
+            && project.TrySetInputValue(project.ActiveConfigurationId, "Recipient", "recipient", " ") is not null,
             "默认值未通过 verify 时项目仍应加载、其他参数可保存，但不能开始运行，也不能保存空白值。");
         project.SetInputValue("Recipient", "recipient", "Kakashi");
-        Require(Recipient().StartBlocker is null && project.CreateRunStartAttempt().Plan.Items.Single()
+        Require(Recipient().Error is null && project.CreateRunStartAttempt().Plan.Items.Single()
             .PipelineOverride.GetRawText().Contains("\"to\":\"Kakashi\"", StringComparison.Ordinal),
             "填写合法值后必须可以开始运行，并替换进 pipeline_override。");
 

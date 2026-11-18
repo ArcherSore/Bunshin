@@ -87,6 +87,13 @@ internal static partial class SelfTestRunner
             PumpUntil(() => Marked("Boot") && !Marked("RealTask"), "仅执行启动应只标记前置任务。");
             Require(banner.Text.Contains("请填写角色") && banner.Text.Contains("请填写区服")
                 && !banner.Text.Contains("登录密码") && preparations == 0, "仅执行启动只应报告两个启动参数。");
+            var role = Field<TextBox>("LaunchInput · 角色");
+            PumpUntil(() => role.IsKeyboardFocused, "应定位到启动阶段首个无效字段。");
+            role.Text = "1";
+            Require(AutomationProperties.GetItemStatus(role).Length == 0 && banner.Text.Contains("角色")
+                && !banner.Text.Contains("请填写角色"), "修正草稿后应撤下格式错误，启动汇总仍应指出待保存的字段。");
+            Require(Field<TextBox>("LaunchInput · 区服").Focus() && !banner.Text.Contains("角色")
+                && banner.Text.Contains("请填写区服"), "保存后只应留下仍有问题的区服字段。");
         }, prepareEnvironment: (_, _, _) => {
             preparations++;
             return Task.FromCanceled(new CancellationToken(true));
@@ -144,13 +151,13 @@ internal static partial class SelfTestRunner
                         return plan;
                     }
 
-                    void VerifyStartupOnly(string failure)
+                    void VerifyStartupOnly(string failure, string expectedCaption = "启动参数")
                     {
                         var plan = Submit(FindControl<Button>("仅执行启动"), failure);
                         Require(plan.Items is [{ Kind: PlanItemKind.Pretask, TaskName: "Boot" }],
                             "仅执行启动应只向 Worker 提交所选前置任务。");
                         var args = JsonNode.Parse(plan.Items[0].Program!.Arguments.Single());
-                        Require((string?)args!["LaunchInput"]!["caption"] == "启动参数",
+                        Require((string?)args!["LaunchInput"]!["caption"] == expectedCaption,
                             "仅执行启动应把前置任务填写的参数交给 Worker。");
                     }
 
@@ -181,23 +188,35 @@ internal static partial class SelfTestRunner
                     caption["default"] = "1";
                     File.WriteAllText(interfacePath, definition.ToJsonString());
                     Click(window, "StartTaskHeaderButton");
-                    var ready = ConfigurationDescendants(items).OfType<Border>()
-                        .Single(card => card.Tag is ProjectTaskChoice { Name: "ReadyTask" });
-                    var typed = ConfigurationDescendants(ready).OfType<TextBox>()
-                        .Single(box => AutomationProperties.GetName(box) == "LaunchInput · caption");
-                    PumpUntil(() => typed.IsKeyboardFocused, "已连接时应重载并在使用整数的普通任务中定位旧文本。");
+                    bool Marked(string name)
+                    {
+                        var card = ConfigurationDescendants(items).OfType<Border>()
+                            .Single(item => item.Tag is ProjectTaskChoice task && task.Name == name);
+                        return AutomationProperties.GetItemStatus(card).Length > 0;
+                    }
+                    var typed = FindControl<TextBox>("LaunchInput · caption");
+                    PumpUntil(() => typed.IsKeyboardFocused, "应定位到执行顺序中第一个旧输入不合法的参数。");
+                    Require(Marked("Boot") && Marked("ReadyTask") && typed.Text == "启动参数",
+                        "字段改为整数后，前置任务和普通任务都应阻止相同的已存旧值。");
                     typed.Text = "仍无法转换";
-                    VerifyStartupOnly("普通任务的类型错误不能阻止有效的前置参数原文。");
-                    Require(FindControl<TextBox>("LaunchInput · caption").Text == "仍无法转换",
-                        "前置项应使用已保存的原文，普通任务的无效草稿仍须保留。");
+                    FindControl<Button>("仅执行启动").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    typed = FindControl<TextBox>("LaunchInput · caption");
+                    PumpUntil(() => typed.IsKeyboardFocused, "仅执行启动也应定位未通过整数校验的草稿。");
+                    Require(Marked("Boot") && !Marked("ReadyTask") && typed.Text == "仍无法转换",
+                        "仅执行启动应保留非法草稿，只标记参与本次运行的前置任务。");
+                    typed.Text = "007";
+                    VerifyStartupOnly("修正整数后，前置程序应收到包含前导零的原文。", "007");
+                    typed = FindControl<TextBox>("LaunchInput · caption");
+                    Require(typed.Focus(), "前置任务成功提交后应能继续编辑。");
+                    typed.Text = "仍无法转换";
 
                     caption["pipeline_type"] = "string";
                     File.WriteAllText(interfacePath, definition.ToJsonString());
-                    VerifyStartupOnly("规则放宽后仍应提交已保存的前置参数。");
+                    VerifyStartupOnly("规则放宽后仍应提交已保存的前置参数。", "007");
                     var draft = FindControl<TextBox>("LaunchInput · caption");
                     Require(draft.Text == "仍无法转换" && AutomationProperties.GetItemStatus(draft).Length == 0
                         && ConfigurationDescendants(items).OfType<TextBlock>()
-                            .Any(note => note.IsVisible && note.Text.Contains("启动参数") && note.Text.Contains("Esc")),
+                            .Any(note => note.IsVisible && note.Text.Contains("007") && note.Text.Contains("Esc")),
                         "有效的旧草稿仍应显示实际执行的已保存值，并提供 Esc 还原提示。");
 
                     File.WriteAllText(interfacePath, "{");
@@ -267,10 +286,11 @@ internal static partial class SelfTestRunner
                 && Cards().Select(card => ((ProjectTaskChoice)card.Tag).Name)
                     .SequenceEqual(new[] { "RealTask", "SecondBoot", "RealTask" }),
                 "前置任务应按 PI 顺序固定在前，普通任务与前置任务允许同名。");
-            Require(Cards().Where(card => ((ProjectTaskChoice)card.Tag).Kind == PlanItemKind.Pretask)
-                .All(card => ConfigurationDescendants(card).OfType<Button>()
-                    .Single(button => AutomationProperties.GetName(button) == "拖动以调整顺序")
-                    .Visibility == Visibility.Collapsed), "前置任务不得提供重排入口。");
+            bool HasDragHandle(Border card) => ConfigurationDescendants(card).OfType<Button>()
+                .Any(button => button.IsVisible && button.IsEnabled
+                    && button.Cursor == System.Windows.Input.Cursors.SizeAll);
+            Require(!HasDragHandle(Cards()[0]) && !HasDragHandle(Cards()[1]) && HasDragHandle(Cards()[2]),
+                "普通任务应提供可用的拖动入口，前置任务应保持项目声明顺序。");
 
             var preCard = Cards()[0];
             Click(PlanHeader(preCard));
@@ -282,12 +302,15 @@ internal static partial class SelfTestRunner
                 .Any(editor => AutomationProperties.GetName(editor).StartsWith("Server range")),
                 "前置参数编辑不应混入普通任务的全局参数。");
             account.Text = "account-text";
+            Require(AutomationProperties.GetItemStatus(account).Length > 0,
+                "前置任务的整数输入应在编辑时提示非法文本。");
+            account.Text = "007";
             account.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, account, null) {
                 RoutedEvent = Keyboard.LostKeyboardFocusEvent
             });
             Require(project.Configurations[0].ExplicitOptions["LoginAccount"].GetProperty("Inputs")
-                .GetProperty("uin").GetString() == "account-text",
-                "前置 input 应保存原始字符串，不按 pipeline_type 转换。");
+                .GetProperty("uin").GetString() == "007" && AutomationProperties.GetItemStatus(account).Length == 0,
+                "前置任务的整数通过校验后应清除错误并保留输入的前导零。");
             foreach (var (index, label, expected) in new[] {
                 (0, "启动并登录", "前置登录说明"), (2, "Real task", "A long task description")
             }) {

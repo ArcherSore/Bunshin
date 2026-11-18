@@ -209,73 +209,35 @@ internal static partial class SelfTestRunner
                 .GetProperty("caption").GetString() == caption,
             "重新激活子选项后应恢复原输入。");
         project.RemoveTask("RealTask");
-        project.SetInputValue("LaunchInput", "attempts", "非数字");
-        Require(project.CheckInputValue("LaunchInput", "attempts", "非数字") is null
-            && project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions.GetProperty("LaunchInput")
-                .GetProperty("attempts").GetString() == "非数字",
-            "前置 input 不参与 pipeline_type 数值转换，不能套用普通任务的类型约束。");
+        foreach (var field in new[] { "attempts", "enabled" }) {
+            Require(Throws<InvalidDataException>(() => project.SetInputValue("LaunchInput", field, "任意文本")),
+                $"只运行前置任务时也应拒绝不符合 {field} 声明的输入。");
+        }
     }
 
     private static void VerifyPretaskInputDefaults(string testDirectory)
     {
-        const string declaration = """
+        var directory = CreatePretaskFixture(Path.Combine(testDirectory, "input-defaults"), """
             {"name":"Prepare","exec":"prepare-fixture","option":["StartupMode"]}
-            """;
-        foreach (var (name, attempts, enabled, mode) in new[] {
-            ("empty", "", "", "Auto"), ("text", "按需", "未启用", "Manual")
-        }) {
-            var directory = CreatePretaskFixture(Path.Combine(testDirectory, $"defaults-{name}"), declaration);
-            var path = Path.Combine(directory, "interface.json");
-            var root = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
-            var inputs = root["option"]!["LaunchInput"]!["inputs"]!.AsArray();
-            inputs.Single(input => input!["name"]!.GetValue<string>() == "attempts")!["default"] = attempts;
-            inputs.Single(input => input!["name"]!.GetValue<string>() == "enabled")!["default"] = enabled;
-            root["option"]!["StartupMode"]!["default_case"] = mode;
-            File.WriteAllText(path, root.ToJsonString());
-            var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-            project.AddPretask("Prepare");
-            if (mode == "Manual") {
-                Require(!project.CreateRunStartAttempt().Plan.Items[0].ResolvedOptions
-                    .TryGetProperty("LaunchInput", out _), "未激活的前置子选项不应生成参数。");
-                project.SetSelectedCase("StartupMode", "Auto");
-            }
-            var item = project.CreateRunStartAttempt().Plan.Items[0];
-            var defaults = item.ResolvedOptions.GetProperty("LaunchInput");
-            using var arguments = JsonDocument.Parse(item.Program!.Arguments.Single());
-            Require(defaults.GetProperty("attempts").ValueKind == JsonValueKind.String
-                && defaults.GetProperty("attempts").GetString() == attempts
-                && defaults.GetProperty("enabled").ValueKind == JsonValueKind.String
-                && defaults.GetProperty("enabled").GetString() == enabled
-                && arguments.RootElement.GetProperty("LaunchInput").GetProperty("attempts").GetString() == attempts
-                && arguments.RootElement.GetProperty("LaunchInput").GetProperty("enabled").GetString() == enabled,
-                "仅供前置任务使用的 int/bool input 默认值应按字符串加载，包含空值和不可转换文本。");
-        }
-
-        var sharedDirectory = CreatePretaskFixture(Path.Combine(testDirectory, "shared-defaults"), declaration);
-        var sharedRoot = JsonNode.Parse(File.ReadAllText(Path.Combine(sharedDirectory, "interface.json")))!.AsObject();
-        foreach (var inputName in new[] { "attempts", "enabled" }) {
-            var root = sharedRoot.DeepClone().AsObject();
+            """);
+        var path = Path.Combine(directory, "interface.json");
+        var source = File.ReadAllText(path);
+        foreach (var (inputName, invalid) in new[] { ("attempts", ""), ("enabled", "未启用") }) {
+            var root = JsonNode.Parse(source)!.AsObject();
             root["option"]!["LaunchInput"]!["inputs"]!.AsArray()
-                .Single(input => input!["name"]!.GetValue<string>() == inputName)!["default"] = "";
-            var source = root.ToJsonString();
-            foreach (var scope in new[] { "task", "global" }) {
-                VerifyRejectedProjectInterface(testDirectory, source, $"shared-{scope}-{inputName}", "LaunchInput",
-                    definition => {
-                        var options = scope == "task"
-                            ? definition["task"]![0]!["option"]!.AsArray()
-                            : definition["global_option"]!.AsArray();
-                        options.Add("LaunchInput");
-                    });
-            }
-            VerifyRejectedProjectInterface(testDirectory, source, $"shared-dormant-{inputName}", "LaunchInput",
-                definition => definition["option"]!["Mode"]!["cases"]![1]!["option"] = new JsonArray("LaunchInput"));
-            VerifyRejectedProjectInterface(testDirectory, source, $"unused-default-{inputName}", "LaunchInput",
-                definition => definition["pretask"] = new JsonArray());
+                .Single(input => (string?)input!["name"] == inputName)!["default"] = invalid;
+            var invalidPi = root.ToJsonString();
+            VerifyRejectedProjectInterface(testDirectory, invalidPi, $"pretask-default-{inputName}", "LaunchInput",
+                pi => pi["option"]!["StartupMode"]!["default_case"] = "Manual");
+            VerifyRejectedProjectInterface(testDirectory, invalidPi, $"task-default-{inputName}", "LaunchInput", pi => {
+                pi["pretask"] = new JsonArray();
+                pi["task"]![0]!["option"] = new JsonArray("LaunchInput");
+            });
+            VerifyRejectedProjectInterface(testDirectory, invalidPi, $"unused-default-{inputName}", "LaunchInput",
+                pi => pi["pretask"] = new JsonArray());
         }
     }
 
-    // An input shared with a task is typed exactly where saving converts it: in options a selected task resolves
-    // through active cases. Otherwise the field check passes a value the save then rejects as a whole-config error.
     private static void VerifyPretaskSharedInputs(string testDirectory)
     {
         var directory = CreatePretaskFixture(Path.Combine(testDirectory, "shared-inputs"), """
@@ -291,31 +253,22 @@ internal static partial class SelfTestRunner
         File.WriteAllText(path, root.ToJsonString());
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
         project.AddPretask("Prepare");
-        void RequireConsistent(string optionName, string inputName, bool typed, string scenario)
-        {
-            var problem = project.CheckInputValue(optionName, inputName, "多次");
-            var saved = true;
-            try {
-                project.SetInputValue(optionName, inputName, "多次");
-            } catch (InvalidDataException) {
-                saved = false;
-            }
-            Require((problem is not null) == typed && saved != typed,
-                $"{scenario}：单字段检查必须与保存时的 pipeline_type 转换一致。");
-        }
-
-        RequireConsistent("ServerRange", "retry_count", typed: true, "已选普通任务解析的全局 option");
-        RequireConsistent("SharedCount", "count", typed: false, "只在普通任务休眠分支中的 option");
-        project.SetInputValue("SharedCount", "count", "5");
+        Require(Throws<InvalidDataException>(() => project.SetInputValue("SharedCount", "count", "多次")),
+            "普通任务的分支尚未启用时，前置任务仍应按声明校验共享输入。");
         project.SetSelectedCase("Mode", "Minimal");
-        RequireConsistent("SharedCount", "count", typed: true, "普通任务激活分支中的 option");
-        project.RemoveTask("RealTask");
-        RequireConsistent("ServerRange", "retry_count", typed: false, "只剩前置任务时的全局 option");
-        RequireConsistent("SharedCount", "count", typed: false, "只剩前置任务时的共享 option");
-        var values = project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions;
-        Require(values.GetProperty("ServerRange").GetProperty("retry_count").GetString() == "多次"
-            && values.GetProperty("SharedCount").GetProperty("count").GetString() == "多次",
-            "只供前置任务使用的共享 input 应按原文传给程序。");
+        var field = project.GetConfiguration("Prepare", PlanItemKind.Pretask).TaskOptions
+            .Single(option => option.Name == "SharedCount").Inputs.Single();
+        var shared = project.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == "Mode")
+            .ActiveChildren.Single().Inputs.Single();
+        Require(field.CheckValue("多次") is { } reason && shared.CheckValue("多次") == reason,
+            "前置任务和普通任务编辑同一整数时应给出相同的错误原因。");
+        project.SetInputValue("SharedCount", "count", "007");
+        var items = project.CreateRunStartAttempt().Plan.Items;
+        using var args = JsonDocument.Parse(items[0].Program!.Arguments.Single());
+        Require(args.RootElement.GetProperty("SharedCount").GetProperty("count").GetString() == "007"
+            && items[1].PipelineOverride.EnumerateArray().Any(node => node.TryGetProperty("SharedEntry", out var entry)
+                && entry.GetProperty("count").GetInt32() == 7),
+            "共享整数应将原文 007 传给前置程序，并在普通任务的 Pipeline Override 中生成数字 7。");
     }
 
     private static void VerifyPretaskConfigurationMigration(string testDirectory)

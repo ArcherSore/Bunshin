@@ -8,9 +8,9 @@ internal static partial class SelfTestRunner
 {
     private static void VerifyParameterInspector(string testDirectory, string projectDirectory)
     {
-        var none = new Dictionary<(string, string), string>();
+        static string? NoDraft(string option, string input) => null;
         var simple = ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "inspector-simple.json"));
-        var rows = ParameterInspector.Derive(simple.GetConfiguration("RealTask"), none, []);
+        var rows = ParameterInspector.Derive(simple.GetConfiguration("RealTask"), NoDraft, []);
         Require(rows.Select(row => (row.Option.Name, row.Depth, row.IsGlobal)).SequenceEqual(new[] {
             ("ServerRange", 0, true), ("Mode", 0, false), ("Nested", 1, false)
         }), "检查器行必须先全局后任务，按声明顺序深度优先。");
@@ -31,7 +31,7 @@ internal static partial class SelfTestRunner
         var others = new[] {
             ("Real task", project.GetConfiguration("RealTask")), ("Third task", project.GetConfiguration("ThirdTask"))
         };
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), none, others);
+        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), NoDraft, others);
         Require(rows.Select(row => (row.Option.Name, row.Depth)).SequenceEqual(new[] {
             ("ServerRange", 0), ("Mode", 0), ("Nested", 1), ("Level1", 0), ("Level2", 1), ("Level3", 2)
         }), "选中 case 的子选项必须紧跟父行，三级嵌套深度依次递增。");
@@ -48,23 +48,64 @@ internal static partial class SelfTestRunner
         project.SetInputValue("ServerRange", "retry_count", "3");
         project.SetInputValue("ServerRange", "server_range", "979");
         project.SetSelectedCase("Mode", "Default");
-        var drafts = new Dictionary<(string, string), string> {
-            [("ServerRange", "enabled")] = "maybe"
-        };
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts, others);
+        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"),
+            (option, input) => (option, input) == ("ServerRange", "enabled") ? "maybe" : null, others);
         var inputs = rows[0].Inputs;
         Require(rows[0].IsInvalid && inputs[2].Draft == "maybe" && inputs[2].SavedValue == "true"
             && inputs[2].DisplayValue == "maybe" && !rows[1].IsInvalid,
             "草稿状态必须给出草稿文本、提示与已保存值。");
 
         project.SetSelectedCase("Level1", "Shallow");
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), none, others);
+        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), NoDraft, others);
         Require(rows.Select(row => row.Option.Name).SequenceEqual(new[] {
             "ServerRange", "Mode", "Nested", "Level1"
         }) && rows[3].CaseDescription is null, "切换 case 后子行必须消失，case 说明随之消失。");
         project.SetSelectedCase("Level1", "Deep");
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), none, others);
+        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), NoDraft, others);
         Require(rows.Count == 6, "切回默认 case 后子行恢复。");
+
+        VerifySharedOptionReferences(testDirectory);
+    }
+
+    private static void VerifySharedOptionReferences(string testDirectory)
+    {
+        var directory = CreateProjectFixture(Path.Combine(testDirectory, "inspector-shared-reference"));
+        var path = Path.Combine(directory, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        var tasks = pi["task"]!.AsArray();
+        var second = tasks[0]!.DeepClone();
+        second["name"] = "SecondTask";
+        second["option"] = new JsonArray("Recipient");
+        tasks.Add(second);
+        tasks[0]!["option"] = new JsonArray("Features", "Recipient", "ServerRange");
+        pi["option"]!["Features"] = JsonNode.Parse("""
+            {"type":"checkbox","default_case":["First","Second"],"cases":[
+              {"name":"First","option":["Recipient"]}, {"name":"Second","option":["Recipient"]}]}
+            """);
+        pi["option"]!["Recipient"] = JsonNode.Parse("""
+            {"type":"input","inputs":[{"name":"recipient","default":"guest","verify":"^guest$"}]}
+            """);
+        File.WriteAllText(path, pi.ToJsonString());
+        var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
+        project.AddTask("SecondTask");
+        static string? Draft(string option, string input) => option == "ServerRange" && input == "server_range"
+            || option == "Recipient" ? "invalid" : null;
+        var rows = ParameterInspector.Derive(project.GetConfiguration("RealTask"), Draft, []);
+        Require(rows.Select(row => (row.Option.Name, row.Depth, row.IsGlobal)).SequenceEqual(new[] {
+            ("ServerRange", 0, true), ("Features", 0, false), ("Recipient", 1, false)
+        }), "同一张卡应只在全局位置显示重复引用的全局选项，并只展开一次不同 checkbox 分支共用的输入。");
+        var problems = project.SelectedItems.SelectMany(task =>
+            ParameterInspector.Derive(project.GetConfiguration(task.Name, task.Kind), Draft, [])
+                .SelectMany(row => row.RunProblems(task))).Select(problem => (problem.Task.Name, problem.Option));
+        Require(problems.SequenceEqual(new[] {
+            ("RealTask", "ServerRange"), ("RealTask", "Recipient"),
+            ("SecondTask", "ServerRange"), ("SecondTask", "Recipient")
+        }), "每张卡应各自报告无效字段，同一张卡中重复引用的字段只报告一次。");
+        project.SetSelectedCases("Features", []);
+        var topLevel = ParameterInspector.Derive(project.GetConfiguration("RealTask"), Draft, []);
+        Require(topLevel.Select(row => row.Option.Name).SequenceEqual(rows.Select(row => row.Option.Name))
+            && topLevel.Single(row => row.Option.Name == "Recipient").Depth == 0,
+            "取消子分支后，共用选项应按首次出现的位置移到顶层。");
     }
 
     private static void VerifyPlanItemHeaders(AppLogger logger, string testDirectory)

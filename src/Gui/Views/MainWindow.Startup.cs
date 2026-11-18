@@ -18,9 +18,8 @@ public partial class MainWindow
     private void RenderStartupStage(ProjectPlanModule project)
     {
         _startupOnlyButton = null;
-        var pretasks = project.Pretasks.Concat(project.SelectedItems.Where(item => item.Kind == PlanItemKind.Pretask
-            && !project.Pretasks.Any(available => available.Name == item.Name))).ToArray();
-        if (pretasks.Length == 0) {
+        var pretasks = project.Pretasks;
+        if (pretasks.Count == 0) {
             return;
         }
         var body = new StackPanel();

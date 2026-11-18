@@ -737,15 +737,11 @@ internal static partial class SelfTestRunner
 
     private static void VerifyRejectedInputEdit(ProjectPlanModule project, string inputName, string invalidValue)
     {
-        if (project.CheckInputValue("ServerRange", inputName, invalidValue) is null) {
-            throw new InvalidOperationException($"PI input {inputName} 的单字段检查未拒绝非法值。");
-        }
-        try {
-            project.SetInputValue("ServerRange", inputName, invalidValue);
-            throw new InvalidOperationException($"PI input {inputName} 未拒绝非法显式值。");
-        } catch (InvalidDataException) {
-            // Expected: invalid edits are not persisted.
-        }
+        var field = project.GetConfiguration("RealTask").GlobalOptions.Single().Inputs
+            .Single(input => input.Name == inputName);
+        Require(field.CheckValue(invalidValue) is { } error
+            && project.TrySetInputValue(project.ActiveConfigurationId, "ServerRange", inputName, invalidValue) == error,
+            $"PI input {inputName} 应在编辑与保存时给出同一字段错误。");
     }
 
     private static void VerifyWorkerLogSequenceTracker()

@@ -9,10 +9,32 @@ public sealed record ConfigurationSet
 {
     public const int CurrentSchemaVersion = 3;
 
+    [JsonRequired]
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string? ProjectName { get; init; }
     public Guid ActiveConfigurationId { get; init; }
     public required IReadOnlyList<TaskConfiguration> Configurations { get; init; }
+
+    internal ConfigurationSet Reconcile(ProjectDefinition project, ProjectDefinition? previous, List<string> changes)
+    {
+        var tasks = project.Tasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        var pretasks = project.Pretasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
+        string[] KeepDefined(IReadOnlyList<string> selected, HashSet<string> defined, string kind, string owner)
+        {
+            foreach (var name in selected.Where(name => !defined.Contains(name))) {
+                changes.Add($"{owner} 的{kind} {name} 已从项目定义中移除");
+            }
+            return selected.Where(defined.Contains).ToArray();
+        }
+        return this with {
+            ProjectName = project.Provenance.Name,
+            Configurations = Configurations.Select(item => item with {
+                SelectedTasks = KeepDefined(item.SelectedTasks, tasks, "任务", item.Name),
+                SelectedPretasks = KeepDefined(item.SelectedPretasks, pretasks, "前置任务", item.Name),
+                ExplicitOptions = ExplicitOptionIntent.Reconcile(item, project, previous, changes)
+            }).ToArray()
+        };
+    }
 }
 
 public sealed record TaskConfiguration
@@ -88,7 +110,7 @@ internal sealed class ConfigurationSetStore
                 if (backup is null && missing && firstMissing && secondMissing) {
                     WasMissing = true;
                     _log?.Invoke("任务配置文件不存在，使用默认配置。");
-                    return CreateEmpty() with { ProjectName = projectName };
+                    return CreateEmpty(projectName);
                 }
             }
             _protectOriginal = !missing;
@@ -98,33 +120,14 @@ internal sealed class ConfigurationSetStore
                     ? new InvalidDataException("任务配置的 JSON 结构无效。") : exception;
                 var primary = missing ? "任务配置文件缺失" : "无法读取任务配置，原文件已保留";
                 LoadWarning = $"{primary}。未找到本项目可用的备份，已显示临时空配置。请检查配置目录后重新加载。";
-                return CreateEmpty() with { ProjectName = projectName };
+                return CreateEmpty(projectName);
             }
             config = backup;
         }
         if ((config.ProjectName ?? ProjectProfile.LegacyConfigurationProject) != projectName) {
             throw WrongProject();
         }
-        var tasks = project.Tasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
-        var pretasks = project.Pretasks.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
-        var removed = new List<string>();
-        string[] KeepDefined(IReadOnlyList<string> selected, HashSet<string> defined, string kind, string owner)
-        {
-            foreach (var name in selected.Where(name => !defined.Contains(name))) {
-                removed.Add($"{owner} 的{kind} {name} 已从项目定义中移除");
-            }
-            return selected.Where(defined.Contains).ToArray();
-        }
-        config = config with {
-            ProjectName = project.Provenance.Name,
-            Configurations = config.Configurations.Select(item => item with {
-                SelectedTasks = KeepDefined(item.SelectedTasks, tasks, "任务", item.Name),
-                SelectedPretasks = KeepDefined(item.SelectedPretasks, pretasks, "前置任务", item.Name),
-                ExplicitOptions = ExplicitOptionIntent.Reconcile(item, project, source is null ? previousProject : null,
-                    removed)
-            }).ToArray()
-        };
-        changes.AddRange(removed);
+        config = config.Reconcile(project, source is null ? previousProject : null, changes);
         if (changes.Count != 0 || source is not null) {
             if (changes.Count != 0) {
                 _pendingChanges = $"已更新任务配置文件 [reason={string.Join("；", changes)}]";
@@ -153,7 +156,6 @@ internal sealed class ConfigurationSetStore
 
     private static ConfigurationSet ReadPrimary(JsonElement root, List<string> changes)
     {
-        ConfigurationSet config;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("SchemaVersion", out var version)
             || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var schema)) {
             throw new InvalidDataException("任务配置缺少合法的 SchemaVersion。");
@@ -164,35 +166,30 @@ internal sealed class ConfigurationSetStore
         if (schema != ConfigurationSet.CurrentSchemaVersion) {
             changes.Add($"SchemaVersion {schema} -> {ConfigurationSet.CurrentSchemaVersion}");
         }
+        ConfigurationSet config;
         if (schema == 1) {
-            var legacy = root.Deserialize<LegacyConfig>(JsonOptions)
-                ?? throw new InvalidDataException("任务配置为空。");
+            var legacy = root.Deserialize<LegacyConfig>(JsonOptions)!;
             var migrated = new TaskConfiguration {
                 Id = Guid.NewGuid(), Name = "配置 1",
                 SelectedTasks = legacy.SelectedTasks, ExplicitOptions = legacy.ExplicitOptions
             };
             config = new ConfigurationSet { ActiveConfigurationId = migrated.Id, Configurations = [migrated] };
-        } else if (schema is 2 || schema == ConfigurationSet.CurrentSchemaVersion) {
-            var active = root.TryGetProperty("ActiveConfigurationId", out var pointer)
-                && pointer.ValueKind == JsonValueKind.String && pointer.TryGetGuid(out var id) ? id : Guid.Empty;
-            var node = JsonNode.Parse(root.GetRawText())!;
-            node["ActiveConfigurationId"] = active;
-            node["SchemaVersion"] = ConfigurationSet.CurrentSchemaVersion;
-            config = node.Deserialize<ConfigurationSet>(JsonOptions)
-                ?? throw new InvalidDataException("任务配置为空。");
-            Validate(config, requireActive: false);
-            if (config.Configurations.Count == 0) {
-                config = CreateEmpty() with { ProjectName = config.ProjectName };
-                changes.Add("配置列表为空");
-            } else if (!config.Configurations.Any(item => item.Id == active)) {
-                config = config with { ActiveConfigurationId = config.Configurations[0].Id };
-                changes.Add("激活配置不存在");
+        } else if (schema is 2 or ConfigurationSet.CurrentSchemaVersion) {
+            if (root.TryGetProperty("ActiveConfigurationId", out var pointer)
+                && (pointer.ValueKind != JsonValueKind.String || !pointer.TryGetGuid(out _))) {
+                var node = root.Deserialize<JsonObject>()!;
+                node.Remove("ActiveConfigurationId");
+                config = node.Deserialize<ConfigurationSet>(JsonOptions)!;
+            } else {
+                config = root.Deserialize<ConfigurationSet>(JsonOptions)!;
+            }
+            if (schema == 2) {
+                config = config with { SchemaVersion = ConfigurationSet.CurrentSchemaVersion };
             }
         } else {
-            throw new InvalidDataException($"不支持 任务配置SchemaVersion {schema}。");
+            throw new InvalidDataException($"不支持任务配置 SchemaVersion {schema}。");
         }
-        Validate(config);
-        return config;
+        return Validate(config, changes);
     }
 
     // Snapshots are always written in the current schema with an explicit project identity and valid active ID.
@@ -201,29 +198,20 @@ internal sealed class ConfigurationSetStore
         missing = false;
         try {
             var data = ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
-            using var document = JsonDocument.Parse(data, DocumentOptions);
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("SchemaVersion", out var version)
-                || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var schema)
-                || schema != ConfigurationSet.CurrentSchemaVersion) {
-                return null;
-            }
-            var config = root.Deserialize<ConfigurationSet>(JsonOptions);
-            if (config?.ProjectName != projectName) {
-                return null;
-            }
-            Validate(config);
-            return config;
+            var config = JsonSerializer.Deserialize<ConfigurationSet>(data, JsonOptions);
+            return config is not null && config.ProjectName == projectName ? Validate(config) : null;
         } catch (Exception exception) when (IsReadFailure(exception)) {
             missing = exception is FileNotFoundException or DirectoryNotFoundException;
             return null;
         }
     }
 
-    private static ConfigurationSet CreateEmpty()
+    private static ConfigurationSet CreateEmpty(string? projectName)
     {
         var empty = new TaskConfiguration { Id = Guid.NewGuid(), Name = "配置 1" };
-        return new ConfigurationSet { ActiveConfigurationId = empty.Id, Configurations = [empty] };
+        return new ConfigurationSet {
+            ProjectName = projectName, ActiveConfigurationId = empty.Id, Configurations = [empty]
+        };
     }
 
     internal void Save(ConfigurationSet config, bool refreshBackup = true)
@@ -319,7 +307,7 @@ internal sealed class ConfigurationSetStore
             new Dictionary<string, JsonElement>(StringComparer.Ordinal);
     }
 
-    private static void Validate(ConfigurationSet config, bool requireActive = true)
+    private static ConfigurationSet Validate(ConfigurationSet config, List<string>? repairs = null)
     {
         if (config.SchemaVersion != ConfigurationSet.CurrentSchemaVersion || config.Configurations is null) {
             throw new InvalidDataException("任务配置必须包含有效的 V3 配置列表。");
@@ -342,9 +330,18 @@ internal sealed class ConfigurationSetStore
                 ExplicitOptionIntent.ValidateStoredShape(name, value);
             }
         }
-        if (requireActive && !ids.Contains(config.ActiveConfigurationId)) {
+        if (ids.Contains(config.ActiveConfigurationId)) {
+            return config;
+        }
+        if (repairs is null) {
             throw new InvalidDataException("ActiveConfigurationId 不存在。");
         }
+        if (ids.Count == 0) {
+            repairs.Add("配置列表为空");
+            return CreateEmpty(config.ProjectName);
+        }
+        repairs.Add("激活配置不存在");
+        return config with { ActiveConfigurationId = config.Configurations[0].Id };
     }
 
     private static bool IsNameList(IReadOnlyList<string>? names) => names is not null

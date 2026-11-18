@@ -124,10 +124,7 @@ internal static partial class ProjectInterfaceLoader
         foreach (var pretask in pretasks) {
             ValidateReferences(pretask.Options, $"$.pretask.{pretask.Name}.option", options);
         }
-        var pretaskOptions = CollectOptionNames(pretasks.SelectMany(item => item.Options), options);
-        pretaskOptions.ExceptWith(CollectOptionNames(globalOptions.Concat(tasks.SelectMany(item => item.Options)),
-            options));
-        ValidateOptionDefinitions(options, pretaskOptions);
+        ValidateOptionDefinitions(options);
         ValidateOptionGraph(options);
         var presets = ParsePresets(root);
         RejectPresetPasswords(presets, options);
@@ -236,8 +233,8 @@ internal static partial class ProjectInterfaceLoader
         RejectUnknownProperties(win32, AllowedWin32Properties, "$.controller[0].win32");
         var classRegex = RequireString(win32, "class_regex", "$.controller[0].win32");
         var windowRegex = RequireString(win32, "window_regex", "$.controller[0].win32");
-        ValidateRegex(classRegex, "$.controller[0].win32.class_regex");
-        ValidateRegex(windowRegex, "$.controller[0].win32.window_regex");
+        ParseRegex(classRegex, "$.controller[0].win32.class_regex");
+        ParseRegex(windowRegex, "$.controller[0].win32.window_regex");
         RejectNonEmptyOptionScope(obj, "$.controller[0]");
         return new Win32ControllerDefinition(
             RequireString(obj, "name", "$.controller[0]"),
@@ -337,12 +334,12 @@ internal static partial class ProjectInterfaceLoader
             var option = RequireObject(property.Value, path);
             RejectUnknownProperties(option, AllowedOptionProperties, path);
             var kind = ParseOptionKind(OptionalString(option, "type") ?? "select", path);
-            if (kind is not OptionDefinitionKind.Input && option.TryGetProperty("pipeline_override", out _)) {
+            if (kind is not ProjectOptionKind.Input && option.TryGetProperty("pipeline_override", out _)) {
                 throw new InvalidDataException(
                     $"{FormatOptionKind(kind)} option {path} 不能声明 pipeline_override；请放到对应 case 中。 ");
             }
-            var checkbox = kind == OptionDefinitionKind.Checkbox;
-            var label = DisplayText(option, "label", translations, keepEmpty: kind == OptionDefinitionKind.Input);
+            var checkbox = kind == ProjectOptionKind.Checkbox;
+            var label = DisplayText(option, "label", translations, keepEmpty: kind == ProjectOptionKind.Input);
             result.Add(property.Name, new OptionDefinition(
                 property.Name, label ?? property.Name,
                 ReadDisplayString(option, "description") ?? string.Empty,
@@ -391,7 +388,8 @@ internal static partial class ProjectInterfaceLoader
             result.Add(new InputDefinition(
                 name, DisplayText(input, "label", translations, keepEmpty: true) ?? name,
                 ReadDisplayString(input, "description") ?? string.Empty,
-                password ? string.Empty : defaultValue.GetString()!, pipelineKind, OptionalString(input, "verify"),
+                password ? string.Empty : defaultValue.GetString()!, pipelineKind,
+                OptionalString(input, "verify") is { } pattern ? ParseRegex(pattern, $"{inputPath}.verify") : null,
                 DisplayText(input, "pattern_msg", translations), password ? ProjectInputType.Password : inputType));
         }
         return result;
@@ -452,28 +450,11 @@ internal static partial class ProjectInterfaceLoader
         }
     }
 
-    internal static HashSet<string> CollectOptionNames(
-        IEnumerable<string> roots, IReadOnlyDictionary<string, OptionDefinition> options)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        var pending = new Stack<string>(roots);
-        while (pending.TryPop(out var name)) {
-            if (!result.Add(name)) {
-                continue;
-            }
-            foreach (var nested in options[name].Cases.SelectMany(item => item.Options)) {
-                pending.Push(nested);
-            }
-        }
-        return result;
-    }
-
-    private static void ValidateOptionDefinitions(
-        IReadOnlyDictionary<string, OptionDefinition> options, IReadOnlySet<string> pretaskOnlyOptions)
+    private static void ValidateOptionDefinitions(IReadOnlyDictionary<string, OptionDefinition> options)
     {
         foreach (var option in options.Values) {
             var path = $"$.option.{option.Name}";
-            if (option.Kind == OptionDefinitionKind.Input) {
+            if (option.Kind == ProjectOptionKind.Input) {
                 if (option.Inputs.Count == 0) {
                     throw new InvalidDataException($"{path}.inputs 必须至少包含一个 input。 ");
                 }
@@ -485,8 +466,10 @@ internal static partial class ProjectInterfaceLoader
                 }
                 for (var inputIndex = 0; inputIndex < option.Inputs.Count; inputIndex++) {
                     var input = option.Inputs[inputIndex];
-                    _ = ProjectInputValue.Parse(input, input.Default, $"{path}.inputs[{inputIndex}].default",
-                        typed: !pretaskOnlyOptions.Contains(option.Name), isDefault: true);
+                    var error = ProjectInputValue.Parse(input, input.Default, out _, allowUnfilledDefault: true);
+                    if (error is not null) {
+                        throw new InvalidDataException($"{path}.inputs[{inputIndex}].default {error}");
+                    }
                 }
                 continue;
             }
@@ -498,10 +481,10 @@ internal static partial class ProjectInterfaceLoader
             if (option.Cases.Count == 0) {
                 throw new InvalidDataException($"{path}.cases 必须至少包含一个 case。 ");
             }
-            if (option.Kind == OptionDefinitionKind.Switch && option.Cases.Count != 2) {
+            if (option.Kind == ProjectOptionKind.Switch && option.Cases.Count != 2) {
                 throw new InvalidDataException($"switch option {path} 必须恰好有两个 case。 ");
             }
-            if (option.Kind == OptionDefinitionKind.Checkbox) {
+            if (option.Kind == ProjectOptionKind.Checkbox) {
                 if (option.MinCount > (option.MaxCount ?? option.Cases.Count) || option.MaxCount > option.Cases.Count) {
                     throw new InvalidDataException(
                         $"{path} 需满足 min_count ≤ max_count ≤ cases 数量。 ");
@@ -525,12 +508,12 @@ internal static partial class ProjectInterfaceLoader
         }
     }
 
-    private static OptionDefinitionKind ParseOptionKind(string value, string path) =>
+    private static ProjectOptionKind ParseOptionKind(string value, string path) =>
         value switch {
-            "select" => OptionDefinitionKind.Select,
-            "switch" => OptionDefinitionKind.Switch,
-            "checkbox" => OptionDefinitionKind.Checkbox,
-            "input" => OptionDefinitionKind.Input,
+            "select" => ProjectOptionKind.Select,
+            "switch" => ProjectOptionKind.Switch,
+            "checkbox" => ProjectOptionKind.Checkbox,
+            "input" => ProjectOptionKind.Input,
             _ => throw new InvalidDataException(
                 $"首版不支持 option type：{value}（{path}）。 ")
         };
@@ -544,7 +527,7 @@ internal static partial class ProjectInterfaceLoader
                 $"不支持 pipeline_type={value}（{path}）。 ")
         };
 
-    private static string FormatOptionKind(OptionDefinitionKind kind) =>
+    private static string FormatOptionKind(ProjectOptionKind kind) =>
         kind.ToString().ToLowerInvariant();
 
     private static void ValidateOptionGraph(IReadOnlyDictionary<string, OptionDefinition> options)
@@ -633,10 +616,10 @@ internal static partial class ProjectInterfaceLoader
         return value;
     }
 
-    private static void ValidateRegex(string pattern, string path)
+    private static Regex ParseRegex(string pattern, string path)
     {
         try {
-            _ = new Regex(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            return new Regex(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
         } catch (ArgumentException exception) {
             throw new InvalidDataException($"{path} 不是合法正则表达式。", exception);
         }

@@ -23,7 +23,7 @@ internal static partial class ExplicitOptionIntent
         if (intent.TryGetProperty("SelectedCase", out var single) && Only("Kind", "SelectedCase")
             && single.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(single.GetString())
             && (!intent.TryGetProperty("Kind", out var kind) || kind.ValueKind == JsonValueKind.String
-                && kind.GetString() is nameof(OptionDefinitionKind.Select) or nameof(OptionDefinitionKind.Switch))) {
+                && kind.GetString() is nameof(ProjectOptionKind.Select) or nameof(ProjectOptionKind.Switch))) {
             return;
         }
         if (intent.TryGetProperty("SelectedCases", out var multiple) && Only("SelectedCases") && Names(multiple)) {
@@ -49,7 +49,7 @@ internal static partial class ExplicitOptionIntent
                 continue;
             }
             var before = changes.Count;
-            var updated = option.Kind == OptionDefinitionKind.Input
+            var updated = option.Kind == ProjectOptionKind.Input
                 ? ReconcileInputs(intent, option, previous, Report) : ReconcileCases(intent, option, Report);
             if (updated is { } value) {
                 result.Add(name, value);
@@ -61,25 +61,25 @@ internal static partial class ExplicitOptionIntent
         return result;
     }
 
-    private static bool MatchesKind(JsonElement intent, OptionDefinitionKind current, OptionDefinitionKind? previous)
+    private static bool MatchesKind(JsonElement intent, ProjectOptionKind current, ProjectOptionKind? previous)
     {
         if (intent.TryGetProperty("Inputs", out _)) {
-            return current == OptionDefinitionKind.Input;
+            return current == ProjectOptionKind.Input;
         }
         if (intent.TryGetProperty("SelectedCases", out _)) {
-            return current == OptionDefinitionKind.Checkbox;
+            return current == ProjectOptionKind.Checkbox;
         }
         if (intent.TryGetProperty("Kind", out var saved)) {
             return saved.GetString() == current.ToString();
         }
         // Older single-choice records had the same shape for select and switch.
-        return current is OptionDefinitionKind.Select or OptionDefinitionKind.Switch
-            && (previous is not (OptionDefinitionKind.Select or OptionDefinitionKind.Switch) || previous == current);
+        return current is ProjectOptionKind.Select or ProjectOptionKind.Switch
+            && (previous is not (ProjectOptionKind.Select or ProjectOptionKind.Switch) || previous == current);
     }
 
-    private static JsonElement ReconcileCases(JsonElement intent, OptionDefinition option, Action<string> report)
+    private static JsonElement? ReconcileCases(JsonElement intent, OptionDefinition option, Action<string> report)
     {
-        var checkbox = option.Kind == OptionDefinitionKind.Checkbox;
+        var checkbox = option.Kind == ProjectOptionKind.Checkbox;
         var saved = checkbox ? ReadCaseNames(intent) : [intent.GetProperty("SelectedCase").GetString()!];
         var defined = option.Cases.Select(item => item.Name).ToArray();
         var retired = saved.Except(defined, StringComparer.Ordinal).ToArray();
@@ -87,12 +87,11 @@ internal static partial class ExplicitOptionIntent
             return checkbox || intent.TryGetProperty("Kind", out _) ? intent : CreateSelectedCase(option, saved[0]);
         }
         var kept = defined.Where(saved.Contains).ToArray();
-        if (kept.Length == 0) {
-            kept = checkbox ? defined.Where(option.DefaultCases.Contains).ToArray() : [option.DefaultCase!];
-        }
-        var choice = kept.Length == 0 ? "无" : string.Join("、", kept);
-        report($"的旧选择 {string.Join("、", retired)} 已移除，采用 {choice}");
-        return checkbox ? CreateSelectedCases(kept) : CreateSelectedCase(option, kept[0]);
+        IEnumerable<string> effective = kept.Length > 0 ? kept
+            : checkbox ? defined.Where(option.DefaultCases.Contains) : [option.DefaultCase!];
+        var choice = string.Join("、", effective);
+        report($"的旧选择 {string.Join("、", retired)} 已移除，采用 {(choice.Length == 0 ? "无" : choice)}");
+        return kept.Length == 0 ? null : CreateSelectedCases(kept);
     }
 
     private static JsonElement? ReconcileInputs(JsonElement intent, OptionDefinition option,
