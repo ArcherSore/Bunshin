@@ -14,16 +14,20 @@ public partial class MainWindow
     // starts the Run, as the Start button does. Returns whether it did.
     internal async Task<bool> AutoRunOnLaunchAsync()
     {
-        if (_projectPlan is not { } project) {
-            return false;
-        }
         // The list is a placeholder then, so nothing can be matched; say so instead of skipping silently. Asked for
         // means what Decide would look up: --instance only with --autostart, otherwise the chosen configuration.
         var requested = _launchCommand is { AutoStart: true, Instance: not null }
             || _settings.AutoRunConfigurationId is not null;
+        if (_projectPlan is not { } project) {
+            if (requested && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
+                ReportAutoRunFailure(ProjectEmptyStateDetailText.Text);
+                return true;
+            }
+            return false;
+        }
         if (project.ConfigurationsUnreadable && requested
             && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
-            ReportAutoRunFailure("无法读取任务配置文件，请检查后重试。");
+            ReportAutoRunFailure(project.LoadWarning ?? "无法读取任务配置文件，请检查后重试。");
             return true;
         }
         var canStart = AutoRunPlanner.RuntimeAllows(CurrentControls);
@@ -40,21 +44,9 @@ public partial class MainWindow
         if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
             return true;
         }
-        if (project.EnabledItems.Count == 0) {
-            ReportAutoRunFailure("所选配置没有可执行的任务。");
-            return true;
-        }
-        if (!_projectConfigurationValid) {
-            ReportAutoRunFailure("所选配置未通过校验，请打开程序检查参数。");
-            return true;
-        }
         _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
-        if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunOperationAsync(PendingOperation.StartingRun,
-                () => StartCurrentPlanAsync(quitAfterRun: _quitAfterRun), unattended: true);
-        } else {
-            await PrepareFromPanelAsync(startRun: true, unattended: true);
-        }
+        var direct = CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start };
+        await RunFromPanelAsync(prepare: !direct, unattended: true);
         return true;
     }
 

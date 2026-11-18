@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
@@ -397,8 +397,83 @@ internal static partial class SelfTestRunner
 
     private static void VerifyStartupDraftAfterProjectReload(AppLogger logger, string testDirectory)
     {
+        foreach (var cold in new[] { false, true }) {
+            foreach (var startupOnly in new[] { false, true }) {
+                VerifySavedInputAfterUpgrade(logger, Path.Combine(testDirectory, $"upgrade-{cold}-{startupOnly}"),
+                    cold, startupOnly, string.Empty);
+            }
+        }
+        VerifySavedInputAfterUpgrade(logger, Path.Combine(testDirectory, "old-text"), false, false, "旧账号");
         VerifyReloadedStartupInput(logger, Path.Combine(testDirectory, "missing"), editDraft: false);
         VerifyReloadedStartupInput(logger, Path.Combine(testDirectory, "draft"), editDraft: true);
+    }
+
+    private static void VerifySavedInputAfterUpgrade(AppLogger logger, string directory, bool cold, bool startupOnly,
+        string saved)
+    {
+        var root = CreatePretaskFixture(directory, """[{"name":"Boot","label":"游戏登录","exec":"boot-fixture"}]""");
+        AddRequiredInput(root);
+        var path = Path.Combine(root, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        var input = pi["option"]!["Recipient"]!["inputs"]![0]!;
+        input["verify"] = ".*";
+        input["default"] = "默认账号";
+        const string hint = "请填写当前账号";
+        input["pattern_msg"] = hint;
+        File.WriteAllText(path, pi.ToJsonString());
+        var config = Path.Combine(root, "config", "configurations.json");
+        var project = ProjectPlanModule.Open(root, config);
+        project.AddPretask("Boot");
+        WithPlanWindow(logger, directory, project, (window, panel) => {
+            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            InvokeOnboarding(window, "RenderTaskPlan");
+            var editor = ConfigurationDescendants(panel).OfType<TextBox>()
+                .Single(box => AutomationProperties.GetName(box) == "Recipient");
+            editor.Text = saved;
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, null) {
+                RoutedEvent = Keyboard.LostKeyboardFocusEvent
+            });
+        });
+        var explicitInputs = JsonNode.Parse(File.ReadAllText(config))!["Configurations"]![0]!["ExplicitOptions"]!;
+        Require((string?)explicitInputs["Recipient"]?["Inputs"]?["recipient"] == saved,
+            "旧版编辑器应写入显式输入键，包括合法空串。");
+        void Upgrade()
+        {
+            input["verify"] = "^当前.+$";
+            if (startupOnly) {
+                pi["pretask"]![0]!["option"] = new JsonArray("Recipient");
+            }
+            File.WriteAllText(path, pi.ToJsonString());
+        }
+        if (cold) {
+            Upgrade();
+        }
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, directory, window => {
+            var items = Named<Panel>(window, "PlanItemsPanel");
+            var button = startupOnly ? ConfigurationDescendants(items).OfType<Button>()
+                .Single(control => AutomationProperties.GetName(control) == "仅执行启动")
+                : Named<Button>(window, "PrepareEnvironmentButton");
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            Require(button.IsVisible && button.IsEnabled && button.Focus(), "启动入口应能定位需要修改的参数。");
+            if (!cold) {
+                Upgrade();
+            }
+            button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            bool FocusedField()
+            {
+                var name = startupOnly ? "Boot" : "RealTask";
+                var card = ConfigurationDescendants(items).OfType<Border>()
+                    .Single(control => control.Tag is ProjectTaskChoice task && task.Name == name);
+                return ConfigurationDescendants(card).OfType<TextBox>().Any(field => field.IsKeyboardFocused
+                    && field.Text == saved && AutomationProperties.GetItemStatus(field).Contains(hint));
+            }
+            PumpUntil(() => preparations > 0 || FocusedField(), "新版规则应展开本次运行的任务卡并聚焦错误字段。");
+            Require(preparations == 0, "无效的已保存输入必须在准备环境之前阻止启动。");
+        }, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(true));
+        }, projectDirectory: root);
     }
 
     private static void VerifyReloadedStartupInput(AppLogger logger, string directory, bool editDraft)
