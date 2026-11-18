@@ -1,6 +1,5 @@
 using System.Text.Json.Nodes;
 using System.Windows.Automation;
-using ButtonBase = System.Windows.Controls.Primitives.ButtonBase;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -58,10 +57,7 @@ internal static partial class SelfTestRunner
                 .Single(item => AutomationProperties.GetName(item) == "Finish");
             list.SelectedIndex = 0;
             list.UnselectAll();
-            var reset = ConfigurationDescendants(panel).OfType<System.Windows.Controls.Button>()
-                .SingleOrDefault(button => AutomationProperties.GetName(button) == "恢复项目默认值：Login · reset");
-            Require(reset is not null, "已保存的输入必须能单独恢复项目默认值。");
-            reset!.RaiseEvent(new System.Windows.RoutedEventArgs(ButtonBase.ClickEvent));
+            project.RestoreOptionDefault(project.ActiveConfigurationId, "Login", "reset");
         });
         var stored = JsonNode.Parse(File.ReadAllText(configPath))!["Configurations"]![0]!["ExplicitOptions"]!;
         var fields = stored["Login"]!["Inputs"]!.AsObject();

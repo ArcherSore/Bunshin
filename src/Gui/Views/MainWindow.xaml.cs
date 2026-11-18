@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -1631,7 +1631,7 @@ public partial class MainWindow : FluentWindow
         if (row.Kind == ProjectOptionKind.Input) {
             value.Children.Add(CreateInputCells(row, inputNotes));
         } else {
-            value.Children.Add(WithDefaultButton(CreateCaseSelector(row), row));
+            value.Children.Add(CreateCaseSelector(row));
             value.Children.Add(caseNotes);
         }
         var panel = new ParameterRowPanel {
@@ -1678,7 +1678,7 @@ public partial class MainWindow : FluentWindow
         if (row.Inputs.Count == 1) {
             var input = row.Inputs[0];
             notes[input.Input.Name] = new StackPanel();
-            var editor = WithDefaultButton(CreateInputEditor(row, input), row, input);
+            var editor = CreateInputEditor(row, input);
             return new StackPanel { Children = { LimitWidth(editor), notes[input.Input.Name] } };
         }
         var panel = new ParameterInputsPanel();
@@ -1693,40 +1693,12 @@ public partial class MainWindow : FluentWindow
                 });
             }
             notes[input.Input.Name] = new StackPanel();
-            var editor = WithDefaultButton(CreateInputEditor(row, input), row, input);
+            var editor = CreateInputEditor(row, input);
             panel.Children.Add(new StackPanel {
                 Children = { header, editor, notes[input.Input.Name] }
             });
         }
         return panel;
-    }
-
-    private Grid WithDefaultButton(FrameworkElement editor, InspectorRow row, InspectorInput? input = null)
-    {
-        var id = RequireProject().ActiveConfigurationId;
-        var label = input?.AccessibleName ?? row.Label;
-        var reset = CreateIconButton(WpfSymbolRegular.ArrowCounterclockwise16, $"恢复项目默认值：{label}", "恢复项目默认值");
-        BindConfigurationEditable(reset);
-        reset.Click += (_, _) => {
-            if (!CurrentControls.ConfigurationEditable) {
-                return;
-            }
-            try {
-                RequireProject().RestoreOptionDefault(id, row.Option.Name, input?.Input.Name);
-                if (input is not null) {
-                    _inputDrafts.Remove((id, row.Option.Name, input.Input.Name));
-                }
-                InvalidatePendingStart();
-                RefreshAfterOptionSaved(rebuildCards: true);
-            } catch (Exception exception) {
-                HandleOperationError("恢复项目默认值失败", exception);
-            }
-        };
-        Grid.SetColumn(reset, 1);
-        return new Grid {
-            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } },
-            Children = { editor, reset }
-        };
     }
 
     // A password is masked and cannot be revealed; a file or folder path can be typed or picked.
