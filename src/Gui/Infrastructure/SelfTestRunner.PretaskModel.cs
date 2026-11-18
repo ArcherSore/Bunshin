@@ -31,33 +31,35 @@ internal static partial class SelfTestRunner
             Name: "prepare-fixture", Label: "准备测试环境", Kind: PlanItemKind.Pretask
         } && project.SelectedPretaskNames.Count == 0,
             "单对象 pretask 必须支持缺省 name，并且首次配置不能默认选择前置任务。");
-        Require(project.AddPretask("prepare-fixture") && !project.AddPretask("prepare-fixture"),
+        Require(project.AddItem(PlanItemKind.Pretask, "prepare-fixture")
+            && !project.AddItem(PlanItemKind.Pretask, "prepare-fixture"),
             "同一前置任务只能添加一次。");
-        project.RemoveTask("RealTask");
-        var attempt = project.CreateRunStartAttempt();
+        project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
+        var attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         var item = attempt.Plan.Items.Single();
         Require(item.Kind == PlanItemKind.Pretask && item.Entry == string.Empty
             && item.Program is { Executable: "prepare-fixture", Arguments.Count: 0 }
             && item.PipelineOverride.ValueKind == JsonValueKind.Array && item.PipelineOverride.GetArrayLength() == 0
             && project.SelectedItems.Single().Kind == PlanItemKind.Pretask,
             "仅前置任务的计划必须保留程序类型及空参数，不能生成 MaaTask 或 Pipeline Override。");
-        Require(project.RemovePretask("prepare-fixture") && !project.RemovePretask("prepare-fixture")
-            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
+        Require(project.RemoveItem(PlanItemKind.Pretask, "prepare-fixture")
+            && !project.RemoveItem(PlanItemKind.Pretask, "prepare-fixture")
+            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(project.ActiveConfigurationId)),
             "移除最后一个前置任务后应为空计划，不能继续开始。");
 
         directory = CreatePretaskFixture(Path.Combine(testDirectory, "empty-label"), """
             {"name":"EmptyLabel","label":"","exec":"prepare-fixture"}
             """);
         project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        project.AddPretask("EmptyLabel");
-        Require(project.CreateRunStartAttempt().Plan.Items[0].TaskLabel == "EmptyLabel",
+        project.AddItem(PlanItemKind.Pretask, "EmptyLabel");
+        Require(project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0].TaskLabel == "EmptyLabel",
             "空展示标签必须回退到前置任务名称，不能生成 Worker 拒绝的计划。");
 
         directory = CreatePretaskFixture(Path.Combine(testDirectory, "shared-name"), """
             {"name":"RealTask","exec":"prepare-fixture","option":["StartupMode"]}
             """);
         project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        project.AddPretask("RealTask");
+        project.AddItem(PlanItemKind.Pretask, "RealTask");
         Require(project.SelectedItems.Select(choice => choice.Kind)
                 .SequenceEqual([PlanItemKind.Pretask, PlanItemKind.MaaTask])
             && project.GetConfiguration("RealTask", PlanItemKind.Pretask).TaskOptions.Single().Name == "StartupMode"
@@ -77,19 +79,22 @@ internal static partial class SelfTestRunner
             """);
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
         Require(project.Pretasks.Select(choice => choice.Name).SequenceEqual(["First", "Second"])
-            && Throws<InvalidOperationException>(() => project.AddPretask("OtherController"))
-            && Throws<InvalidOperationException>(() => project.AddPretask("OtherResource"))
-            && Throws<ArgumentException>(() => project.AddPretask("Missing")),
+            && Throws<InvalidOperationException>(() => project.AddItem(PlanItemKind.Pretask, "OtherController"))
+            && Throws<InvalidOperationException>(() => project.AddItem(PlanItemKind.Pretask, "OtherResource"))
+            && Throws<ArgumentException>(() => project.AddItem(PlanItemKind.Pretask, "Missing")),
             "前置任务目录和添加入口必须过滤不适用的 controller/resource 并拒绝未知名称。");
-        project.AddPretask("Second");
-        project.AddPretask("First");
-        var attempt = project.CreateRunStartAttempt();
-        Require(project.SelectedItems.Select(choice => choice.Name).SequenceEqual(["First", "Second", "RealTask"])
+        project.AddItem(PlanItemKind.Pretask, "First");
+        project.AddItem(PlanItemKind.Pretask, "Second");
+        Require(project.MoveTask("Second", 0, PlanItemKind.Pretask), "应允许拖动前置任务调整显示顺序。");
+        project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
+        var attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
+        Require(project.SelectedItems.Select(choice => choice.Name).SequenceEqual(["Second", "First", "RealTask"])
+            && project.EnabledItems.Select(item => item.Name).SequenceEqual(["First", "Second", "RealTask"])
             && attempt.Plan.Items.Select(item => item.TaskName).SequenceEqual(["First", "Second", "RealTask"])
             && attempt.Plan.Items.Take(2).All(item => item.Kind == PlanItemKind.Pretask
                 && item.Program!.Arguments.Count == 0)
             && attempt.Plan.Items[2].Kind == PlanItemKind.MaaTask,
-            "添加顺序不能改变 PI 前置任务顺序，且所有前置任务必须位于普通任务之前。");
+            "重新打开应保留拖动顺序，运行和进度仍按 PI 顺序先执行前置任务。");
 
         var baseline = attempt.Plan;
         var first = baseline.Items[0];
@@ -116,12 +121,13 @@ internal static partial class SelfTestRunner
              "option":["StartupMode","StartupGate"]}
             """);
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        var originalOverrides = project.CreateRunStartAttempt().Plan.Items.Single().PipelineOverride.GetRawText();
-        project.AddPretask("Prepare");
+        var originalOverrides = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single()
+            .PipelineOverride.GetRawText();
+        project.AddItem(PlanItemKind.Pretask, "Prepare");
         const string caption = "测试 \"引号\"、路径 C:\\临时\\目录\n第二行";
         project.SetInputValue("LaunchInput", "caption", caption);
         project.SetInputValue("LaunchInput", "attempts", "003");
-        var attempt = project.CreateRunStartAttempt();
+        var attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         var pretask = attempt.Plan.Items[0];
         var program = pretask.Program!;
         Require(Path.GetFullPath(program.Executable)
@@ -153,19 +159,19 @@ internal static partial class SelfTestRunner
             "前置任务编辑器应只展示其选项，并恢复激活子选项的显式输入。");
 
         project.SetSelectedCase("StartupMode", "Manual");
-        pretask = project.CreateRunStartAttempt().Plan.Items[0];
+        pretask = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0];
         Require(!pretask.ResolvedOptions.TryGetProperty("LaunchInput", out _)
             && project.Configurations.Single().ExplicitOptions.ContainsKey("LaunchInput"),
             "休眠子选项不应传给程序，但其显式意图必须保留。");
         project.SetSelectedCase("StartupMode", "Auto");
-        Require(project.CreateRunStartAttempt().Plan.Items[0].ResolvedOptions.GetProperty("LaunchInput")
-                .GetProperty("caption").GetString() == caption,
+        Require(project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0].ResolvedOptions
+                .GetProperty("LaunchInput").GetProperty("caption").GetString() == caption,
             "重新激活子选项后应恢复原输入。");
-        project.RemoveTask("RealTask");
+        project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
         project.SetInputValue("LaunchInput", "attempts", "非数字");
         Require(project.CheckInputValue("LaunchInput", "attempts", "非数字") is null
-            && project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions.GetProperty("LaunchInput")
-                .GetProperty("attempts").GetString() == "非数字",
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single().ResolvedOptions
+                .GetProperty("LaunchInput").GetProperty("attempts").GetString() == "非数字",
             "前置 input 不参与 pipeline_type 数值转换，不能套用普通任务的类型约束。");
     }
 
@@ -186,13 +192,13 @@ internal static partial class SelfTestRunner
             root["option"]!["StartupMode"]!["default_case"] = mode;
             File.WriteAllText(path, root.ToJsonString());
             var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-            project.AddPretask("Prepare");
+            project.AddItem(PlanItemKind.Pretask, "Prepare");
             if (mode == "Manual") {
-                Require(!project.CreateRunStartAttempt().Plan.Items[0].ResolvedOptions
+                Require(!project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0].ResolvedOptions
                     .TryGetProperty("LaunchInput", out _), "未激活的前置子选项不应生成参数。");
                 project.SetSelectedCase("StartupMode", "Auto");
             }
-            var item = project.CreateRunStartAttempt().Plan.Items[0];
+            var item = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0];
             var defaults = item.ResolvedOptions.GetProperty("LaunchInput");
             using var arguments = JsonDocument.Parse(item.Program!.Arguments.Single());
             Require(defaults.GetProperty("attempts").ValueKind == JsonValueKind.String
@@ -243,7 +249,7 @@ internal static partial class SelfTestRunner
         root["option"]!["Mode"]!["cases"]![1]!["option"] = new JsonArray("SharedCount");
         File.WriteAllText(path, root.ToJsonString());
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-        project.AddPretask("Prepare");
+        project.AddItem(PlanItemKind.Pretask, "Prepare");
         void RequireConsistent(string optionName, string inputName, bool typed, string scenario)
         {
             var problem = project.CheckInputValue(optionName, inputName, "多次");
@@ -262,10 +268,10 @@ internal static partial class SelfTestRunner
         project.SetInputValue("SharedCount", "count", "5");
         project.SetSelectedCase("Mode", "Minimal");
         RequireConsistent("SharedCount", "count", typed: true, "普通任务激活分支中的 option");
-        project.RemoveTask("RealTask");
+        project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
         RequireConsistent("ServerRange", "retry_count", typed: false, "只剩前置任务时的全局 option");
         RequireConsistent("SharedCount", "count", typed: false, "只剩前置任务时的共享 option");
-        var values = project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions;
+        var values = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single().ResolvedOptions;
         Require(values.GetProperty("ServerRange").GetProperty("retry_count").GetString() == "多次"
             && values.GetProperty("SharedCount").GetProperty("count").GetString() == "多次",
             "只供前置任务使用的共享 input 应按原文传给程序。");
@@ -295,43 +301,58 @@ internal static partial class SelfTestRunner
         }));
         var project = ProjectPlanModule.Open(directory, path);
         using (var document = JsonDocument.Parse(File.ReadAllBytes(path))) {
-            Require(document.RootElement.GetProperty("SchemaVersion").GetInt32() == 3
+            var version = document.RootElement.GetProperty("SchemaVersion").GetInt32();
+            Require(version == ConfigurationSet.CurrentSchemaVersion
                 && project.ActiveConfigurationId == first && project.SelectedTaskNames.SequenceEqual(["RealTask"])
                 && project.Configurations.All(config => config.SelectedPretasks.Count == 0)
                 && project.Configurations.All(config => config.ExplicitOptions["Mode"]
                     .GetProperty("SelectedCase").GetString() == "Minimal")
-                && project.CreateRunStartAttempt().Plan.ResolvedGlobalOptions.GetProperty("ServerRange")
-                    .GetProperty("server_range").GetString() == "978",
+                && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.ResolvedGlobalOptions
+                    .GetProperty("ServerRange").GetProperty("server_range").GetString() == "978",
                 "V2 配置迁移必须保留配置身份、激活项、任务和显式意图，并默认不选前置任务。");
         }
-        project.AddPretask("Prepare");
+        project.AddItem(PlanItemKind.Pretask, "Prepare");
         project.SetInputValue("LaunchInput", "caption", "first");
         project.ActivateConfiguration(second);
-        project.AddPretask("Finish");
-        project.AddPretask("Prepare");
+        project.AddItem(PlanItemKind.Pretask, "Finish");
+        project.AddItem(PlanItemKind.Pretask, "Prepare");
         project.SetInputValue("LaunchInput", "caption", "second");
         project.SetInputValue(first, "LaunchInput", "caption", "late-first");
+        var legacy = JsonNode.Parse(File.ReadAllText(path))!;
+        legacy["SchemaVersion"] = 3;
+        foreach (var item in legacy["Configurations"]!.AsArray()) {
+            item!.AsObject().Remove("DisabledItems");
+        }
+        File.WriteAllText(path, legacy.ToJsonString());
         project = ProjectPlanModule.Open(directory, path);
-        Require(project.ActiveConfigurationId == second
-            && project.CreateRunStartAttempt().Plan.Items.Select(item => item.TaskName)
+        Require(project.Configurations.Count == 2 && project.ActiveConfigurationId == second
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Select(item => item.TaskName)
                 .SequenceEqual(["Prepare", "Finish"])
-            && project.CreateRunStartAttempt().Plan.Items[0].ResolvedOptions.GetProperty("LaunchInput")
-                .GetProperty("caption").GetString() == "second",
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0].ResolvedOptions
+                .GetProperty("LaunchInput").GetProperty("caption").GetString() == "second",
             "前置任务选择和参数必须独立持久化；来源配置的迟到编辑不能修改当前配置。");
         project.ActivateConfiguration(first);
         Require(project.SelectedPretaskNames.SequenceEqual(["Prepare"])
-            && project.CreateRunStartAttempt().Plan.Items[0].ResolvedOptions.GetProperty("LaunchInput")
-                .GetProperty("caption").GetString() == "late-first",
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0].ResolvedOptions
+                .GetProperty("LaunchInput").GetProperty("caption").GetString() == "late-first",
             "重新激活配置必须恢复该配置的前置任务与参数。");
-        project.RemovePretask("Prepare");
+        project.RemoveItem(PlanItemKind.Pretask, "Prepare");
         project = ProjectPlanModule.Open(directory, path);
         Require(project.SelectedPretaskNames.Count == 0
             && project.Configurations.Single(config => config.Id == first).ExplicitOptions.ContainsKey("LaunchInput"),
             "移除前置任务不能清掉已保存的选项意图。");
-        project.AddPretask("Prepare");
+        project.AddItem(PlanItemKind.Pretask, "Prepare");
         Require(project.GetConfiguration("Prepare", PlanItemKind.Pretask).TaskOptions.Single()
                 .ActiveChildren.Single().Inputs.Single(input => input.Name == "caption").Value == "late-first",
             "移除并重新添加前置任务后必须恢复显式参数。");
+
+        EditInterface(directory, root => root["pretask"]![0]!["controller"] = new JsonArray("OtherController"));
+        project = ProjectPlanModule.Open(directory, path);
+        Require(project.SelectedItems.Any(item => item.Name == "Prepare" && !item.Applicable)
+            && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items
+                .All(item => item.TaskName != "Prepare")
+            && project.RemoveItem(PlanItemKind.Pretask, "Prepare"),
+            "升级资源后不再适用的前置任务应保留在配置中供删除，运行时跳过。");
     }
 
     private static void VerifyInvalidPretaskDefinitions(string testDirectory)
@@ -376,8 +397,9 @@ internal static partial class SelfTestRunner
             var directory = CreatePretaskFixture(Path.Combine(testDirectory, $"exec-{name}"),
                 new JsonObject { ["name"] = "Full", ["exec"] = executable }.ToJsonString());
             var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
-            project.AddPretask("Full");
-            Require(project.CreateRunStartAttempt().Plan.Items[0].Program!.Executable == executable,
+            project.AddItem(PlanItemKind.Pretask, "Full");
+            Require(project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items[0].Program!.Executable
+                    == executable,
                 "完整路径与 UNC 路径的前置程序应加载成功并原样进入计划。");
         }
     }

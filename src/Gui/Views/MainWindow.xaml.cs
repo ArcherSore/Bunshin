@@ -94,7 +94,7 @@ public partial class MainWindow : FluentWindow
     private string _configurationLockText = string.Empty;
     private string? _expandedTaskName;
     private PlanItemKind _expandedTaskKind;
-    private string? _dragTaskName;
+    private ProjectTaskChoice? _dragTask;
     private WpfPoint _dragStartPoint;
     private IInputElement? _descriptionDrawerPreviousFocus;
     private readonly List<Border> _dropIndicators = [];
@@ -550,7 +550,7 @@ public partial class MainWindow : FluentWindow
 
     private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!CommitFocusedConfigurationInput() || RevealInvalidParameter() || OperationOrExitInProgress) {
+        if (!CommitRunInput() || RevealInvalidParameter() || OperationOrExitInProgress) {
             LogIgnoredAction();
             return;
         }
@@ -564,22 +564,22 @@ public partial class MainWindow : FluentWindow
 
     // Only a manual "仅启动分身" shows the Child Session window; every other preparation keeps it hidden.
     private async Task PrepareFromPanelAsync(
-        bool startRun = false, bool startupOnly = false, bool unattended = false, bool showDesktop = false)
+        bool startRun = false, bool unattended = false, bool showDesktop = false)
     {
         if (OperationOrExitInProgress) {
             LogIgnoredAction();
             return;
         }
         await RunOperationAsync(PendingOperation.PreparingEnvironment,
-            () => PrepareCurrentEnvironmentAsync(startRun, startupOnly, showDesktop), unattended);
+            () => PrepareCurrentEnvironmentAsync(startRun, showDesktop), unattended);
     }
 
-    private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool startupOnly = false, bool showDesktop = false,
+    private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool showDesktop = false,
         QuitAfterRunTracker? quitAfterRun = null)
     {
         await PrepareProjectEnvironmentAsync(project: null, showDesktop);
         if (startRun && !_exitInProgress && !_environment.Closing && await WaitForRunStartAsync()) {
-            await StartCurrentPlanAsync(startupOnly, quitAfterRun);
+            await StartCurrentPlanAsync(quitAfterRun);
         }
     }
 
@@ -637,7 +637,7 @@ public partial class MainWindow : FluentWindow
 
     private async void StartRunButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!CommitFocusedConfigurationInput() || RevealInvalidParameter()
+        if (!CommitRunInput() || RevealInvalidParameter()
             || CurrentControls.Action is not (RuntimeAction.Start { Enabled: true }
                 or RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true })) {
             LogIgnoredAction();
@@ -647,7 +647,7 @@ public partial class MainWindow : FluentWindow
     }
 
     // Called only while the application operation gate is held, after preparation or a direct Start.
-    private async Task StartCurrentPlanAsync(bool startupOnly = false, QuitAfterRunTracker? quitAfterRun = null)
+    private async Task StartCurrentPlanAsync(QuitAfterRunTracker? quitAfterRun = null)
     {
         // The operation may wait behind another one, so the session is checked again when it runs.
         if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
@@ -659,11 +659,7 @@ public partial class MainWindow : FluentWindow
             throw new InvalidOperationException(
                 "当前 任务配置尚未通过正式 PI Resolver 校验。 ");
         }
-        if (_pendingStartAttempt is not null && _pendingStartupOnly != startupOnly) {
-            _pendingStartAttempt = null;
-        }
-        _pendingStartupOnly = startupOnly;
-        var attempt = _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
+        var attempt = _pendingStartAttempt ??= CreateConfigurationAttempt(project, project.ActiveConfigurationId);
         if (quitAfterRun is null && _quitAfterRun?.IsWaitingFor(attempt.RunId) == true) {
             // A retry reuses its Run ID. Only replay once the original start was ruled out.
             var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
@@ -678,7 +674,7 @@ public partial class MainWindow : FluentWindow
             _quitAfterRun.Abandon();
         }
         try {
-            await SubmitRunAsync(attempt, ActiveConfigurationName, startupOnly,
+            await SubmitRunAsync(attempt, ActiveConfigurationName,
                 onSending: quitAfterRun is null ? null : () => quitAfterRun.Await(attempt.RunId));
         } catch (WorkerProtocolErrorException) {
             quitAfterRun?.Abandon();
@@ -687,10 +683,10 @@ public partial class MainWindow : FluentWindow
         _pendingStartAttempt = null;
     }
 
-    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, bool startupOnly, Action? onSending = null)
+    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, Action? onSending = null)
     {
         _terminalNotifications.Register(attempt.RunId, name);
-        RunResultLog.WritePlan(_logger, attempt, name, startupOnly);
+        RunResultLog.WritePlan(_logger, attempt, name);
         _telemetry.Register(attempt.RedactionValues);
         var response = await _workerCoordinator.StartRunAsync(attempt, onSending: onSending);
         if (response.Disposition is not ("accepted" or "already_accepted")) {
@@ -760,7 +756,7 @@ public partial class MainWindow : FluentWindow
         }
         try {
             var project = RequireProject();
-            if (!(task.Kind == PlanItemKind.Pretask ? project.AddPretask(task.Name) : project.AddTask(task.Name))) {
+            if (!project.AddItem(task.Kind, task.Name)) {
                 return;
             }
             _pendingStartAttempt = null;
@@ -822,14 +818,19 @@ public partial class MainWindow : FluentWindow
             new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
     }
 
-    // An invalid parameter blocks Start: show the field holding an invalid, unsaved value, or the checkbox row below
-    // min_count, instead of running.
+    // A rejected value kept as a visible draft is left to RevealInvalidParameter instead of silently blocking Start.
+    private bool CommitRunInput()
+    {
+        var tag = (Keyboard.FocusedElement as WpfTextBox)?.Tag as OptionInputTag;
+        return CommitFocusedConfigurationInput() || tag is not null && _invalidInputDrafts.ContainsKey(tag.Key);
+    }
+
     private bool RevealInvalidParameter()
     {
         if (_projectPlan is not { } project) {
             return false;
         }
-        var match = project.SelectedItems.OrderBy(task => IsExpanded(task) ? 0 : 1)
+        var match = project.EnabledItems.OrderBy(task => IsExpanded(task) ? 0 : 1)
             .SelectMany(task => DeriveInspectorRows(task.Name, GetConfigurationOrEmpty(task.Name, task.Kind),
                 shared: false, task.Kind).Where(row => row.IsInvalid).Select(row => (Task: task, Row: row)))
             .FirstOrDefault();
@@ -874,8 +875,7 @@ public partial class MainWindow : FluentWindow
         }
         try {
             var project = RequireProject();
-            var removed = task.Kind == PlanItemKind.Pretask
-                ? project.RemovePretask(task.Name) : project.RemoveTask(task.Name);
+            var removed = project.RemoveItem(task.Kind, task.Name);
             if (!removed) {
                 return;
             }
@@ -1095,10 +1095,15 @@ public partial class MainWindow : FluentWindow
         bool Matches(ProjectTaskChoice task) => task.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
             || task.Label.Contains(query, StringComparison.OrdinalIgnoreCase);
         var tasks = project.Tasks.Where(Matches).ToArray();
-        var total = project.Tasks.Count;
-        AvailableTaskCountText.Text = query.Length == 0 ? total.ToString() : $"{tasks.Length} / {total}";
+        var pretasks = project.Pretasks.Where(Matches).ToArray();
+        var total = project.Tasks.Count + project.Pretasks.Count;
+        var matches = tasks.Length + pretasks.Length;
+        AvailableTaskCountText.Text = query.Length == 0 ? total.ToString() : $"{matches} / {total}";
         AvailableTasksPanel.Children.Clear();
-        if (tasks.Length == 0) {
+        if (pretasks.Length > 0) {
+            AvailableTasksPanel.Children.Add(CreateTaskChipPanel(project, pretasks));
+        }
+        if (tasks.Length + pretasks.Length == 0) {
             AvailableTasksPanel.Children.Add(new TextBlock {
                 Text = "没有匹配的任务", Margin = new Thickness(2, 8, 0, 12),
                 Style = (Style)FindResource("SecondaryTextStyle")
@@ -1229,12 +1234,11 @@ public partial class MainWindow : FluentWindow
         _optionInputEditors.Clear();
         _inspectorRows.Clear();
         var items = project.SelectedItems;
-        EmptyPlanPanel.Visibility = project.SelectedTaskNames.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyPlanPanel.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         PlanCountText.Text = $"{items.Count} 项";
-        EmptyPlanText.Text = $"从 {project.Tasks.Count} 个可用任务中选择要执行的任务";
+        EmptyPlanText.Text = $"从 {project.Tasks.Count + project.Pretasks.Count} 个可用任务中选择要执行的任务";
 
-        RenderStartupStage(project);
-        foreach (var task in items.Where(item => item.Kind == PlanItemKind.MaaTask)) {
+        foreach (var task in items) {
             AddDropIndicator();
             var container = CreatePlanItem(task, IsExpanded(task));
             _planItemContainers.Add((task.Kind, task.Name), container);
@@ -1342,23 +1346,12 @@ public partial class MainWindow : FluentWindow
         var dragHandle = CreateIconButton(WpfSymbolRegular.ReOrderDotsVertical20, "拖动以调整顺序", "拖动以调整顺序");
         dragHandle.Tag = task;
         dragHandle.Width = dragHandle.MinWidth = 24;
-        if (task.Kind == PlanItemKind.Pretask) {
-            dragHandle.Visibility = Visibility.Hidden;
-            dragHandle.IsHitTestVisible = false;
-        } else {
-            dragHandle.Cursor = WpfCursors.SizeAll;
-            dragHandle.PreviewMouseLeftButtonDown += PlanDragHandle_PreviewMouseLeftButtonDown;
-            dragHandle.PreviewMouseMove += PlanDragHandle_PreviewMouseMove;
-            BindConfigurationEditable(dragHandle);
-        }
+        dragHandle.Cursor = WpfCursors.SizeAll;
+        dragHandle.PreviewMouseLeftButtonDown += PlanDragHandle_PreviewMouseLeftButtonDown;
+        dragHandle.PreviewMouseMove += PlanDragHandle_PreviewMouseMove;
+        BindConfigurationEditable(dragHandle);
         header.Children.Add(dragHandle);
-        if (task.Kind == PlanItemKind.Pretask) {
-            dragHandle.Visibility = Visibility.Collapsed;
-            header.Margin = new Thickness(10, 0, 4, 0);
-            header.Children.Add(CreateStartupSelection(task));
-        } else {
-            header.Children.Add(CreatePlanItemSelection(task));
-        }
+        header.Children.Add(CreatePlanItemSelection(task));
 
         var label = new TextBlock {
             Text = task.Label,
@@ -1404,10 +1397,6 @@ public partial class MainWindow : FluentWindow
             header.Children.Add(information);
         }
 
-        if (task.Kind == PlanItemKind.Pretask && RequireProject().Pretasks.Any(item => item.Name == task.Name)) {
-            return header;
-        }
-
         var remove = CreateIconButton(WpfSymbolRegular.Dismiss16, $"从执行计划移除 {task.Label}", "从执行计划移除");
         remove.Style = (Style)FindResource("TaskRemoveButtonStyle");
         remove.Tag = task;
@@ -1439,7 +1428,7 @@ public partial class MainWindow : FluentWindow
             IsChecked = RequireProject().IsItemEnabled(task.Kind, task.Name),
             Width = 24, MinWidth = 0, Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0),
-            ToolTip = "本次是否执行；重新打开程序后恢复勾选"
+            ToolTip = task.Applicable ? "是否执行此任务" : "当前控制器或资源不适用，运行时跳过"
         };
         AutomationProperties.SetName(selection, $"执行 {task.Label}");
         BindConfigurationEditable(selection);
@@ -1448,7 +1437,13 @@ public partial class MainWindow : FluentWindow
                 selection.IsChecked = RequireProject().IsItemEnabled(task.Kind, task.Name);
                 return;
             }
-            RequireProject().SetItemEnabled(task.Kind, task.Name, selection.IsChecked == true);
+            try {
+                RequireProject().SetItemEnabled(task.Kind, task.Name, selection.IsChecked == true);
+            } catch (Exception exception) {
+                selection.IsChecked = RequireProject().IsItemEnabled(task.Kind, task.Name);
+                HandleProjectEditError("保存任务勾选状态失败", exception);
+                return;
+            }
             _pendingStartAttempt = null;
             RefreshConfigurationValidity(RequireProject());
         };
@@ -1874,7 +1869,7 @@ public partial class MainWindow : FluentWindow
     private void PlanDragHandle_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is WpfButton { Tag: ProjectTaskChoice task }) {
-            _dragTaskName = task.Name;
+            _dragTask = task;
             _dragStartPoint = e.GetPosition(PlanItemsPanel);
         }
     }
@@ -1883,7 +1878,7 @@ public partial class MainWindow : FluentWindow
     {
         if (e.LeftButton != MouseButtonState.Pressed
             || sender is not WpfButton { Tag: ProjectTaskChoice task }
-            || _dragTaskName != task.Name) {
+            || _dragTask != task) {
             return;
         }
         var current = e.GetPosition(PlanItemsPanel);
@@ -1901,7 +1896,7 @@ public partial class MainWindow : FluentWindow
             var data = new WpfDataObject(PlanItemDragDataFormat, task.Name);
             _ = DragDrop.DoDragDrop(PlanItemsPanel, data, WpfDragDropEffects.Move);
         } finally {
-            _dragTaskName = null;
+            _dragTask = null;
             ClearDropIndicators();
             RenderTaskPlan();
         }
@@ -1909,14 +1904,9 @@ public partial class MainWindow : FluentWindow
 
     private void PlanItemsPanel_DragOver(object sender, WpfDragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(PlanItemDragDataFormat)) {
-            e.Effects = WpfDragDropEffects.None;
-            e.Handled = true;
-            return;
-        }
-        var boundary = CalculateDropBoundary(e.GetPosition(PlanItemsPanel).Y);
-        ShowDropIndicator(boundary);
-        e.Effects = WpfDragDropEffects.Move;
+        var drop = ResolvePlanDrop(e);
+        ShowDropIndicator(drop?.Boundary ?? -1);
+        e.Effects = drop.HasValue ? WpfDragDropEffects.Move : WpfDragDropEffects.None;
         e.Handled = true;
     }
 
@@ -1924,42 +1914,50 @@ public partial class MainWindow : FluentWindow
 
     private void PlanItemsPanel_Drop(object sender, WpfDragEventArgs e)
     {
-        if (!CurrentControls.ConfigurationEditable || e.Data.GetData(PlanItemDragDataFormat) is not string taskName) {
+        e.Handled = true;
+        e.Effects = WpfDragDropEffects.None;
+        if (_dragTask is not { } task || ResolvePlanDrop(e) is not { } drop) {
             return;
         }
         try {
-            var project = RequireProject();
-            var currentIndex = project.SelectedTaskNames.ToList().IndexOf(taskName);
-            var boundary = CalculateDropBoundary(e.GetPosition(PlanItemsPanel).Y);
-            var targetIndex = boundary > currentIndex ? boundary - 1 : boundary;
-            targetIndex = Math.Clamp(targetIndex, 0, project.SelectedTaskNames.Count - 1);
             _expandedTaskName = null;
-            if (project.MoveTask(taskName, targetIndex)) {
+            if (RequireProject().MoveTask(task.Name, drop.TargetIndex, task.Kind)) {
                 _pendingStartAttempt = null;
-                _logger.Info($"已调整执行计划顺序：{taskName} -> {targetIndex}。 ");
+                _logger.Info($"已调整任务顺序：{task.Name} -> {drop.TargetIndex}。");
             }
             RenderTaskPlan();
             e.Effects = WpfDragDropEffects.Move;
-            e.Handled = true;
         } catch (Exception exception) {
-            HandleProjectEditError("调整执行计划顺序失败", exception);
+            HandleProjectEditError("调整任务顺序失败", exception);
         }
     }
 
-    private int CalculateDropBoundary(double pointerY)
+    private (int Boundary, int TargetIndex)? ResolvePlanDrop(WpfDragEventArgs e)
     {
-        var project = _projectPlan;
-        if (project is null) {
-            return 0;
+        if (!CurrentControls.ConfigurationEditable || _dragTask is not { } task || _projectPlan is not { } project
+            || e.Data.GetData(PlanItemDragDataFormat) is not string name || name != task.Name) {
+            return null;
         }
-        for (var index = 0; index < project.SelectedTaskNames.Count; index++) {
-            var container = _planItemContainers[(PlanItemKind.MaaTask, project.SelectedTaskNames[index])];
+        var items = project.SelectedItems;
+        var pointerY = e.GetPosition(PlanItemsPanel).Y;
+        var boundary = 0;
+        foreach (var item in items) {
+            var container = _planItemContainers[(item.Kind, item.Name)];
             var top = container.TranslatePoint(new WpfPoint(0, 0), PlanItemsPanel).Y;
             if (pointerY < top + container.ActualHeight / 2) {
-                return index;
+                break;
             }
+            boundary++;
         }
-        return project.SelectedTaskNames.Count;
+        // Each kind is a contiguous block; an item can only move within its own block.
+        var start = items.TakeWhile(item => item.Kind != task.Kind).Count();
+        var group = items.Skip(start).TakeWhile(item => item.Kind == task.Kind).Select(item => item.Name).ToList();
+        var current = group.IndexOf(name);
+        var local = boundary - start;
+        if (current < 0 || local < 0 || local > group.Count) {
+            return null;
+        }
+        return (boundary, local > current ? local - 1 : local);
     }
 
     private void ShowDropIndicator(int boundary)
@@ -2085,7 +2083,7 @@ public partial class MainWindow : FluentWindow
             _onboardingPreferences.CaptureBeforeProjectLoad(configPath);
         }
         var previous = _projectPlan;
-        var project = ProjectPlanModule.Open(_applicationDirectory, configPath, previous,
+        var project = ProjectPlanModule.Open(_applicationDirectory, configPath,
             message => _logger.Info(message));
         _projectPlan = project;
         _settings.ViewWelcome.IsVisible = project.HasWelcome;
@@ -2408,7 +2406,6 @@ public partial class MainWindow : FluentWindow
         var progress = CurrentRunProgress;
         ApplyRuntimeStatus(state, progress);
         ApplyRunProgress(progress);
-        RefreshStartupOnlyButton(state);
         ApplyPanelSummary(state, progress);
 
         SetValue(ConfigurationEditableProperty, state.ConfigurationEditable);
@@ -2534,7 +2531,7 @@ public partial class MainWindow : FluentWindow
 
     private RunProgressView? CurrentRunProgress => _projectPlan is { } project
         ? RunProgress.Derive(_workerSnapshot.WorkerSnapshot,
-            project.EnabledItems.Where(item => !_pendingStartupOnly || item.Kind == PlanItemKind.Pretask)
+            project.EnabledItems
                 .Select(item => (item.Kind, item.Name)).ToArray()) : null;
 
     private enum StatusTone { Idle, Busy, Ok, Run, Bad }

@@ -21,8 +21,8 @@ internal static partial class SelfTestRunner
         AddSecretAndPathInputs(directory);
         var configPath = Path.Combine(directory, "config.json");
         var project = ProjectPlanModule.Open(directory, configPath);
-        project.AddPretask("Prepare");
-        var emptyAttempt = project.CreateRunStartAttempt();
+        project.AddItem(PlanItemKind.Pretask, "Prepare");
+        var emptyAttempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         Require(emptyAttempt.Plan.Items.Count == 2 && emptyAttempt.RedactionValues.Count == 0,
             "没有 verify 的密码字段应允许为空并可以开始运行；空密码不需要脱敏。");
         project.SetInputValue("Login", "password", SecretInputValue);
@@ -33,7 +33,7 @@ internal static partial class SelfTestRunner
         var input = reopened.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == "Login")
             .Inputs.Single();
         Require(input.IsPassword && input.Value == SecretInputValue, "重新打开配置后应读回原密码。");
-        var attempt = reopened.CreateRunStartAttempt();
+        var attempt = reopened.CreateRunStartAttempt(reopened.ActiveConfigurationId);
         var items = attempt.Plan.Items;
         Require(items.Single(item => item.Kind == PlanItemKind.MaaTask).PipelineOverride.GetRawText()
                 .Contains(SecretInputValue, StringComparison.Ordinal)
@@ -41,14 +41,16 @@ internal static partial class SelfTestRunner
                 .Contains(SecretInputValue, StringComparison.Ordinal),
             "pipeline_override 与前置程序参数必须拿到密码原文。");
         // Telemetry redacts exactly the passwords this Run uses, found through PI's inputs[].password.
+        reopened.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
         Require(attempt.RedactionValues.SequenceEqual([SecretInputValue])
-            && reopened.CreateRunStartAttempt(startupOnly: true).RedactionValues.SequenceEqual([SecretInputValue]),
+            && reopened.CreateRunStartAttempt(reopened.ActiveConfigurationId).RedactionValues
+                .SequenceEqual([SecretInputValue]),
             "Run 用到的每个非空密码（含前置任务选项）都必须列入 RedactionValues，且不重复。");
         var written = new List<LogEntry>();
         void Capture(object? sender, LogEntry entry) => written.Add(entry);
         logger.EntryWritten += Capture;
         try {
-            RunResultLog.WritePlan(logger, attempt, "配置 1", startupOnly: false);
+            RunResultLog.WritePlan(logger, attempt, "配置 1");
         } finally {
             logger.EntryWritten -= Capture;
         }
@@ -96,11 +98,12 @@ internal static partial class SelfTestRunner
         var reopened = ProjectPlanModule.Open(directory, configPath);
         var login = reopened.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == "Login");
         Require(login.Inputs.All(input => input.Value.Length == 0 && input.Error is not null)
-            && Throws<InvalidOperationException>(() => reopened.CreateRunStartAttempt()),
+            && Throws<InvalidOperationException>(() => reopened.CreateRunStartAttempt(reopened.ActiveConfigurationId)),
             "无法解密的必填密码应显示为未填写，并阻止开始运行。");
         reopened.SetInputValue("Login", "first", "renewed");
         reopened.SetInputValue("Login", "second", "renewed");
-        Require(reopened.CreateRunStartAttempt().Plan.Items.Single().PipelineOverride.GetRawText()
+        Require(reopened.CreateRunStartAttempt(reopened.ActiveConfigurationId).Plan.Items.Single()
+                .PipelineOverride.GetRawText()
                 .Contains("renewed", StringComparison.Ordinal),
             "无法解密的密码必须能逐个重新填写，填完后可以开始运行。");
     }

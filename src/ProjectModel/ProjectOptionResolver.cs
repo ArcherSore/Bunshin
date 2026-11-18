@@ -49,12 +49,6 @@ internal static class ProjectOptionResolver
         return resolvedValues;
     }
 
-    internal static void ValidateScope(
-        ProjectDefinition project, IReadOnlyList<string> optionNames, TaskConfiguration config, string scope)
-    {
-        ResolveScope(project, optionNames, config, new JsonObject(), new JsonArray(), scope);
-    }
-
     private static void ResolveScope(
         ProjectDefinition project, IReadOnlyList<string> optionNames, TaskConfiguration config,
         JsonObject resolvedValues, JsonArray? pipelineOverrides, string scope)

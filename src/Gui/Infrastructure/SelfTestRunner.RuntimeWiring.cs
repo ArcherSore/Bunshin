@@ -150,7 +150,7 @@ internal static partial class SelfTestRunner
             var windowDirectory = Path.Combine(directory, $"prepare-run-{scenario}");
             var projectDirectory = CreateProjectFixture(windowDirectory);
             var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "plan.json"));
-            var expected = project.CreateRunStartAttempt();
+            var expected = project.CreateRunStartAttempt(project.ActiveConfigurationId);
             WithFakeWorker(logger, Path.Combine(windowDirectory, "worker"), (coordinator, record, pipeName) => {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var begin = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -201,7 +201,9 @@ internal static partial class SelfTestRunner
                         File.WriteAllText(interfacePath, definition.ToJsonString());
                         InvokeOnboarding(window, "LoadProject");
                         ProjectPlanModule CurrentProject() => ProjectOf(window);
-                        CurrentProject().AddTask("SkippedTask");
+                        RunStartAttempt CurrentAttempt() =>
+                            CurrentProject().CreateRunStartAttempt(CurrentProject().ActiveConfigurationId);
+                        CurrentProject().AddItem(PlanItemKind.MaaTask, "SkippedTask");
                         // The fake admission already exists; model the editable UI before a real Prepare creates it.
                         SetOnboardingField(window, "_workerSnapshot", new WorkerCoordinatorSnapshot(
                             WorkerObservation.WorkerNotStarted, false, null, "before preparation"));
@@ -210,7 +212,7 @@ internal static partial class SelfTestRunner
                             Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel"))
                             .OfType<System.Windows.Controls.CheckBox>().Single(selection =>
                                 System.Windows.Automation.AutomationProperties.GetName(selection) == "执行 Skipped task");
-                        SetOnboardingField(window, "_pendingStartAttempt", CurrentProject().CreateRunStartAttempt());
+                        SetOnboardingField(window, "_pendingStartAttempt", CurrentAttempt());
                         var selection = SkippedSelection();
                         selection.IsChecked = false;
                         selection.RaiseEvent(new RoutedEventArgs(
@@ -228,7 +230,7 @@ internal static partial class SelfTestRunner
                             "启动并运行必须先完成环境准备和 Worker 同步。");
                         Require(requests == 0 && !ConfigurationEditable(window), "环境准备期间不得开始任务或解锁配置。");
                         Require(SkippedSelection().IsChecked == false && CurrentProject().SelectedItemCount == 2
-                            && CurrentProject().CreateRunStartAttempt().Plan.Items
+                            && CurrentAttempt().Plan.Items
                                 .All(item => item.TaskName != "SkippedTask"),
                             "准备时重载项目必须保留临时勾选，未勾选任务不得进入运行计划。");
                         // Simulate a UI notification still in the Dispatcher queue when Prepare completes.
@@ -434,8 +436,9 @@ internal static partial class SelfTestRunner
         var written = new System.Collections.Concurrent.ConcurrentQueue<LogEntry>();
         logger.EntryWritten += (_, entry) => written.Enqueue(entry);
         var planDirectory = CreateProjectFixture(Path.Combine(directory, "killed-log-plan"));
+        var planProject = ProjectPlanModule.Open(planDirectory, Path.Combine(planDirectory, "plan.json"));
         var activeRun = WorkerCoordinatorSelfTest.CreateActiveRun(
-            ProjectPlanModule.Open(planDirectory, Path.Combine(planDirectory, "plan.json")).CreateRunStartAttempt());
+            planProject.CreateRunStartAttempt(planProject.ActiveConfigurationId));
         var listed = true;
         WithFakeWorker(logger, Path.Combine(directory, "killed-log-worker"), (coordinator, record, pipeName) => {
             var pipe = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
@@ -464,8 +467,9 @@ internal static partial class SelfTestRunner
         Func<FakeWorker, CancellationToken, Task> script, Action<WorkerCoordinator> verify)
     {
         var planDirectory = CreateProjectFixture(Path.Combine(directory, "plan"));
+        var planProject = ProjectPlanModule.Open(planDirectory, Path.Combine(planDirectory, "plan.json"));
         var activeRun = WorkerCoordinatorSelfTest.CreateActiveRun(
-            ProjectPlanModule.Open(planDirectory, Path.Combine(planDirectory, "plan.json")).CreateRunStartAttempt());
+            planProject.CreateRunStartAttempt(planProject.ActiveConfigurationId));
         WithFakeWorker(logger, Path.Combine(directory, "worker"), (coordinator, record, pipeName) => {
             var close = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));

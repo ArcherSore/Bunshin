@@ -182,7 +182,8 @@ internal static partial class SelfTestRunner
             var config = File.ReadAllBytes(configPath);
             var interfacePath = Path.Combine(directory, "interface.json");
             var projectInterface = File.ReadAllBytes(interfacePath);
-            var plan = ProjectPlanModule.Open(directory, configPath).CreateRunStartAttempt().Plan;
+            var opened = ProjectPlanModule.Open(directory, configPath);
+            var plan = opened.CreateRunStartAttempt(opened.ActiveConfigurationId).Plan;
             var homeContext = ((FrameworkElement)window.FindName("HomeView")).DataContext;
             ClickOnboarding(window, "SettingsNavigationItem");
             var view = (SettingsView)window.FindName("SettingsView");
@@ -248,7 +249,8 @@ internal static partial class SelfTestRunner
             }
             window.SetExitInProgress(false);
             ClickOnboarding(window, "HomeNavigationItem");
-            var afterPlan = ProjectPlanModule.Open(directory, configPath).CreateRunStartAttempt().Plan;
+            var afterProject = ProjectPlanModule.Open(directory, configPath);
+            var afterPlan = afterProject.CreateRunStartAttempt(afterProject.ActiveConfigurationId).Plan;
             afterPlan = afterPlan with {
                 CreatedAtUtc = plan.CreatedAtUtc,
                 Items = afterPlan.Items.Select((item, index) => item with {

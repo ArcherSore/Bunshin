@@ -26,7 +26,8 @@ internal static partial class SelfTestRunner
                 }
             });
             var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "telemetry-config.json"));
-            Require(project.Tasks.Count > 0 && project.CreateRunStartAttempt().Plan.Items.Count > 0,
+            Require(project.Tasks.Count > 0
+                && project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Count > 0,
                 $"遥测配置不能影响任务加载和运行：{telemetry?.ToJsonString()}");
             return project;
         }

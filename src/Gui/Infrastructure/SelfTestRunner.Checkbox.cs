@@ -18,12 +18,13 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(directory, configPath);
         ProjectOptionEditor Option(ProjectPlanModule plan, string name) =>
             plan.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == name);
-        string[] MergeOrder() => project.CreateRunStartAttempt().Plan.Items.Single().PipelineOverride.EnumerateArray()
+        string[] MergeOrder() => project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single()
+            .PipelineOverride.EnumerateArray()
             .Where(item => item.TryGetProperty("FeatureOrder", out _))
             .Select(item => item.GetProperty("FeatureOrder").GetProperty("last").GetString()!).ToArray();
 
         var features = Option(project, "Features");
-        var resolved = project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions;
+        var resolved = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.Items.Single().ResolvedOptions;
         Require(features is { Kind: ProjectOptionKind.Checkbox, MinCount: 1, MaxCount: 2, IsExplicit: false }
             && features.SelectedCases.SequenceEqual(["Normal", "Charged"])
             && features.ActiveChildren.Single().Name == "ChargeTime"
@@ -47,7 +48,7 @@ internal static partial class SelfTestRunner
         project.SetSelectedCases("Features", []);
         Require(Option(project, "Features").IsBelowMinimum
             && Option(ProjectPlanModule.Open(directory, configPath), "Features").SelectedCases.Count == 0
-            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
+            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(project.ActiveConfigurationId)),
             "少于 min_count 的勾选可以保存，但不能开始运行。");
 
         var source = File.ReadAllText(Path.Combine(directory, "interface.json"));

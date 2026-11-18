@@ -284,9 +284,9 @@ internal static partial class SelfTestRunner
             running.RunId, plan with { Items = [
                 plan.Items[0] with { ResolvedOptions = ProtocolJson.ToElement(new { server = "公测1006" }) },
                 plan.Items[0] with { ResolvedOptions = longOption, Kind = PlanItemKind.Pretask }
-            ] }, "digest"), "配置 1", startupOnly: false);
+            ] }, "digest"), "配置 1");
         Require(written.Count == 3 && written[0].Message.StartsWith($"Run 计划 [configuration=配置 1] "
-                + $"[startupOnly=False] [runId={running.RunId}] [planDigest=digest] [items=2]")
+                + $"[runId={running.RunId}] [planDigest=digest] [items=2]")
             && written[1].Message == "→ 计划项 [index=1/2] [task=日常任务] [name=Task] [kind=MaaTask] [entry=Entry] "
                 + "[options={\"server\":\"公测1006\"}]"
             && written[2].Message.Contains("[kind=Pretask]") && written[2].Message.EndsWith("…（共 3011 字符）]"),

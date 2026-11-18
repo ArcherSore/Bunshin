@@ -36,7 +36,7 @@ internal static partial class SelfTestRunner
                 && preview.Issues(b, b.SchedulePolicies[0]).Any(issue => issue.Error),
                 "无法运行的配置应在列表和编辑区预告，原因来自开始任务的校验。");
             project.ActivateConfiguration(empty);
-            project.AddTask(project.Tasks[0].Name);
+            project.AddItem(PlanItemKind.MaaTask, project.Tasks[0].Name);
             project.ActivateConfiguration(daily);
             view.Refresh();
             preview = (SchedulePreview)Field(view, "_preview")!;
