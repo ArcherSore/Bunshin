@@ -393,9 +393,9 @@ internal static partial class SelfTestRunner
         Func<Task>? endEnvironment = null,
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         TimeProvider? scheduleClock = null, LaunchCommand? launchCommand = null,
-        System.Windows.Threading.DispatcherTimer? scheduleTimer = null)
+        System.Windows.Threading.DispatcherTimer? scheduleTimer = null, string? projectDirectory = null)
     {
-        var projectDirectory = CreateProjectFixture(directory);
+        projectDirectory ??= CreateProjectFixture(directory);
         if (!loadProject) {
             File.Delete(Path.Combine(projectDirectory, "interface.json"));
         }

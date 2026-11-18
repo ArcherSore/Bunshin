@@ -21,9 +21,9 @@ public partial class MainWindow
     // Unfixed invalid drafts block the configuration like they block Start, without saving them.
     private RunStartAttempt CreateConfigurationAttempt(ProjectPlanModule project, Guid configurationId)
     {
-        var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == configurationId)
-            .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value.Message);
-        return project.CreateRunStartAttempt(configurationId, inputErrors: drafts);
+        var drafts = _inputDrafts.Where(pair => pair.Key.Configuration == configurationId)
+            .ToDictionary(pair => (pair.Key.Option, pair.Key.Input), pair => pair.Value);
+        return project.CreateRunStartAttempt(configurationId, inputDrafts: drafts);
     }
 
     // The capsule repeats the home page's run status in four words; the console itself stays on the home page.

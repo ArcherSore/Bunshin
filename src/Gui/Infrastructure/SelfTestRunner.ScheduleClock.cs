@@ -124,6 +124,7 @@ internal static partial class SelfTestRunner
                 clock.Advance(TimeSpan.FromMinutes(1));
                 _ = window.CheckScheduledRunsAsync();
                 PumpUntil(() => preparations.Count == 1, "首份无效配置之后应开始准备下一份。");
+                project = ProjectOf(window);
                 Require(preparations.SequenceEqual([b]) && failures is [{ } failure] && failure.Contains("无任务")
                     && project.ActiveConfigurationId == b, "同刻应先报告 A 无效，再按配置列表顺序接纳 B。");
                 Require(window.ScheduleView.IsVisible && window.ConfigurationTabs.SelectedItem

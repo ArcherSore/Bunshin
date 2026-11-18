@@ -5,6 +5,120 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static void VerifyRemovedTaskRecovery(string directory)
+    {
+        var projectDirectory = CreatePretaskFixture(directory, """
+            [{"name":"GoneBoot","exec":"one"},{"name":"Boot","exec":"two","option":["ServerRange"]}]
+            """);
+        EditInterface(projectDirectory, root => {
+            foreach (var name in new[] { "Gone", "Last" }) {
+                var task = root["task"]![0]!.DeepClone();
+                task["name"] = name;
+                root["task"]!.AsArray().Add(task);
+            }
+        });
+        var path = Path.Combine(projectDirectory, "config.json");
+        var log = new List<string>();
+        ProjectPlanModule Open(ProjectPlanModule? previous = null) =>
+            ProjectPlanModule.Open(projectDirectory, path, previous, log.Add);
+        var project = Open();
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "Gone");
+        project.AddItem(Protocol.PlanItemKind.MaaTask, "Last");
+        project.MoveTask("Last", 0);
+        project.AddItem(Protocol.PlanItemKind.Pretask, "GoneBoot");
+        project.AddItem(Protocol.PlanItemKind.Pretask, "Boot");
+        project.SetInputValue("ServerRange", "server_range", "123");
+        project.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "Last", false);
+        EditInterface(projectDirectory, root => {
+            root["task"]!.AsArray().RemoveAt(1);
+            root["task"]![0]!["label"] = "新版任务名";
+            root["pretask"]!.AsArray().RemoveAt(0);
+            root["pretask"]![0]!["resource"] = new System.Text.Json.Nodes.JsonArray("Other");
+        });
+        project = Open(project);
+        Require(!project.IsItemEnabled(Protocol.PlanItemKind.MaaTask, "Last")
+            && project.Pretasks.Count == 0 && project.SelectedPretaskNames.SequenceEqual(["Boot"])
+            && project.SelectedTaskNames.SequenceEqual(["Last", "RealTask"]),
+            "清理已删除的定义必须保留任务顺序、临时禁用项、改名项和当前资源不适用的前置项。");
+        Require(log.Any(line => line.Contains("GoneBoot")) && log.Any(line => line.Contains(" Gone ")),
+            "删除原因应写入日志。");
+        log.Clear();
+        var reopened = Open();
+        Require(reopened.SelectedTaskNames.SequenceEqual(["Last", "RealTask"])
+            && reopened.SelectedPretaskNames.SequenceEqual(["Boot"])
+            && reopened.GetConfiguration("RealTask").GlobalOptions.Single().Inputs[0].Value == "123"
+            && log.Count == 0, "重开应保留清理结果和共享参数，且不再报告同一次删除。");
+    }
+
+    private static void VerifyRecoveryProjectIdentity(string directory)
+    {
+        var projectDirectory = CreateProjectFixture(directory);
+        var path = Path.Combine(projectDirectory, "config.json");
+        var project = ProjectPlanModule.Open(projectDirectory, path);
+        var source = File.ReadAllBytes(path);
+        EditInterface(projectDirectory, root => {
+            root["name"] = "DifferentProject";
+            root["task"]![0]!["name"] = "DifferentTask";
+        });
+        foreach (var previous in new ProjectPlanModule?[] { project, null }) {
+            try {
+                _ = ProjectPlanModule.Open(projectDirectory, path, previous);
+                throw new InvalidOperationException("打开其他项目时必须拒绝使用现有配置。");
+            } catch (InvalidDataException) {
+                Require(File.ReadAllBytes(path).SequenceEqual(source), "项目身份不匹配时必须保留原文件。");
+            }
+        }
+        foreach (var legacy in new[] {
+            """{"SchemaVersion":1,"SelectedTasks":["DifferentTask"],"ExplicitOptions":{}}""",
+            """{"SchemaVersion":1,"SelectedTasks":["RealTask"],"ExplicitOptions":{}}""",
+            """{"SchemaVersion":2,"Configurations":[]}"""
+        }) {
+            File.WriteAllText(path, legacy);
+            Require(Throws<InvalidDataException>(() => ProjectPlanModule.Open(projectDirectory, path))
+                && File.ReadAllText(path) == legacy, "其他项目不得加载或改写无项目标记的旧配置，即使任务同名或列表为空。");
+        }
+        File.WriteAllBytes(path, source);
+        EditInterface(projectDirectory, root => {
+            root["name"] = project.ProjectName;
+            root["task"]![0]!["option"] = new System.Text.Json.Nodes.JsonArray("MissingOption");
+        });
+        try {
+            _ = ProjectPlanModule.Open(projectDirectory, path);
+            throw new InvalidOperationException("PI 无效时必须拒绝清理。");
+        } catch (InvalidDataException) {
+            Require(File.ReadAllBytes(path).SequenceEqual(source), "PI 无效时必须保留原文件。");
+        }
+    }
+
+    private static void VerifyRecoveryRetry(AppLogger logger, string directory)
+    {
+        FileStream? held = null;
+        byte[] original = [];
+        try {
+            RunOnboardingScenario(logger, directory, (window, projectDirectory) => {
+                var path = Path.Combine(projectDirectory, "config", "configurations.json");
+                var warning = Named<System.Windows.Controls.TextBlock>(window, "ProjectValidationText");
+                Require(warning.Text.Contains("未保存") && File.ReadAllBytes(path).SequenceEqual(original),
+                    "清理遇到文件占用时，任务页应明确说明未保存并保留原文件。");
+                held!.Dispose();
+                Click(window, "RetryProjectLoadButton");
+                Require(warning.Text.Length == 0, "重试成功后应消除未保存提示。");
+                using var lockAgain = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var reopened = ProjectPlanModule.Open(projectDirectory, path);
+                Require(reopened.LoadWarning is null && reopened.SelectedTaskNames.Count == 0,
+                    "重试后重开时不应再需要清理。");
+            }, beforeLoad: projectDirectory => {
+                var path = Path.Combine(projectDirectory, "config", "configurations.json");
+                _ = ProjectPlanModule.Open(projectDirectory, path);
+                original = File.ReadAllBytes(path);
+                EditInterface(projectDirectory, root => root["task"]![0]!["name"] = "Replacement");
+                held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }, recoveryCompleted: true);
+        } finally {
+            held?.Dispose();
+        }
+    }
+
     private static void VerifyFirstConfiguration(string testDirectory, string projectDirectory)
     {
         var path = Path.Combine(testDirectory, "first-use.json");
@@ -45,6 +159,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyInvalidConfigurationIsolation(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var path = Path.Combine(testDirectory, "invalid-intent.json");
         File.WriteAllText(path, """
             {"SchemaVersion":1,"SelectedTasks":["RemovedTask","RealTask"],"ExplicitOptions":{
@@ -61,7 +176,7 @@ internal static partial class SelfTestRunner
         if (editor.GlobalOptions.Single().Inputs[0].Value != "invalid") {
             throw new InvalidOperationException("语义失效的显式参数仍应可查看，不应清空。");
         }
-        project.RemoveItem(Protocol.PlanItemKind.MaaTask, "RemovedTask");
+        Require(!project.SelectedTaskNames.Contains("RemovedTask"), "已知项目应清理迁移前已删除的任务。");
         project.SetInputValue(invalid, "ServerRange", "server_range", "978");
         _ = project.CreateRunStartAttempt(project.ActiveConfigurationId);
         project.DeleteConfiguration(invalid);
@@ -92,6 +207,7 @@ internal static partial class SelfTestRunner
             var retry = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Retry count");
+            retry.Clear();
             retry.Text = "3";
             retry.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, retry, tabs) {
@@ -203,8 +319,6 @@ internal static partial class SelfTestRunner
             .OfType<System.Windows.Controls.TextBlock>()
             .SingleOrDefault(item => item.Text == "Use ranges such as 978 or 978-1012"
                 && item.Visibility == System.Windows.Visibility.Visible);
-        bool RevealDraft() => (bool)typeof(Views.MainWindow).GetMethod("RevealInvalidParameter",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
         string SavedServer() => project.Configurations[0].ExplicitOptions["ServerRange"].GetProperty("Inputs")
             .GetProperty("server_range").GetString()!;
 
@@ -223,8 +337,8 @@ internal static partial class SelfTestRunner
         }
         InvokeOnboarding(window, "RenderTaskPlan");
         input = Server();
-        if (input.Text != "978-," || Hint() is null || !RevealDraft()) {
-            throw new InvalidOperationException("未修正的非法输入在重绘后必须保留，并阻止开始任务。");
+        if (input.Text != "978-," || Hint() is null) {
+            throw new InvalidOperationException("重绘后应保留非法输入及其提示。");
         }
         input = Server();
         using (var source = new System.Windows.Interop.HwndSource(
@@ -234,7 +348,7 @@ internal static partial class SelfTestRunner
                 RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
             });
         }
-        if (input.Text != "979" || Hint() is not null || RevealDraft()) {
+        if (input.Text != "979" || Hint() is not null) {
             throw new InvalidOperationException("Esc 必须恢复已保存值并清除字段错误。");
         }
 
@@ -295,46 +409,43 @@ internal static partial class SelfTestRunner
 
     private static void VerifyDraftSummarySync(AppLogger logger, string testDirectory)
     {
-        var projectDirectory = CreateProjectFixture(Path.Combine(testDirectory, "draft-summary"));
-        var interfacePath = Path.Combine(projectDirectory, "interface.json");
-        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(interfacePath))!;
-        json["global_option"]!.AsArray().Clear();
-        json["task"]![0]!["option"]!.AsArray().Add("ServerRange");
-        var other = json["task"]![0]!.DeepClone();
-        other["name"] = "OtherTask";
-        json["task"]!.AsArray().Add(other);
-        File.WriteAllText(interfacePath, json.ToJsonString());
-        var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
-        project.AddItem(Protocol.PlanItemKind.MaaTask, "OtherTask");
-        WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            System.Windows.Controls.TextBlock? OtherPreview(string text) => ConfigurationDescendants(items)
-                .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => Equals(tag.ToolTip, text));
+        var directory = Path.Combine(testDirectory, "draft-summary");
+        var projectDirectory = CreateProjectFixture(directory);
+        EditInterface(projectDirectory, json => {
+            json["global_option"]!.AsArray().Clear();
+            json["task"]![0]!["option"]!.AsArray().Add("ServerRange");
+            var other = json["task"]![0]!.DeepClone();
+            other["name"] = "OtherTask";
+            json["task"]!.AsArray().Add(other);
+        });
+        var path = Path.Combine(projectDirectory, "config", "configurations.json");
+        ProjectPlanModule.Open(projectDirectory, path).AddItem(Protocol.PlanItemKind.MaaTask, "OtherTask");
+        WithRuntimeControlWindow(logger, directory, window => {
+            var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            ToggleRealTask(items);
+            var other = ConfigurationDescendants(items).OfType<System.Windows.Controls.Border>()
+                .Single(card => card.Tag is ProjectTaskChoice { Name: "OtherTask" });
+            System.Windows.Controls.TextBlock? Summary(string value) => ConfigurationDescendants(other)
+                .OfType<System.Windows.Controls.TextBlock>()
+                .SingleOrDefault(tag => Equals(tag.ToolTip, $"Server range：{value}"));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
+            var saved = input.Text;
+            var savedBrush = Summary(saved)!.Foreground;
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            PumpUntil(() => input.IsLoaded, "任务卡片应加载共享参数输入框。");
+            Require(input.Focus(), "应能聚焦共享参数输入框。");
             input.Text = "978-,";
-            input.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
-                System.Windows.Input.Keyboard.PrimaryDevice, 0, input, null) {
-                RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
+            Require(input.IsKeyboardFocused && Summary(input.Text) is { } invalid && invalid.Foreground != savedBrush,
+                "输入框仍有焦点时，共享参数的非法草稿及错误标记应同步到另一张折叠卡片。");
+            input.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
+                System.Windows.PresentationSource.FromVisual(input), 0, System.Windows.Input.Key.Escape) {
+                RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
             });
-            if (OtherPreview("Server range：978-,")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
-                throw new InvalidOperationException("共享参数的非法草稿必须立即以错误色同步到其他折叠任务的预览。");
-            }
-            using (var source = new System.Windows.Interop.HwndSource(
-                new System.Windows.Interop.HwndSourceParameters("self-test"))) {
-                input.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
-                    source, 0, System.Windows.Input.Key.Escape) {
-                    RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
-                });
-            }
-            if (OtherPreview("Server range：978-1012") is not { } restored
-                || restored.Foreground == window.FindResource("Brush.Error.Foreground")
-                || !ConfigurationDescendants(items).Contains(input)) {
-                throw new InvalidOperationException("Esc 必须立即恢复其他摘要的已保存值，且不重建正在编辑的输入框。");
-            }
-        });
+            Require(input.IsKeyboardFocused && input.Text == saved && Summary(saved)?.Foreground == savedBrush,
+                "Esc 应恢复折叠卡片的已保存值和正常样式，并保留编辑焦点。");
+        }, projectDirectory: projectDirectory);
     }
 
     // Enter submits like losing focus; an unchanged value or draft is not submitted, validated or logged again.
@@ -444,6 +555,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyConfigurationFallback(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var directory = Path.Combine(testDirectory, "fallback");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "configurations.json");
@@ -477,12 +589,12 @@ internal static partial class SelfTestRunner
             }
         }
         project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
-        var backup = Directory.GetFiles(directory, "configurations.invalid-*.json").Single();
-        if (!File.ReadAllBytes(backup).SequenceEqual(invalid)) {
+        var backup = Directory.GetFiles(directory, "configurations.invalid-*.dpapi").Single();
+        if (!ReadProtectedOriginal(backup).SequenceEqual(invalid)) {
             throw new InvalidOperationException("异常备份必须保留原始 bytes。");
         }
         project.SetInputValue("ServerRange", "server_range", "978");
-        if (Directory.GetFiles(directory, "*.invalid-*.json").Length != 1) {
+        if (Directory.GetFiles(directory, "*.invalid-*.dpapi").Length != 1) {
             throw new InvalidOperationException("正常保存不得产生异常备份历史。");
         }
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
@@ -497,8 +609,9 @@ internal static partial class SelfTestRunner
         if (project.Configurations.Count != 1 || project.SelectedTaskNames.Count != 0) {
             throw new InvalidOperationException("空列表必须生成一份空配置。");
         }
+        path = Path.Combine(directory, "without-backups.json");
         foreach (var corrupt in new[] {
-            "{}", "{\"SchemaVersion\":99}", "{\"SchemaVersion\":\"2\"}",
+            "{}", "{\"SchemaVersion\":0}", "{\"SchemaVersion\":\"2\"}",
             "{\"SchemaVersion\":2,\"SchemaVersion\":2,\"Configurations\":[]}",
             "{\"SchemaVersion\":2,\"Configurations\":null}"
         }) {
@@ -513,6 +626,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyConfigurationStoreLog(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var directory = Path.Combine(testDirectory, "store-log");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "configurations.json");
@@ -551,12 +665,13 @@ internal static partial class SelfTestRunner
         Require(locked.LoadWarning is not null, "迁移保存失败应留下警告。");
         Expect("保存失败不能写成已更新");
 
+        path = Path.Combine(directory, "without-backups.json");
         File.WriteAllText(path, "{ broken");
         var project = Open();
         Require(project.LoadWarning is not null, "读取回退应留下警告，由 GUI 写入日志。");
         Expect("回退时尚未备份，不应写备份");
         project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
-        var backup = Path.GetFileName(Directory.GetFiles(directory, "configurations.invalid-*.json").Single());
+        var backup = Path.GetFileName(Directory.GetFiles(directory, "without-backups.invalid-*.dpapi").Single());
         Expect("备份应只写文件名", $"已备份无法读取的任务配置 [backup={backup}]");
     }
 
@@ -627,6 +742,7 @@ internal static partial class SelfTestRunner
 
     private static void VerifyConfigurationMigration(string testDirectory, string projectDirectory)
     {
+        EditInterface(projectDirectory, root => root["name"] = "MaaNOP");
         var path = Path.Combine(testDirectory, "migration.json");
         File.WriteAllText(path, """
             {"SchemaVersion":1,"SelectedTasks":["RealTask"],"ExplicitOptions":{
@@ -644,11 +760,10 @@ internal static partial class SelfTestRunner
         var id = configuration.GetProperty("Id").GetGuid();
         if (id == Guid.Empty || root.GetProperty("ActiveConfigurationId").GetGuid() != id
             || configuration.GetProperty("Name").GetString() != "配置 1"
-            || configuration.GetProperty("ExplicitOptions").GetProperty("OldOption")
-                .GetProperty("SelectedCase").GetString() != "Keep"
-            || project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan.ResolvedGlobalOptions
-                .GetProperty("ServerRange").GetProperty("server_range").GetString() != "978") {
-            throw new InvalidOperationException("V1 包装必须保留原始意图并激活稳定身份。");
+            || configuration.GetProperty("ExplicitOptions").TryGetProperty("OldOption", out _)
+            || project.CreateRunStartAttempt().Plan.ResolvedGlobalOptions.GetProperty("ServerRange")
+                .GetProperty("server_range").GetString() != "978") {
+            throw new InvalidOperationException("V1 迁移必须保留仍有效的意图、清理已删除的选项并激活稳定身份。");
         }
         _ = ProjectPlanModule.Open(projectDirectory, path);
         using var reopened = JsonDocument.Parse(File.ReadAllBytes(path));

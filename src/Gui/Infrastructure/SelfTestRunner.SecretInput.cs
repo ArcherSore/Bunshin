@@ -3,7 +3,6 @@ using System.Windows.Automation;
 using Gui.Models;
 using ProjectModel;
 using Protocol;
-using Gui.Views;
 using Gui.Worker;
 
 namespace Gui.Infrastructure;
@@ -59,6 +58,7 @@ internal static partial class SelfTestRunner
             "Run 计划日志不得包含密码原文。");
 
         VerifyUndecryptablePasswords(testDirectory);
+        VerifyInputMigration(testDirectory);
         var source = File.ReadAllText(Path.Combine(directory, "interface.json"));
         VerifyRejectedProjectInterface(testDirectory, source, "password-default", "不能声明 default",
             root => root["option"]!["Login"]!["inputs"]![0]!["default"] = "leaked");
@@ -113,30 +113,33 @@ internal static partial class SelfTestRunner
     private static void VerifyPasswordAndPathEditors(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "secret-input-window"), (window, _) => {
-            const System.Reflection.BindingFlags flags =
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            if (!ConfigurationDescendants(items).OfType<Wpf.Ui.Controls.PasswordBox>().Any()) {
+                ToggleRealTask(items);
+            }
             var boxes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>().ToArray();
             System.Windows.Controls.TextBox Editor(string name) =>
                 boxes.Single(box => AutomationProperties.GetName(box) == name);
             bool HasBrowse(System.Windows.Controls.TextBox editor) =>
-                ((System.Windows.Controls.Panel)editor.Parent).Children.OfType<System.Windows.Controls.Button>().Any();
+                ((System.Windows.Controls.Panel)editor.Parent).Children.OfType<System.Windows.Controls.Button>()
+                    .Any(button => AutomationProperties.GetName(button).StartsWith("选择", StringComparison.Ordinal));
             Require(HasBrowse(Editor("Paths · Launcher")) && HasBrowse(Editor("Paths · Folder")),
                 "文件与文件夹输入必须提供选择按钮。");
 
             var password = Editor("Login") as Wpf.Ui.Controls.PasswordBox;
             Require(password is not null && !HasBrowse(password), "密码字段必须使用不带选择按钮的密码框。");
-            password!.Password = SecretInputValue;
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [password, false]);
-            Require(!password.Text.Contains(SecretInputValue, StringComparison.Ordinal),
-                "密码框不得显示密码原文。");
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            PumpUntil(() => password!.IsLoaded, "任务卡片应加载密码框。");
+            Require(password!.Focus(), "密码框应可获得编辑焦点。");
+            password.Password = SecretInputValue;
+            Require(Editor("Paths · Launcher").Focus() && ProjectOf(window).GetConfiguration("RealTask")
+                .TaskOptions.Single(option => option.Name == "Login").Inputs.Single().Value == SecretInputValue
+                && !password.Text.Contains(SecretInputValue, StringComparison.Ordinal),
+                "离开密码框应保存输入，密码框不得显示密码原文。");
             SaveWindowScreenshot(window, "secret-and-path-inputs.png");
 
-            SetOnboardingField(window, "_expandedTaskName", null!);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            ToggleRealTask(items);
             var tag = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
                 .SingleOrDefault(text => Equals(text.ToolTip, $"Login：{ProjectInputEditor.PasswordMask}"));
             Require(tag is not null && tag.Text.Contains(ProjectInputEditor.PasswordMask, StringComparison.Ordinal)

@@ -6,59 +6,31 @@ namespace ProjectModel;
 
 internal static class ProjectInputValue
 {
-    // An untyped value is only verified and stays a string; pretask programs receive inputs as raw text. A default that
-    // fails verify marks a field the user must still fill in: it stays raw text, and the caller blocks Start instead.
-    internal static JsonNode Parse(InputDefinition input, string value, string context, bool typed,
-        bool isDefault = false)
+    // PI defaults may leave a required field unfilled. Editing and running both apply the complete check.
+    internal static string? Parse(InputDefinition input, string value, out JsonNode? parsed,
+        bool allowUnfilledDefault = false)
     {
-        if (!Matches(input, value, context)) {
-            return isDefault ? JsonValue.Create(value)! : throw new InvalidDataException(input.PatternMessage is null
-                ? $"{context} 未通过 verify。 " : $"{context}: {input.PatternMessage}");
-        }
-        if (!typed) {
-            return JsonValue.Create(value)!;
-        }
-        return input.PipelineKind switch {
-            PipelineValueKind.String => JsonValue.Create(value)!,
-            PipelineValueKind.Int when int.TryParse(
-                value, NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var intValue) => JsonValue.Create(intValue)!,
-            PipelineValueKind.Bool when bool.TryParse(value, out var boolValue) =>
-                JsonValue.Create(boolValue)!,
-            PipelineValueKind.Int => throw new InvalidDataException(
-                $"{context} 不是合法 int。 "),
-            PipelineValueKind.Bool => throw new InvalidDataException(
-                $"{context} 不是合法 bool。 "),
-            _ => throw new InvalidOperationException(
-                $"Loader 产生了不支持的 pipeline kind：{input.PipelineKind}。 ")
-        };
-    }
-
-    internal static bool Matches(InputDefinition input, string value, string context)
-    {
-        if (input.Verify is null) {
-            return true;
-        }
-
-        const string defaultSuffix = ".default";
-        var verifyContext = context.EndsWith(defaultSuffix, StringComparison.Ordinal)
-            ? $"{context[..^defaultSuffix.Length]}.verify"
-            : $"{context}的 verify";
-        Regex regex;
+        parsed = null;
         try {
-            regex = new Regex(input.Verify, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-        } catch (ArgumentException exception) {
-            throw new InvalidDataException(
-                $"{verifyContext} 不是合法正则表达式。",
-                exception);
+            if (input.Verify is { } regex && !regex.IsMatch(value)) {
+                return allowUnfilledDefault ? null : input.PatternMessage ?? "输入格式不符合要求，请修改后重试。";
+            }
+        } catch (RegexMatchTimeoutException) {
+            return "校验未能完成，请缩短输入后重试。";
         }
-
-        try {
-            return regex.IsMatch(value);
-        } catch (RegexMatchTimeoutException exception) {
-            throw new InvalidDataException(
-                $"{verifyContext} 执行超时。",
-                exception);
+        if (input.PipelineKind == PipelineValueKind.String) {
+            parsed = JsonValue.Create(value);
+        } else if (input.PipelineKind == PipelineValueKind.Int) {
+            if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)) {
+                return "不是合法 int，请输入整数。";
+            }
+            parsed = JsonValue.Create(number);
+        } else {
+            if (!bool.TryParse(value, out var boolean)) {
+                return "请输入 true 或 false。";
+            }
+            parsed = JsonValue.Create(boolean);
         }
+        return null;
     }
 }

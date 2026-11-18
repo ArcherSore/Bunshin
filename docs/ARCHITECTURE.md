@@ -40,12 +40,13 @@ GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的
 
 一次启动由命令行决定性质：带 `--autostart` 的是系统（登录计划任务）发起的无人值守启动，主窗口留在托盘、不弹公告和新手指引，任何 Windows Session 里已有同一程序在运行时都静默退出（登录任务也会在本程序创建的 Child Session 里触发）。
 自动执行不是新的执行路径：LaunchCommand 与应用偏好交给 AutoRunPlanner 决定是否执行、执行哪份配置，随后激活该配置并走与“准备并开始”相同的流程。
-该流程中开始前的失败写日志并以托盘通知。
-`--quit-after-run` 在开始写入请求正文时绑定开机自动执行的 Run ID，只有新鲜快照确认该 Run 的终态才退出。
+自动执行在开始前失败时写日志并以托盘通知。`--quit-after-run` 在开始写入 `run.start` 消息正文时绑定请求的 Run ID。
+启动应答丢失时保留绑定，只有新鲜 Worker Snapshot 报告同一 Run 已成功、失败或取消，GUI 才自动退出。
+手动重试这个 Run ID 时，GUI 先查询 Worker 当前的 Active Run 和 Last Run。若二者均不匹配，GUI 解除自动退出绑定，再提交手动请求。
 
 ## 任务与状态流
 
-Configuration Set 保存多份独立任务配置及激活项；它是用户意图，不是执行结果。ProjectModel 按当前 Project Interface 校验激活配置，开始时生成不可变、有序的 Run Plan。Worker Launch Context 独立确定项目与框架环境；Run Plan 只描述本次任务与参数。
+Configuration Set 保存多份独立任务配置及激活项；它是用户意图，不是执行结果。ProjectModel 按当前 Project Interface 校验本次指定的配置，开始时生成不可变、有序的 Run Plan。Worker Launch Context 独立确定项目与框架环境；Run Plan 只描述本次任务与参数。
 
 每周定时策略归属于任务配置 ID。GUI 在进程内按本地当前分钟检查策略，把已处理的配置 ID 和分钟保存在运行状态目录，供同分钟重开时去重。
 同刻命中时按配置列表顺序校验，首份获准的配置与手动、开机启动共用运行环境操作闸门。定时执行先确认旧分身及其 Worker 已退出，再准备新分身。

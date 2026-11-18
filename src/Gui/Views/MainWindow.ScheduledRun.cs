@@ -61,7 +61,7 @@ public partial class MainWindow
         ScheduledRunResult? result = null;
         if (!OperationOrExitInProgress) {
             await _environment.TryRunExclusiveAsync(async () =>
-                result = await StartScheduledRunInGateAsync(project, configurationId, name, policyTime));
+                result = await StartScheduledRunInGateAsync(configurationId, name, policyTime));
         }
         result ??= new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
         if (result.Disposition == ScheduledRunDisposition.Busy) {
@@ -72,7 +72,7 @@ public partial class MainWindow
     }
 
     private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(
-        ProjectPlanModule? project, Guid configurationId, string name, string? policyTime)
+        Guid configurationId, string name, string? policyTime)
     {
         if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker) {
             return new(ScheduledRunDisposition.Busy, Reason: blocker);
@@ -82,18 +82,23 @@ public partial class MainWindow
         if (_environment.Closing || _environment.EndUnconfirmed) {
             return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
         }
-        if (project is null || project.ConfigurationsUnreadable) {
+        if (SaveEditor() is { } failure) {
+            return failure;
+        }
+        try {
+            LoadProject();
+        } catch (Exception exception) {
+            var detail = ProjectEmptyStateDetailText.Text;
+            ReportScheduledStartFailure(name, detail, exception);
+            return new(ScheduledRunDisposition.Failed, Reason: detail);
+        }
+        var project = RequireProject();
+        if (project.ConfigurationsUnreadable) {
             const string detail = "无法读取任务配置。";
             ReportScheduledStartFailure(name, detail);
             return new(ScheduledRunDisposition.Failed, Reason: detail);
         }
-        var active = configurationId == project.ActiveConfigurationId;
-        if (active) {
-            if (SaveEditor() is { } failure) {
-                return failure;
-            }
-            name = ActiveConfigurationName;
-        }
+        name = project.Configurations.FirstOrDefault(item => item.Id == configurationId)?.Name ?? name;
         RunStartAttempt attempt;
         try {
             attempt = CreateConfigurationAttempt(project, configurationId);
@@ -104,9 +109,6 @@ public partial class MainWindow
             return new(ScheduledRunDisposition.Invalid, Reason: exception.Message);
         }
 
-        if (!active && SaveEditor() is { } saveFailure) {
-            return saveFailure;
-        }
         if (_environment.ScheduledRunBlocker(out _, out var hadSession) is { } changed) {
             return new(ScheduledRunDisposition.Busy, Reason: changed);
         }
@@ -128,7 +130,7 @@ public partial class MainWindow
                 AddScheduleActivity("已关闭旧的桌面分身");
             }
             if (!_exitInProgress && !_environment.Closing) {
-                await PrepareProjectEnvironmentAsync(project, showDesktop: false);
+                await PrepareCurrentEnvironmentAsync();
                 if (await WaitForRunStartAsync()) {
                     var worker = _workerCoordinator.Snapshot.WorkerSnapshot
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
@@ -169,7 +171,7 @@ public partial class MainWindow
         ScheduledRunResult? SaveEditor()
         {
             try {
-                CommitFocusedConfigurationInput(unattended: true);
+                CommitFocusedConfigurationInput(deferDraftCheck: true, unattended: true);
                 return null;
             } catch (Exception error) {
                 var reason = $"无法保存配置「{ActiveConfigurationName}」";

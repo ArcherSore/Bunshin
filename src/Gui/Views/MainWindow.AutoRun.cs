@@ -1,5 +1,4 @@
 using Gui.Infrastructure;
-using ProjectModel;
 using Gui.Worker;
 
 namespace Gui.Views;
@@ -23,17 +22,17 @@ public partial class MainWindow
     // starts the Run, as the Start button does. Returns whether it did.
     internal async Task<bool> AutoRunOnLaunchAsync()
     {
-        if (_projectPlan is not { } project) {
-            return false;
-        }
         // The list is a placeholder then, so nothing can be matched; say so instead of skipping silently. Asked for
         // means what Decide would look up: --instance only with --autostart, otherwise the chosen configuration.
-        var requested = _launchCommand is { AutoStart: true, Instance: not null }
-            || _settings.AutoRunConfigurationId is not null;
-        if (project.ConfigurationsUnreadable && requested
-            && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
-            ReportAutoRunFailure("无法读取任务配置文件，请检查后重试。");
-            return true;
+        var project = _projectPlan;
+        if (project is null || project.ConfigurationsUnreadable) {
+            var requested = _launchCommand is { AutoStart: true, Instance: not null }
+                || _settings.AutoRunConfigurationId is not null;
+            if (requested && (_launchCommand.AutoStart || _settings.AutoRunOnManualLaunch.Value)) {
+                ReportAutoRunFailure(project?.LoadWarning ?? ProjectEmptyStateDetailText.Text);
+                return true;
+            }
+            return false;
         }
         var canStart = AutoRunPlanner.RuntimeAllows(CurrentControls);
         var decision = AutoRunPlanner.Decide(
@@ -45,36 +44,9 @@ public partial class MainWindow
             }
             return false;
         }
-        var entered = await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
-        if (!entered) {
-            _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
-        }
-        await ObserveScheduledRunAsync();
-        return entered;
-    }
-
-    private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)
-    {
-        // A refusal is reported by the change itself: the other configuration must never be run instead.
-        if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
-            return;
-        }
-        if (project.EnabledItems.Count == 0) {
-            ReportAutoRunFailure("所选配置没有可执行的任务。");
-            return;
-        }
-        if (!_projectConfigurationValid) {
-            ReportAutoRunFailure("所选配置未通过校验，请打开程序检查参数。");
-            return;
-        }
-        _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
-        if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunWindowOperationAsync(PendingOperation.StartingRun,
-                () => StartCurrentPlanAsync(quitAfterRun: _quitAfterRun), unattended: true);
-        } else {
-            await RunWindowOperationAsync(PendingOperation.PreparingEnvironment,
-                () => PrepareCurrentEnvironmentAsync(startRun: true, quitAfterRun: _quitAfterRun), unattended: true);
-        }
+        var direct = CurrentControls.Action is RuntimeAction.Start
+            or RuntimeAction.Retry { Target: RetryTarget.Start };
+        return await RunFromPanelAsync(prepare: !direct, automaticConfiguration: id);
     }
 
     // Loaded starts everything and needs a shown window, so the window is shown and hidden before it is ever drawn,
@@ -89,8 +61,12 @@ public partial class MainWindow
         ShowActivated = true;
     }
 
-    private void ReportAutoRunFailure(string message) =>
-        ReportUnattendedFailure("自动执行", new InvalidOperationException(message));
+    private void ReportAutoRunFailure(string message)
+    {
+        var reason = $"自动执行：{message}";
+        _logger.Warn(reason);
+        NotificationRequested?.Invoke(this, new("自动执行未能完成", reason, true));
+    }
 
     private void ReportUnattendedFailure(string operation, Exception exception)
     {

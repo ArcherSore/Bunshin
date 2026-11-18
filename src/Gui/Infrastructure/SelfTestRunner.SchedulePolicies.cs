@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using ProjectModel;
 
 namespace Gui.Infrastructure;
@@ -9,7 +12,8 @@ internal static partial class SelfTestRunner
         var path = Path.Combine(testDirectory, "schedule-policies.json");
         var a = Guid.NewGuid();
         File.WriteAllText(path, $$"""
-            {"SchemaVersion":3,"ActiveConfigurationId":"{{a}}","Configurations":[{"Id":"{{a}}","Name":"A"}]}
+            {"SchemaVersion":3,"ProjectName":"SelfTestProject","ActiveConfigurationId":"{{a}}",
+             "Configurations":[{"Id":"{{a}}","Name":"A"}]}
             """);
         var project = ProjectPlanModule.Open(projectDirectory, path);
         if (project.ActiveConfigurationId != a || project.GetSchedulePolicies(a).Count != 0) {
@@ -43,8 +47,22 @@ internal static partial class SelfTestRunner
         }
         reopened.DeleteSchedulePolicy(a, weekend.Id);
         reopened.UpdateSchedulePolicy(a, policy with { Enabled = true });
+        var legacyBackup = JsonNode.Parse(File.ReadAllText(path))!;
+        legacyBackup["SchemaVersion"] = 3;
+        foreach (var configuration in legacyBackup["Configurations"]!.AsArray()) {
+            configuration!.AsObject().Remove("DisabledItems");
+        }
+        var bytes = Encoding.UTF8.GetBytes(legacyBackup.ToJsonString());
+        File.WriteAllBytes(path + ".bak", ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser));
+        File.WriteAllText(path, "{");
         reopened = ProjectPlanModule.Open(projectDirectory, path);
         var remaining = reopened.GetSchedulePolicies(a).Single();
+        Require(reopened.ActiveConfigurationId == b && reopened.LoadWarning is not null
+            && (int?)JsonNode.Parse(File.ReadAllText(path))!["SchemaVersion"] == ConfigurationSet.CurrentSchemaVersion
+            && !reopened.ConfigurationsUnreadable && remaining.Name == "工作日早晚"
+            && remaining.Days.ToHashSet().SetEquals(workdays) && remaining.Times.SequenceEqual([morning, night])
+            && ProjectPlanModule.Open(projectDirectory, path).GetSchedulePolicies(a).Single().Id == added.Id,
+            "配置 B 激活时，从备份恢复必须保留 A 的策略身份、星期和时间，并写回主配置。");
         if (!remaining.Enabled || remaining.Id != added.Id || reopened.GetSchedulePolicies(b).Count != 0) {
             throw new InvalidOperationException("删除策略和重新启用另一条策略后，应只留下配置 A 的工作日策略。");
         }
@@ -60,7 +78,7 @@ internal static partial class SelfTestRunner
         var invalidDay = policy.Replace("[1]", "[7]");
         foreach (var invalid in new[] { "null", "[null]", $"[{policy},{policy}]", $"[{invalidDay}]" }) {
             var json = $$"""
-                {"SchemaVersion":3,"ActiveConfigurationId":"{{id}}","Configurations":[
+                {"SchemaVersion":3,"ProjectName":"SelfTestProject","ActiveConfigurationId":"{{id}}","Configurations":[
                     {"Id":"{{id}}","Name":"原配置","SchedulePolicies":{{invalid}}}]}
                 """;
             File.WriteAllText(path, json);

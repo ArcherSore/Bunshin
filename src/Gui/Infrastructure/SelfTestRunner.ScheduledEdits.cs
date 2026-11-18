@@ -32,6 +32,7 @@ internal static partial class SelfTestRunner
             {
                 var start = window.TryStartScheduledRunAsync(target);
                 PumpUntil(() => start.IsCompleted, "定时配置校验和模拟准备必须返回。");
+                project = ProjectOf(window);
                 return start.Result.Disposition;
             }
             Require(Start(other) == ScheduledRunDisposition.Admitted && project.ActiveConfigurationId == other,
@@ -60,6 +61,29 @@ internal static partial class SelfTestRunner
             definition["task"]!.AsArray().Add(plain);
             File.WriteAllText(file, definition.ToJsonString());
         }, prepareEnvironment: (_, _, _) => throw new InvalidOperationException("模拟准备到此结束"));
+
+        var prepared = false;
+        RunOnboardingScenario(logger, Path.Combine(directory, "updated-target"), (window, projectDirectory) => {
+            CompleteOnboardingStartup(window);
+            EndTour(window);
+            var project = ProjectOf(window);
+            var a = project.ActiveConfigurationId;
+            project.SetInputValue("Recipient", "recipient", "old");
+            var b = project.CreateConfiguration();
+            project.AddItem(PlanItemKind.MaaTask, "RealTask");
+            project.SetInputValue("Recipient", "recipient", "new");
+            EditInterface(projectDirectory, root => {
+                root["option"]!["Recipient"]!["inputs"]![0]!["verify"] = "^new$";
+            });
+            var run = window.TryStartScheduledRunAsync(a);
+            PumpUntil(() => run.IsCompleted, "资源更新后应按目标配置重新校验。");
+            Require(run.Result.Disposition == ScheduledRunDisposition.Invalid
+                && ProjectOf(window).ActiveConfigurationId == b && !prepared,
+                "活动配置 B 的参数有效时，A 在新版规则下失效的参数仍必须阻止定时启动并保留 B。");
+        }, beforeLoad: AddRequiredInput, prepareEnvironment: (_, _, _) => {
+            prepared = true;
+            throw new InvalidOperationException("模拟准备结束");
+        });
 
         foreach (var rename in new[] { false, true }) {
             var clock = new ScheduleTestClock();
@@ -103,11 +127,13 @@ internal static partial class SelfTestRunner
                     FileMode.Open, FileAccess.Read, FileShare.Read)) {
                     clock.Advance(TimeSpan.FromMinutes(1));
                     window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
-                    Require(project.ActiveConfigurationId == id && failures.Count == 1 && failures[0].Contains("日常"),
+                    Require(ProjectOf(window).ActiveConfigurationId == id && failures is [{ } failure]
+                        && failure.Contains("日常"),
                         "保存当前配置失败时应保留编辑并只提醒一次，同刻的其余配置不能重试。");
                 }
                 var next = window.TryStartScheduledRunAsync(target);
                 PumpUntil(() => next.IsCompleted, "配置恢复可写后，仍在编辑的值应能保存并用于本次启动。");
+                project = ProjectOf(window);
                 Require(next.Result.Disposition == ScheduledRunDisposition.Admitted && (rename
                     ? project.Configurations.Single(c => c.Id == id).Name == "changed"
                     : project.CreateRunStartAttempt(id).Plan.Items.Single().PipelineOverride.GetRawText()

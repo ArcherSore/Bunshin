@@ -14,8 +14,7 @@ public sealed partial class ProjectPlanModule
     {
         var preset = _project.Presets.SingleOrDefault(item => item.Name == presetName)
             ?? throw new ArgumentException($"预设不存在：{presetName}。", nameof(presetName));
-        // A preset starts from project defaults; nothing is taken from the current configuration. A configuration
-        // cannot persist an unchecked item, so a disabled item is left out together with its options.
+        // Presets contribute enabled, applicable items and their options to the project defaults.
         var values = new PresetValues();
         var tasks = new List<string>();
         foreach (var item in preset.Tasks) {
@@ -37,30 +36,35 @@ public sealed partial class ProjectPlanModule
         }
         var options = values.GroupBy(pair => pair.Key.Option).ToDictionary(group => group.Key, group =>
             _project.Options[group.Key] switch {
-                { Kind: OptionDefinitionKind.Input } option => ExplicitOptionIntent.CreateInputs(option,
+                { Kind: ProjectOptionKind.Input } option => ExplicitOptionIntent.CreateInputs(option,
                     group.ToDictionary(pair => pair.Key.Field!, pair => pair.Value)),
-                { Kind: OptionDefinitionKind.Checkbox } => ExplicitOptionIntent.CreateSelectedCases(
+                { Kind: ProjectOptionKind.Checkbox } => ExplicitOptionIntent.CreateSelectedCases(
                     JsonSerializer.Deserialize<string[]>(group.Single().Value)!),
-                _ => ExplicitOptionIntent.CreateSelectedCase(group.Single().Value)
+                var option => ExplicitOptionIntent.CreateSelectedCase(option, group.Single().Value)
             }, StringComparer.Ordinal);
         var configuration = new TaskConfiguration {
             Id = Guid.NewGuid(), Name = preset.Label, SelectedTasks = tasks, SelectedPretasks = pretasks,
             ExplicitOptions = options
         };
-        // Values are checked here as for any edit, so only their shape is read above.
-        ValidateActiveConfiguration(configuration);
+        // A preset can leave defaults unfilled. Only its explicit inputs must be valid in the selected branches.
+        var fields = SelectedItemsOf(configuration)
+            .SelectMany(item => BuildConfiguration(configuration, item.Name, item.Kind).ActiveOptions)
+            .SelectMany(row => row.Option.Inputs);
+        if (fields.FirstOrDefault(input => input.IsExplicit && input.Error is not null) is { } invalid) {
+            throw new InvalidDataException($"预设字段“{invalid.Label}”：{invalid.Error}");
+        }
         return AddConfiguration(configuration);
     }
 
     private void ReadPresetOptions(PresetItem item, IEnumerable<string> roots, PresetValues values)
     {
-        var allowed = ProjectInterfaceLoader.CollectOptionNames(roots, _project.Options);
+        var allowed = CollectOptionNames(roots);
         foreach (var property in item.Options.EnumerateObject()) {
             if (!allowed.Contains(property.Name)) {
                 throw new InvalidDataException($"预设任务 {item.Name} 引用了不属于该任务的选项 {property.Name}。");
             }
             var definition = _project.Options[property.Name];
-            if (definition.Kind == OptionDefinitionKind.Checkbox) {
+            if (definition.Kind == ProjectOptionKind.Checkbox) {
                 // Stored in declaration order like SetSelectedCases, so equal selections compare equal.
                 var names = property.Value.ValueKind == JsonValueKind.Array
                     && property.Value.EnumerateArray().All(item => item.ValueKind == JsonValueKind.String)
@@ -71,7 +75,7 @@ public sealed partial class ProjectPlanModule
                     throw new InvalidDataException($"预设 checkbox {property.Name} 必须是不重复、已定义且不超过上限的 case.name 数组。");
                 }
                 AddPresetValue(values, (property.Name, null), JsonSerializer.Serialize(ordered));
-            } else if (definition.Kind != OptionDefinitionKind.Input) {
+            } else if (definition.Kind != ProjectOptionKind.Input) {
                 if (property.Value.ValueKind != JsonValueKind.String
                     || !definition.Cases.Any(value => value.Name == property.Value.GetString())) {
                     throw new InvalidDataException($"预设选项 {property.Name} 必须是已定义的 case.name 字符串。");
@@ -89,6 +93,20 @@ public sealed partial class ProjectPlanModule
                 }
             }
         }
+    }
+
+    private HashSet<string> CollectOptionNames(IEnumerable<string> roots)
+    {
+        var allowed = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>(roots);
+        while (pending.TryPop(out var name)) {
+            if (allowed.Add(name)) {
+                foreach (var nested in _project.Options[name].Cases.SelectMany(item => item.Options)) {
+                    pending.Push(nested);
+                }
+            }
+        }
+        return allowed;
     }
 
     // Configurations share option values by name. Never silently change a different task's preset value.

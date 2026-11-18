@@ -439,7 +439,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             throw;
         } catch {
             // Worker handles requests in wire order. This read, or the snapshot on reconnect, follows run.start.
-            _ = RefreshSnapshotAsync(attempt.RunId);
+            _ = TryRefreshSnapshotAsync(attempt.RunId);
             throw;
         }
     }
@@ -813,7 +813,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
                 });
-                _ = Task.Run(() => RefreshSnapshotAsync());
+                _ = Task.Run(() => TryRefreshSnapshotAsync());
                 revisionGapFrom = currentRevision;
             } else {
                 ValidateSnapshot(state.Snapshot, admission);
@@ -831,20 +831,32 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
     }
 
-    private async Task RefreshSnapshotAsync(Guid? reconciledStart = null)
+    private async Task TryRefreshSnapshotAsync(Guid? reconciledStart = null)
     {
         try {
-            WorkerAdmissionRecord admission;
-            ProtocolConnection connection;
-            lock (_gate) {
-                connection = _connection ?? throw new InvalidOperationException("Worker IPC 尚未连接。");
-                admission = _admission ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
-            }
-            var response = await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection);
-            ApplyFreshSnapshot(response.Snapshot, admission, connection, reconciledStart);
+            await RefreshSnapshotAsync(reconciledStart);
         } catch (Exception exception) {
             _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
+        }
+    }
+
+    internal async Task<WorkerSnapshot> RefreshSnapshotAsync(Guid? reconciledStart = null)
+    {
+        WorkerAdmissionRecord admission;
+        ProtocolConnection connection;
+        lock (_gate) {
+            connection = _connection ?? throw new InvalidOperationException("Worker IPC 尚未连接。");
+            admission = _admission ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。");
+        }
+        var response = await SendRequestAsync<object, GetSnapshotResponse>(
+            ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection);
+        ApplyFreshSnapshot(response.Snapshot, admission, connection, reconciledStart);
+        lock (_gate) {
+            if (!ReferenceEquals(connection, _connection) || !Snapshot.SnapshotFresh
+                || Snapshot.WorkerSnapshot is not { } current) {
+                throw new ProtocolException("刷新 Snapshot 时 Worker 连接已改变。");
+            }
+            return current;
         }
     }
 

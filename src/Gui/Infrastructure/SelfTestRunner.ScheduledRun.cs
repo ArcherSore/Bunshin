@@ -21,7 +21,8 @@ internal static partial class SelfTestRunner
             var failures = new List<string>();
             window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
             var result = window.TryStartScheduledRunAsync(weekly.Id).GetAwaiter().GetResult();
-            Require(result.Disposition == ScheduledRunDisposition.Invalid && project.ActiveConfigurationId == before
+            Require(result.Disposition == ScheduledRunDisposition.Invalid
+                && ProjectOf(window).ActiveConfigurationId == before
                 && failures.Single() == $"定时任务未能启动 / 「{weekly.Name}」：执行计划为空", "无效定时配置应通知原因并保留原配置。");
         }, beforeLoad: TwoConfigurations(weeklyHasTask: false));
 
@@ -43,7 +44,7 @@ internal static partial class SelfTestRunner
             var run = window.TryStartScheduledRunAsync(target);
             PumpUntil(() => run.IsCompleted, "旧分身清理未确认时应结束本轮。");
             Require(run.Result.Disposition == ScheduledRunDisposition.Admitted
-                && project.ActiveConfigurationId == target && !prepared
+                && ProjectOf(window).ActiveConfigurationId == target && !prepared
                 && wts.LogoffAttempts.SequenceEqual([7u])
                 && !window.IsVisible && window.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
                     { Tag: Guid selected } && selected == target
