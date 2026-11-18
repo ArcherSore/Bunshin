@@ -199,9 +199,12 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 HorizontalContentAlignment = System.Windows.HorizontalAlignment.Stretch,
                 Style = (Style)FindResource("SubtleButtonStyle"), Margin = new Thickness(0, 0, 0, 2),
                 BorderThickness = new Thickness(selected ? 3 : 0, 0, 0, 0),
-                BorderBrush = new SolidColorBrush(ColorOf(index)),
-                Background = selected ? (WpfBrush)FindResource("Brush.Primary.Surface") : WpfBrushes.Transparent
+                BorderBrush = new SolidColorBrush(ColorOf(index))
             };
+            // Only the selected row sets its background, so the others keep the style's hover feedback.
+            if (selected) {
+                button.Background = (WpfBrush)FindResource("Brush.Primary.Surface");
+            }
             AutomationProperties.SetName(button, $"{configuration.Name}，{text}");
             button.Click += (_, _) => {
                 _focus = configuration.Id;
@@ -294,15 +297,9 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             PolicyBar.Children.Add(chip);
         }
         var add = new WpfButton {
-            Height = 30, Padding = new Thickness(8, 0, 10, 0), Style = (Style)FindResource("SubtleButtonStyle"),
-            FontWeight = FontWeights.Normal,
-            Content = new StackPanel {
-                Orientation = WpfOrientation.Horizontal,
-                Children = {
-                    new SymbolIcon { Symbol = SymbolRegular.Add16, FontSize = 14, Margin = new Thickness(0, 0, 4, 0) },
-                    new WpfTextBlock { Text = "新建", VerticalAlignment = VerticalAlignment.Center }
-                }
-            }
+            Style = (Style)FindResource("NeutralIconButtonStyle"), Width = 30, Height = 30, MinWidth = 30,
+            MinHeight = 30, Cursor = System.Windows.Input.Cursors.Hand, ToolTip = "新建定时",
+            Content = new SymbolIcon { Symbol = SymbolRegular.Add16, FontSize = 15 }
         };
         AutomationProperties.SetName(add, "新建定时");
         add.Click += (_, _) => AddPolicy(focus, "定时 " + (focus.SchedulePolicies.Count + 1), null, null);
