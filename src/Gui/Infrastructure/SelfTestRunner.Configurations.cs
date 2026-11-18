@@ -5,6 +5,110 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static void VerifyRemovedTaskRecovery(string directory)
+    {
+        var projectDirectory = CreatePretaskFixture(directory, """
+            [{"name":"GoneBoot","exec":"one"},{"name":"Boot","exec":"two","option":["ServerRange"]}]
+            """);
+        EditInterface(projectDirectory, root => {
+            foreach (var name in new[] { "Gone", "Last" }) {
+                var task = root["task"]![0]!.DeepClone();
+                task["name"] = name;
+                root["task"]!.AsArray().Add(task);
+            }
+        });
+        var path = Path.Combine(projectDirectory, "config.json");
+        var log = new List<string>();
+        ProjectPlanModule Open(ProjectPlanModule? previous = null) =>
+            ProjectPlanModule.Open(projectDirectory, path, previous, log.Add);
+        var project = Open();
+        project.AddTask("Gone");
+        project.AddTask("Last");
+        project.MoveTask("Last", 0);
+        project.AddPretask("GoneBoot");
+        project.AddPretask("Boot");
+        project.SetInputValue("ServerRange", "server_range", "123");
+        project.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "Last", false);
+        EditInterface(projectDirectory, root => {
+            root["task"]!.AsArray().RemoveAt(1);
+            root["task"]![0]!["label"] = "新版任务名";
+            root["pretask"]!.AsArray().RemoveAt(0);
+            root["pretask"]![0]!["resource"] = new System.Text.Json.Nodes.JsonArray("Other");
+        });
+        project = Open(project);
+        Require(!project.IsItemEnabled(Protocol.PlanItemKind.MaaTask, "Last")
+            && project.Pretasks.Count == 0 && project.SelectedPretaskNames.SequenceEqual(["Boot"])
+            && project.SelectedTaskNames.SequenceEqual(["Last", "RealTask"]),
+            "清理已删除的定义必须保留任务顺序、临时禁用项、改名项和当前资源不适用的前置项。");
+        Require(log.Any(line => line.Contains("GoneBoot")) && log.Any(line => line.Contains(" Gone ")),
+            "删除原因应写入日志。");
+        log.Clear();
+        var reopened = Open();
+        Require(reopened.SelectedTaskNames.SequenceEqual(["Last", "RealTask"])
+            && reopened.SelectedPretaskNames.SequenceEqual(["Boot"])
+            && reopened.GetConfiguration("RealTask").GlobalOptions.Single().Inputs[0].Value == "123"
+            && log.Count == 0, "重开应保留清理结果和共享参数，且不再报告同一次删除。");
+    }
+
+    private static void VerifyRecoveryProjectIdentity(string directory)
+    {
+        var projectDirectory = CreateProjectFixture(directory);
+        var path = Path.Combine(projectDirectory, "config.json");
+        var project = ProjectPlanModule.Open(projectDirectory, path);
+        var source = File.ReadAllBytes(path);
+        EditInterface(projectDirectory, root => {
+            root["name"] = "DifferentProject";
+            root["task"]![0]!["name"] = "DifferentTask";
+        });
+        foreach (var previous in new ProjectPlanModule?[] { project, null }) {
+            try {
+                _ = ProjectPlanModule.Open(projectDirectory, path, previous);
+                throw new InvalidOperationException("打开其他项目时必须拒绝使用现有配置。");
+            } catch (InvalidDataException) {
+                Require(File.ReadAllBytes(path).SequenceEqual(source), "项目身份不匹配时必须保留原文件。");
+            }
+        }
+        EditInterface(projectDirectory, root => {
+            root["name"] = project.ProjectName;
+            root["task"]![0]!["option"] = new System.Text.Json.Nodes.JsonArray("MissingOption");
+        });
+        try {
+            _ = ProjectPlanModule.Open(projectDirectory, path);
+            throw new InvalidOperationException("PI 无效时必须拒绝清理。");
+        } catch (InvalidDataException) {
+            Require(File.ReadAllBytes(path).SequenceEqual(source), "PI 无效时必须保留原文件。");
+        }
+    }
+
+    private static void VerifyRecoveryRetry(AppLogger logger, string directory)
+    {
+        FileStream? held = null;
+        byte[] original = [];
+        try {
+            RunOnboardingScenario(logger, directory, (window, projectDirectory) => {
+                var path = Path.Combine(projectDirectory, "config", "configurations.json");
+                var warning = Named<System.Windows.Controls.TextBlock>(window, "ProjectValidationText");
+                Require(warning.Text.Contains("未保存") && File.ReadAllBytes(path).SequenceEqual(original),
+                    "清理遇到文件占用时，任务页应明确说明未保存并保留原文件。");
+                held!.Dispose();
+                Click(window, "RetryProjectLoadButton");
+                Require(warning.Text.Length == 0, "重试成功后应消除未保存提示。");
+                using var lockAgain = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var reopened = ProjectPlanModule.Open(projectDirectory, path);
+                Require(reopened.LoadWarning is null && reopened.SelectedTaskNames.Count == 0,
+                    "重试后重开时不应再需要清理。");
+            }, beforeLoad: projectDirectory => {
+                var path = Path.Combine(projectDirectory, "config", "configurations.json");
+                _ = ProjectPlanModule.Open(projectDirectory, path);
+                original = File.ReadAllBytes(path);
+                EditInterface(projectDirectory, root => root["task"]![0]!["name"] = "Replacement");
+                held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }, recoveryCompleted: true);
+        } finally {
+            held?.Dispose();
+        }
+    }
+
     private static void VerifyFirstConfiguration(string testDirectory, string projectDirectory)
     {
         var path = Path.Combine(testDirectory, "first-use.json");
@@ -92,6 +196,7 @@ internal static partial class SelfTestRunner
             var retry = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Retry count");
+            retry.Clear();
             retry.Text = "3";
             retry.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, retry, tabs) {

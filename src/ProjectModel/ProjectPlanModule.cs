@@ -25,6 +25,7 @@ public sealed partial class ProjectPlanModule
     private readonly Action<string>? _log;
     private ConfigurationSet _config;
     private string? _initializationWarning;
+    private Exception? _initializationException;
     private readonly HashSet<(Guid Configuration, PlanItemKind Kind, string Name)> _disabledItems = [];
 
     private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore, Action<string>? log)
@@ -40,13 +41,14 @@ public sealed partial class ProjectPlanModule
             .Select(item => new ProjectTaskChoice(item.Name, item.Label, item.Description) {
                 Kind = PlanItemKind.Pretask
             }).ToArray();
-        _config = configStore.Load();
+        _config = configStore.Load(project);
         if (configStore.WasMissing) {
             try {
                 AddTask(Tasks[0].Name);
                 InitializedTaskName = Tasks[0].Name;
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
-                _initializationWarning = $"无法保存首次默认任务，已提供空配置。{exception.Message}";
+                _initializationWarning = "首次默认任务未保存，已显示空配置。请检查目录写入权限后重新加载。";
+                _initializationException = exception;
             }
         }
     }
@@ -114,6 +116,7 @@ public sealed partial class ProjectPlanModule
     }
     public IReadOnlyList<string> SelectedTaskNames => LoadConfig().SelectedTasks;
     public Guid ActiveConfigurationId => _config.ActiveConfigurationId;
+    public Exception? LoadException => _initializationException ?? _configStore.LoadException;
     public string? LoadWarning => _initializationWarning ?? _configStore.LoadWarning;
     // The file could not be read, so Configurations is a placeholder until the first save.
     public bool ConfigurationsUnreadable => _configStore.Unreadable;
@@ -166,6 +169,9 @@ public sealed partial class ProjectPlanModule
         Action<string>? log = null)
     {
         var project = ProjectInterfaceLoader.Load(projectDirectory);
+        if (previous is not null && previous.ProjectName != project.Provenance.Name) {
+            throw new InvalidDataException("项目身份已改变。请恢复原项目的资源包后重试，原配置已保留。");
+        }
         var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log), log);
         if (previous is not null) {
             module._reportedCaseRecoveries.UnionWith(previous._reportedCaseRecoveries);
@@ -308,6 +314,32 @@ public sealed partial class ProjectPlanModule
         return BuildConfiguration(updated);
     }
 
+    public void RestoreOptionDefault(Guid configurationId, string optionName, string? inputName = null)
+    {
+        var option = FindOption(optionName);
+        var config = FindConfiguration(configurationId);
+        if ((option.Kind == OptionDefinitionKind.Input) != (inputName is not null)
+            || inputName is not null && option.Inputs.All(input => input.Name != inputName)) {
+            throw new ArgumentException($"无法恢复 {optionName} 的指定字段。", nameof(inputName));
+        }
+        if (!config.ExplicitOptions.TryGetValue(optionName, out var current)) {
+            return;
+        }
+
+        JsonElement? remaining = null;
+        if (inputName is not null) {
+            // Keep sibling fields exactly as saved, including encrypted passwords.
+            var inputs = current.GetProperty("Inputs").Deserialize<System.Text.Json.Nodes.JsonObject>()!;
+            if (!inputs.Remove(inputName)) {
+                return;
+            }
+            if (inputs.Count > 0) {
+                remaining = JsonSerializer.SerializeToElement(new { Inputs = inputs });
+            }
+        }
+        SaveConfiguration(ReplaceExplicit(config, optionName, remaining));
+    }
+
     public ProjectConfigurationView SetSelectedCase(string optionName, string selectedCase)
         => SetSelectedCase(ActiveConfigurationId, optionName, selectedCase);
 
@@ -441,9 +473,11 @@ public sealed partial class ProjectPlanModule
 
     private void SaveConfig(ConfigurationSet config)
     {
+        config = config with { ProjectName = ProjectName };
         _configStore.Save(config);
         _config = config;
         _initializationWarning = null;
+        _initializationException = null;
     }
 
     private void ValidateActiveConfiguration(TaskConfiguration config)
@@ -605,10 +639,14 @@ public sealed partial class ProjectPlanModule
         _project.Options.GetValueOrDefault(optionName)
         ?? throw new ArgumentException($"PI 中不存在 option：{optionName}。", nameof(optionName));
 
-    private static TaskConfiguration ReplaceExplicit(TaskConfiguration config, string optionName, JsonElement value)
+    private static TaskConfiguration ReplaceExplicit(TaskConfiguration config, string optionName, JsonElement? value)
     {
         var values = config.ExplicitOptions.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        values[optionName] = value;
+        if (value is { } intent) {
+            values[optionName] = intent;
+        } else {
+            values.Remove(optionName);
+        }
         return config with { ExplicitOptions = values };
     }
 }

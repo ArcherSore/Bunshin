@@ -120,7 +120,8 @@ internal static partial class SelfTestRunner
             System.Windows.Controls.TextBox Editor(string name) =>
                 boxes.Single(box => AutomationProperties.GetName(box) == name);
             bool HasBrowse(System.Windows.Controls.TextBox editor) =>
-                ((System.Windows.Controls.Panel)editor.Parent).Children.OfType<System.Windows.Controls.Button>().Any();
+                ((System.Windows.Controls.Panel)editor.Parent).Children.OfType<System.Windows.Controls.Button>()
+                    .Any(button => AutomationProperties.GetName(button).StartsWith("选择", StringComparison.Ordinal));
             Require(HasBrowse(Editor("Paths · Launcher")) && HasBrowse(Editor("Paths · Folder")),
                 "文件与文件夹输入必须提供选择按钮。");
 
