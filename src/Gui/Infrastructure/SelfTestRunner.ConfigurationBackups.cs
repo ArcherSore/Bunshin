@@ -7,6 +7,9 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static byte[] ReadProtectedOriginal(string path) =>
+        ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
+
     private static void VerifyConfigurationBackups(string testDirectory, string projectDirectory)
     {
         var directory = Directory.CreateDirectory(Path.Combine(testDirectory, "backups")).FullName;
@@ -16,6 +19,15 @@ internal static partial class SelfTestRunner
         ProjectPlanModule Open() => ProjectPlanModule.Open(projectDirectory, path);
         var project = Open();
         var id = project.ActiveConfigurationId;
+        File.Delete(newest);
+        var unchanged = File.ReadAllBytes(path);
+        using (var held = File.OpenRead(path)) {
+            Require(Open().LoadWarning is null && File.Exists(newest), "已有主配置首次加载时应生成可用备份。");
+        }
+        var firstSnapshot = File.ReadAllBytes(newest);
+        Require(Open().ActiveConfigurationId == id && File.ReadAllBytes(newest).SequenceEqual(firstSnapshot)
+            && File.ReadAllBytes(path).SequenceEqual(unchanged) && !File.Exists(older),
+            "再次打开同一配置不得覆盖可用备份、轮换旧备份或改写主配置。");
         project.RenameConfiguration(id, "older");
         project.RenameConfiguration(id, "latest");
         const string damage = "{ lost original";
@@ -24,11 +36,19 @@ internal static partial class SelfTestRunner
         Require(!project.ConfigurationsUnreadable && project.ActiveConfigurationId == id
             && project.Configurations.Single().Name == "latest"
             && project.LoadWarning!.Contains(Path.GetFileName(newest))
-            && Open().LoadWarning is null && Directory.GetFiles(directory, "*.invalid-*.json")
-                .Select(File.ReadAllText).SequenceEqual([damage]),
+            && Open().LoadWarning is null
+            && ReadProtectedOriginal(Directory.GetFiles(directory, "*.invalid-*.dpapi").Single())
+                .SequenceEqual(Encoding.UTF8.GetBytes(damage)),
             "同项目最新备份应恢复配置及其身份，说明来源并写回，且损坏原件仍可检查。");
 
         var latestJson = File.ReadAllText(path);
+        var future = JsonNode.Parse(latestJson)!;
+        future["SchemaVersion"] = ConfigurationSet.CurrentSchemaVersion + 1;
+        var futureBytes = Encoding.UTF8.GetBytes(future.ToJsonString());
+        File.WriteAllBytes(path, futureBytes);
+        Require(Throws<UnsupportedConfigurationVersionException>(() => Open())
+            && File.ReadAllBytes(path).SequenceEqual(futureBytes),
+            "较新版本的主文件必须提示升级；即使有本项目备份，也不得回退或覆盖主文件。");
         var secondBytes = File.ReadAllBytes(older);
         foreach (var change in new Action<JsonNode>[] {
             json => json["SchemaVersion"] = 99,
@@ -78,5 +98,25 @@ internal static partial class SelfTestRunner
         project = Open();
         Require(project.ConfigurationsUnreadable && project.SelectedTaskNames.Count == 0
             && project.LoadWarning is not null && File.ReadAllText(path) == damage, "两份备份均不可用时，保留损坏的主文件并提示用户处理。");
+
+        var upgraded = CreateProjectFixture(Path.Combine(testDirectory, "damaged-password-upgrade"));
+        AddSecretAndPathInputs(upgraded);
+        var saved = Path.Combine(upgraded, "before-upgrade.json");
+        EditInterface(upgraded, root => root["option"]!["Login"]!["inputs"]![0]!["password"] = false);
+        project = ProjectPlanModule.Open(upgraded, saved);
+        project.SetInputValue("Login", "password", SecretInputValue);
+        var damaged = JsonNode.Parse(File.ReadAllText(saved))!;
+        damaged["Configurations"]![0]!["Name"] = null;
+        var damagedBytes = Encoding.UTF8.GetBytes(damaged.ToJsonString());
+        File.WriteAllBytes(saved, damagedBytes);
+        EditInterface(upgraded, root => root["option"]!["Login"]!["inputs"]![0]!["password"] = true);
+        var recovered = ProjectPlanModule.Open(upgraded, saved);
+        var archive = Directory.GetFiles(upgraded, "before-upgrade.invalid-*.dpapi").Single();
+        var login = recovered.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == "Login");
+        Require(login.Inputs.Single().Value == SecretInputValue && !recovered.ConfigurationsUnreadable
+            && ReadProtectedOriginal(archive).SequenceEqual(damagedBytes)
+            && Directory.GetFiles(upgraded, "before-upgrade*").All(file =>
+                File.ReadAllBytes(file).AsSpan().IndexOf(Encoding.UTF8.GetBytes(SecretInputValue)) < 0),
+            "字段改为密码且主文件损坏时，应恢复密码并加密保留全部原始字节，配置和所有备份均不得暴露原文。");
     }
 }

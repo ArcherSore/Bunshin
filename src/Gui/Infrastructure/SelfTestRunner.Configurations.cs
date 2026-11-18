@@ -585,12 +585,12 @@ internal static partial class SelfTestRunner
             }
         }
         project.AddTask("RealTask");
-        var backup = Directory.GetFiles(directory, "configurations.invalid-*.json").Single();
-        if (!File.ReadAllBytes(backup).SequenceEqual(invalid)) {
+        var backup = Directory.GetFiles(directory, "configurations.invalid-*.dpapi").Single();
+        if (!ReadProtectedOriginal(backup).SequenceEqual(invalid)) {
             throw new InvalidOperationException("异常备份必须保留原始 bytes。");
         }
         project.SetInputValue("ServerRange", "server_range", "978");
-        if (Directory.GetFiles(directory, "*.invalid-*.json").Length != 1) {
+        if (Directory.GetFiles(directory, "*.invalid-*.dpapi").Length != 1) {
             throw new InvalidOperationException("正常保存不得产生异常备份历史。");
         }
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
@@ -607,7 +607,7 @@ internal static partial class SelfTestRunner
         }
         path = Path.Combine(directory, "without-backups.json");
         foreach (var corrupt in new[] {
-            "{}", "{\"SchemaVersion\":99}", "{\"SchemaVersion\":\"2\"}",
+            "{}", "{\"SchemaVersion\":0}", "{\"SchemaVersion\":\"2\"}",
             "{\"SchemaVersion\":2,\"SchemaVersion\":2,\"Configurations\":[]}",
             "{\"SchemaVersion\":2,\"Configurations\":null}"
         }) {
@@ -667,7 +667,7 @@ internal static partial class SelfTestRunner
         Require(project.LoadWarning is not null, "读取回退应留下警告，由 GUI 写入日志。");
         Expect("回退时尚未备份，不应写备份");
         project.AddTask("RealTask");
-        var backup = Path.GetFileName(Directory.GetFiles(directory, "without-backups.invalid-*.json").Single());
+        var backup = Path.GetFileName(Directory.GetFiles(directory, "without-backups.invalid-*.dpapi").Single());
         Expect("备份应只写文件名", $"已备份无法读取的任务配置 [backup={backup}]");
     }
 

@@ -77,7 +77,7 @@ internal static partial class SelfTestRunner
         task["label"] = "$first";
         pi["global_option"] = new JsonArray();
         task["option"] = new JsonArray("ServerRange");
-        pi["task"]!.AsArray().Add(new JsonObject { ["name"] = "Other", ["entry"] = "Other" });
+        pi["task"]!.AsArray().Add(new JsonObject { ["name"] = "Other", ["entry"] = "Other", ["label"] = " " });
         pi["languages"] = new JsonObject { ["zh_cn"] = "labels.json" };
         pi["option"]!["ServerRange"]!["label"] = "$range";
         var input = pi["option"]!["ServerRange"]!["inputs"]![0]!;
@@ -105,8 +105,9 @@ internal static partial class SelfTestRunner
         File.WriteAllText(path, pi.ToJsonString());
         var logs = new List<string>();
         project = ProjectPlanModule.Open(directory, config, project, logs.Add);
-        Require(project.CreateRunStartAttempt().Plan.Items.Single().TaskName == "Other"
+        Require(project.CreateRunStartAttempt().Plan.Items.Single() is { TaskName: "Other", TaskLabel: "Other" }
             && project.SelectedPretaskNames.Contains("Boot")
+            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(startupOnly: true))
             && logs.Any(message => message.Contains("启动大厅") && message.Contains("资源")),
             "暂不适用的前置项保留在配置中，并说明本次跳过的原因。");
     }

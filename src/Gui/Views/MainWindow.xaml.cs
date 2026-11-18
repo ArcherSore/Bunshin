@@ -2209,9 +2209,11 @@ public partial class MainWindow : FluentWindow
             }
             project = ProjectPlanModule.Open(_applicationDirectory, configPath, previous,
                 message => _logger.Info(message));
-        } catch {
+        } catch (Exception exception) {
             _projectBeforeLoadFailure = previous;
-            ShowProjectUnavailableState("项目无法加载", "任务无法运行。请确认安装的是与任务配置对应的完整资源包，再重新加载。");
+            var guidance = exception is UnsupportedConfigurationVersionException ? exception.Message
+                : "任务无法运行。请确认安装的是与任务配置对应的完整资源包，再重新加载。";
+            ShowProjectUnavailableState("项目无法加载", guidance);
             ProjectValidationText.Text = "任务无法运行，原配置已保留。详细原因已记录到日志。";
             ProjectValidationBorder.Visibility = RetryProjectLoadButton.Visibility = Visibility.Visible;
             RefreshRuntimeControls();

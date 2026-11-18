@@ -342,9 +342,9 @@ internal static partial class ProjectInterfaceLoader
                     $"{FormatOptionKind(kind)} option {path} 不能声明 pipeline_override；请放到对应 case 中。 ");
             }
             var checkbox = kind == OptionDefinitionKind.Checkbox;
+            var label = DisplayText(option, "label", translations, keepEmpty: kind == OptionDefinitionKind.Input);
             result.Add(property.Name, new OptionDefinition(
-                property.Name,
-                DisplayText(option, "label", translations) ?? property.Name,
+                property.Name, label ?? property.Name,
                 ReadDisplayString(option, "description") ?? string.Empty,
                 kind, checkbox ? null : OptionalString(option, "default_case"),
                 checkbox ? ReadStringArray(option, "default_case", required: false, path) : [],
@@ -691,10 +691,10 @@ internal static partial class ProjectInterfaceLoader
         }
     }
 
-    private static string? DisplayText(JsonElement obj, string key, JsonElement translations)
+    private static string? DisplayText(JsonElement obj, string key, JsonElement translations, bool keepEmpty = false)
     {
         var message = ReadDisplayString(obj, key)?.Trim();
-        if (key == "label" && message == string.Empty) {
+        if (keepEmpty && message == string.Empty) {
             return string.Empty;
         }
         if (message?.StartsWith('$') == true) {

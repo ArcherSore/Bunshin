@@ -25,6 +25,11 @@ public sealed record TaskConfiguration
         new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 }
 
+public sealed class UnsupportedConfigurationVersionException(int version) : NotSupportedException(
+    $"任务配置使用较新的格式（版本 {version}），原文件已保留。请更新 Bunshin 后重新加载。")
+{
+}
+
 internal sealed class ConfigurationSetStore
 {
     private static readonly JsonDocumentOptions DocumentOptions = new() { AllowDuplicateProperties = false };
@@ -132,8 +137,10 @@ internal sealed class ConfigurationSetStore
                 }
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
                 LoadException = exception;
-                LoadWarning = (recovered ?? "任务配置已加载") + "，更新结果未保存。请检查文件占用和目录写入权限后重新加载。";
+                LoadWarning = (recovered ?? "任务配置已加载") + "，更新结果未保存。请检查文件占用、目录写入权限和当前 Windows 用户账户后重新加载。";
             }
+        } else {
+            UpdateRecentBackup(config);
         }
         return config;
     }
@@ -150,6 +157,9 @@ internal sealed class ConfigurationSetStore
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("SchemaVersion", out var version)
             || version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var schema)) {
             throw new InvalidDataException("任务配置缺少合法的 SchemaVersion。");
+        }
+        if (schema > ConfigurationSet.CurrentSchemaVersion) {
+            throw new UnsupportedConfigurationVersionException(schema);
         }
         if (schema != ConfigurationSet.CurrentSchemaVersion) {
             changes.Add($"SchemaVersion {schema} -> {ConfigurationSet.CurrentSchemaVersion}");
@@ -221,12 +231,11 @@ internal sealed class ConfigurationSetStore
         Validate(config);
         var directory = Path.GetDirectoryName(_path)!;
         Directory.CreateDirectory(directory);
-        var invalid = _protectOriginal ? Path.Combine(directory,
-            $"{Path.GetFileNameWithoutExtension(_path)}.invalid-{Guid.NewGuid():N}.json") : null;
         var data = JsonSerializer.SerializeToUtf8Bytes(config, JsonOptions);
-        WriteAtomic(_path, data, invalid);
-        if (invalid is not null) {
-            _log?.Invoke($"已备份无法读取的任务配置 [backup={Path.GetFileName(invalid)}]");
+        if (_protectOriginal) {
+            PreserveAndReplaceUnreadable(data);
+        } else {
+            WriteAtomic(_path, data, null);
         }
         _protectOriginal = false;
         Unreadable = false;
@@ -237,18 +246,51 @@ internal sealed class ConfigurationSetStore
             _pendingChanges = null;
         }
         if (refreshBackup) {
-            try {
-                // Protect the whole snapshot: a later PI may reclassify any previously plain input as a password.
-                var protectedData = ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser);
-                var previous = ReadBackup(RecentBackup, config.ProjectName!, out _) is null
-                    ? null : RecentBackup + ".2";
-                WriteAtomic(RecentBackup, protectedData, previous);
-            } catch (Exception exception) when (IsReadFailure(exception)) {
-                LoadException = exception;
-                LoadWarning = "任务配置已保存，但最近备份未更新。请检查配置目录权限和 Windows 用户账户后再次保存。";
-                _log?.Invoke(LoadWarning);
-            }
+            UpdateRecentBackup(config, data);
         }
+    }
+
+    // With no new save, seed only a missing or unusable snapshot of an existing primary.
+    private void UpdateRecentBackup(ConfigurationSet config, byte[]? savedData = null)
+    {
+        try {
+            var hasRecent = ReadBackup(RecentBackup, config.ProjectName!, out _) is not null;
+            if (hasRecent && savedData is null) {
+                return;
+            }
+            // A later PI may reclassify any previously plain input as a password.
+            var data = savedData ?? JsonSerializer.SerializeToUtf8Bytes(config, JsonOptions);
+            var protectedData = ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser);
+            WriteAtomic(RecentBackup, protectedData, hasRecent ? RecentBackup + ".2" : null);
+        } catch (Exception exception) when (IsReadFailure(exception)) {
+            LoadException = exception;
+            LoadWarning = "任务配置已保存，但最近备份未更新。请检查配置目录权限和 Windows 用户账户后再次保存。";
+            _log?.Invoke(LoadWarning);
+        }
+    }
+
+    private void PreserveAndReplaceUnreadable(byte[] data)
+    {
+        var backup = Path.Combine(Path.GetDirectoryName(_path)!,
+            $"{Path.GetFileNameWithoutExtension(_path)}.invalid-{Guid.NewGuid():N}.dpapi");
+        // Keep the bytes stable until replacement. The original may contain a newly designated password.
+        using var original = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+        var bytes = new byte[checked((int)original.Length)];
+        original.ReadExactly(bytes);
+        try {
+            WriteAtomic(backup, ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser), null);
+        } catch (CryptographicException exception) {
+            throw new IOException("无法加密保存损坏的原配置。请检查当前 Windows 用户账户后重试。", exception);
+        } finally {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
+        try {
+            WriteAtomic(_path, data, null);
+        } catch {
+            File.Delete(backup);
+            throw;
+        }
+        _log?.Invoke($"已备份无法读取的任务配置 [backup={Path.GetFileName(backup)}]");
     }
 
     private static void WriteAtomic(string path, byte[] data, string? previous)

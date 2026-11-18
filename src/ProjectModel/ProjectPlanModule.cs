@@ -406,6 +406,9 @@ public sealed partial class ProjectPlanModule
         }
         RequireRunnableOptions(config);
         ValidateActiveConfiguration(config);
+        if (config.SelectedTasks.Count == 0 && !SelectedPretaskDefinitions(config).Any()) {
+            throw new InvalidOperationException(SkippedPretaskMessage ?? "请先勾选要执行的任务或前置任务。");
+        }
 
         var passwords = new HashSet<string>(StringComparer.Ordinal);
         var resolvedItems = config.SelectedTasks.Select(taskName => {
