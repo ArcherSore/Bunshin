@@ -83,7 +83,7 @@ internal sealed class RuntimeEnvironment
                 return null;
             }
             return !awaitingStart && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-                WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, WorkerState: WorkerState.Ready
+                WorkerSnapshot: { ActiveRun: null, WorkerState: WorkerState.Ready
                     or WorkerState.NotReady } worker } && worker.ChildSessionId == sessionId
                 ? null : $"Worker 或桌面分身尚未确认空闲（{current.Detail}）";
         } catch (Exception exception) {
@@ -102,7 +102,7 @@ internal sealed class RuntimeEnvironment
         var (current, awaitingStart) = _coordinator.ReadRunObservation();
         return !Closing && !EndUnconfirmed && !awaitingStart
             && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-                WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, LastRun: { State: RunState.Succeeded } last,
+                WorkerSnapshot: { ActiveRun: null, LastRun: { State: RunState.Succeeded } last,
                     WorkerState: WorkerState.Ready or WorkerState.NotReady } idle }
             && idle.WorkerInstanceId == workerId && last.RunId == runId && sessionId == idle.ChildSessionId;
     }

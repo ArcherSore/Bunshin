@@ -194,7 +194,8 @@ internal static partial class WorkerCoordinatorSelfTest
     internal static async Task<ProtocolConnection> OpenConnectionAsync(
         string pipeName, WorkerAdmissionRecord record, long lastLogSequence,
         CancellationToken cancellationToken, RunSnapshot? activeRun = null,
-        WorkerState initialState = WorkerState.Ready, long stateRevision = 1, RunSnapshot? lastRun = null)
+        WorkerState initialState = WorkerState.Ready, RunSnapshot? lastRun = null, long stateRevision = 1,
+        Action<Stream>? connected = null)
     {
         var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
@@ -220,9 +221,10 @@ internal static partial class WorkerCoordinatorSelfTest
                 WireEnvelope.Response(
                     ProtocolOperations.WorkerGetSnapshot, snapshotRequest.RequestId!.Value,
                     new GetSnapshotResponse(CreateSnapshot(record, lastLogSequence, activeRun) with {
-                        WorkerState = initialState, StateRevision = stateRevision, LastRun = lastRun
+                        WorkerState = initialState, LastRun = lastRun, StateRevision = stateRevision
                     })),
                 cancellationToken);
+            connected?.Invoke(pipe);
             return connection;
         } catch {
             await pipe.DisposeAsync();
@@ -278,11 +280,18 @@ internal static partial class WorkerCoordinatorSelfTest
         WireEnvelope.Event(ProtocolOperations.LogEntry, new LogEntryEvent(workerInstanceId, entry));
 
     internal static async Task<WireEnvelope> ReadRequestAsync(
-        ProtocolConnection connection, string operation, CancellationToken cancellationToken)
+        ProtocolConnection connection, string operation, CancellationToken cancellationToken,
+        WorkerSnapshot? currentSnapshot = null)
     {
         while (true) {
             var request = await connection.ReadAsync(cancellationToken)
                           ?? throw new EndOfStreamException($"等待 {operation} 时 Pipe 已关闭。 ");
+            if (currentSnapshot is not null && request is { Operation: ProtocolOperations.WorkerGetSnapshot,
+                RequestId: { } snapshotId } && operation != ProtocolOperations.WorkerGetSnapshot) {
+                await connection.WriteAsync(WireEnvelope.Response(request.Operation, snapshotId,
+                    new GetSnapshotResponse(currentSnapshot)), cancellationToken);
+                continue;
+            }
             // The GUI synchronises the debug switches whenever it likes; no scenario here is about that ordering.
             if (request is { Operation: ProtocolOperations.FrameworkSetOptions, RequestId: { } optionsId }
                 && operation != ProtocolOperations.FrameworkSetOptions) {

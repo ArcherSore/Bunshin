@@ -392,7 +392,8 @@ internal static partial class SelfTestRunner
         Func<Func<Task>, Task>? runOperation = null, bool loadProject = true, RuntimeEnvironment? environment = null,
         Func<Task>? endEnvironment = null,
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
-        TimeProvider? scheduleClock = null, LaunchCommand? launchCommand = null)
+        TimeProvider? scheduleClock = null, LaunchCommand? launchCommand = null,
+        System.Windows.Threading.DispatcherTimer? scheduleTimer = null)
     {
         var projectDirectory = CreateProjectFixture(directory);
         if (!loadProject) {
@@ -413,7 +414,7 @@ internal static partial class SelfTestRunner
             environment ?? WindowEnvironment(logger, windowSession, windowCoordinator, runOperation),
             () => Task.CompletedTask, endEnvironment ?? (() => Task.CompletedTask), _ => Task.CompletedTask,
             projectDirectory, prepareEnvironment: prepareEnvironment, autostart: InertAutostart(),
-            scheduleClock: scheduleClock, launchCommand: launchCommand);
+            scheduleClock: scheduleClock, launchCommand: launchCommand, scheduleTimer: scheduleTimer);
         var application = System.Windows.Application.Current;
         var shutdown = application.ShutdownMode;
         application.ShutdownMode = ShutdownMode.OnExplicitShutdown;

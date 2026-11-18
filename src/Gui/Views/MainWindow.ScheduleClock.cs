@@ -1,29 +1,24 @@
 using System.Text.Json;
+using System.Windows.Threading;
 
 namespace Gui.Views;
 
 public partial class MainWindow
 {
     private readonly TimeProvider _scheduleClock;
-    private ITimer? _scheduleTimer;
+    private readonly DispatcherTimer _scheduleTimer;
     private DateTime _lastCheckedMinute;
     private readonly HashSet<Guid> _checkedConfigurations = [];
-    private int _tickQueued;
     private bool _selectingSchedule;
 
     private void StartScheduleClock()
     {
-        if (_scheduleTimer is not null || _allowClose) {
+        if (_scheduleTimer.IsEnabled || _allowClose) {
             return;
         }
-        _scheduleTimer = _scheduleClock.CreateTimer(_ => {
-            if (Interlocked.Exchange(ref _tickQueued, 1) == 0) {
-                Dispatcher.InvokeAsync(() => {
-                    Interlocked.Exchange(ref _tickQueued, 0);
-                    return CheckScheduledRunsAsync();
-                });
-            }
-        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+        _scheduleTimer.Tick += (_, _) => _ = CheckScheduledRunsAsync();
+        _scheduleTimer.Start();
+        _ = Dispatcher.InvokeAsync(CheckScheduledRunsAsync);
     }
 
     private DateTime CurrentScheduleMinute()
@@ -35,7 +30,7 @@ public partial class MainWindow
     // The host calls this on the GUI dispatcher when the window becomes visible or gains focus.
     internal async Task CheckScheduledRunsAsync()
     {
-        if (_scheduleTimer is null || _projectPlan is not { } project) {
+        if (!_scheduleTimer.IsEnabled || _projectPlan is not { } project) {
             return;
         }
         var minute = CurrentScheduleMinute();
@@ -69,7 +64,7 @@ public partial class MainWindow
         string? skip = ownsSelection ? null : "另一次定时检查正在启动任务";
         try {
             foreach (var configuration in due.Where(c => claimed.Contains(c.Id))) {
-                if (_scheduleTimer is null) {
+                if (!_scheduleTimer.IsEnabled) {
                     return;
                 }
                 if (skip is null && CurrentScheduleMinute() != minute) {
@@ -83,6 +78,7 @@ public partial class MainWindow
                     var result = await TryStartScheduledRunAsync(configuration.Id);
                     skip = result.Disposition switch {
                         ScheduledRunDisposition.Admitted => $"同刻的配置“{configuration.Name}”已获准启动",
+                        ScheduledRunDisposition.Failed => result.Reason,
                         ScheduledRunDisposition.Busy => result.Reason ?? "运行环境已被占用",
                         _ => null
                     };

@@ -50,6 +50,8 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyLaunchHelp), _ => VerifyLaunchHelp()),
         new(Group.Support, nameof(VerifyHelpOutput), _ => VerifyHelpOutput()),
         new(Group.Support, nameof(VerifyQuitAfterRunTracker), _ => VerifyQuitAfterRunTracker()),
+        new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
+            c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyStartupSettings), c => VerifyStartupSettings(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledEdits), c => VerifyScheduledEdits(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledRun), c => VerifyScheduledRun(c.Logger, c.Directory)),

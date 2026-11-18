@@ -62,6 +62,7 @@ internal static partial class SelfTestRunner
         }, prepareEnvironment: (_, _, _) => throw new InvalidOperationException("模拟准备到此结束"));
 
         foreach (var rename in new[] { false, true }) {
+            var clock = new ScheduleTestClock();
             RunOnboardingScenario(logger, Path.Combine(directory, $"locked-{rename}"), (window, projectDirectory) => {
                 CompleteOnboardingStartup(window);
                 EndTour(window);
@@ -71,6 +72,11 @@ internal static partial class SelfTestRunner
                 project.AddTask("RealTask");
                 project.SetInputValue("Recipient", "recipient", "target");
                 project.RenameConfiguration(target, "目标");
+                project.AddSchedulePolicy(target, "工作日");
+                var second = project.CreateConfiguration();
+                project.AddTask("RealTask");
+                project.SetInputValue("Recipient", "recipient", "other");
+                project.AddSchedulePolicy(second, "同刻");
                 project.ActivateConfiguration(id);
                 project.RenameConfiguration(id, "日常");
                 project.SetInputValue("Recipient", "recipient", "saved");
@@ -95,10 +101,10 @@ internal static partial class SelfTestRunner
                 window.AutoRunFailed += (_, message) => failures.Add(message);
                 using (File.Open(Path.Combine(projectDirectory, "config", "configurations.json"),
                     FileMode.Open, FileAccess.Read, FileShare.Read)) {
-                    var start = window.TryStartScheduledRunAsync(target);
-                    Require(start.IsCompletedSuccessfully && start.Result.Disposition == ScheduledRunDisposition.Invalid
-                        && project.ActiveConfigurationId == id && failures.Count == 1 && failures[0].Contains("目标"),
-                        "离开当前配置前保存失败应保留编辑并提醒。");
+                    clock.Advance(TimeSpan.FromMinutes(1));
+                    window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
+                    Require(project.ActiveConfigurationId == id && failures.Count == 1 && failures[0].Contains("日常"),
+                        "保存当前配置失败时应保留编辑并只提醒一次，同刻的其余配置不能重试。");
                 }
                 var next = window.TryStartScheduledRunAsync(target);
                 PumpUntil(() => next.IsCompleted, "配置恢复可写后，仍在编辑的值应能保存并用于本次启动。");
@@ -106,7 +112,7 @@ internal static partial class SelfTestRunner
                     ? project.Configurations.Single(c => c.Id == id).Name == "changed"
                     : project.CreateRunStartAttempt(id).Plan.Items.Single().PipelineOverride.GetRawText()
                         .Contains("changed")), "保存恢复后应使用用户当前的编辑值。");
-            }, beforeLoad: AddRequiredInput,
+            }, beforeLoad: AddRequiredInput, scheduleClock: clock,
                 prepareEnvironment: (_, _, _) => throw new InvalidOperationException("模拟准备结束"));
         }
     }

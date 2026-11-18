@@ -131,10 +131,13 @@ public partial class MainWindow : FluentWindow
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
-        GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null)
+        GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null, QuitAfterRunTracker? quitAfterRun = null,
+        DispatcherTimer? scheduleTimer = null)
     {
         _launchCommand = launchCommand ?? new LaunchCommand();
+        _quitAfterRun = quitAfterRun;
         _scheduleClock = scheduleClock ?? TimeProvider.System;
+        _scheduleTimer = scheduleTimer ?? new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         InitializeComponent();
         _runLog = new RunLogFeed(LogLines, MaximumGuiLogEntries);
         DataContext = this;
@@ -294,8 +297,7 @@ public partial class MainWindow : FluentWindow
             RemoveModalWindowHook();
             RemoveConfigurationWheelHook();
             _runTimer.Stop();
-            _scheduleTimer?.Dispose();
-            _scheduleTimer = null;
+            _scheduleTimer.Stop();
             RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;
@@ -568,18 +570,27 @@ public partial class MainWindow : FluentWindow
             () => PrepareCurrentEnvironmentAsync(startRun, startupOnly, showDesktop), unattended);
     }
 
-    private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool startupOnly = false, bool showDesktop = false)
+    private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool startupOnly = false, bool showDesktop = false,
+        QuitAfterRunTracker? quitAfterRun = null)
+    {
+        await PrepareProjectEnvironmentAsync(project: null, showDesktop);
+        if (startRun && !_exitInProgress && !_environment.Closing && await WaitForRunStartAsync()) {
+            await StartCurrentPlanAsync(startupOnly, quitAfterRun);
+        }
+    }
+
+    private async Task PrepareProjectEnvironmentAsync(ProjectPlanModule? project, bool showDesktop)
     {
         _environmentPreparationFailed = false;
         try {
-            LoadProject();
-            await _prepareEnvironment(RequireProject(), _settings.CreateFrameworkOptions, showDesktop);
+            if (project is null) {
+                LoadProject();
+                project = RequireProject();
+            }
+            await _prepareEnvironment(project, _settings.CreateFrameworkOptions, showDesktop);
         } catch {
             _environmentPreparationFailed = true;
             throw;
-        }
-        if (startRun && !_exitInProgress && !_environment.Closing && await WaitForRunStartAsync()) {
-            await StartCurrentPlanAsync(startupOnly);
         }
     }
 
@@ -632,7 +643,7 @@ public partial class MainWindow : FluentWindow
     }
 
     // Called only while the application operation gate is held, after preparation or a direct Start.
-    private async Task StartCurrentPlanAsync(bool startupOnly = false)
+    private async Task StartCurrentPlanAsync(bool startupOnly = false, QuitAfterRunTracker? quitAfterRun = null)
     {
         // The operation may wait behind another one, so the session is checked again when it runs.
         if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
@@ -648,23 +659,35 @@ public partial class MainWindow : FluentWindow
             _pendingStartAttempt = null;
         }
         _pendingStartupOnly = startupOnly;
-        _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
+        var attempt = _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
+        if (quitAfterRun is null && _quitAfterRun?.IsWaitingFor(attempt.RunId) == true) {
+            // A retry reuses its Run ID. Only replay once the original start was ruled out.
+            var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
+            if (current is not { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } w }
+                || awaitingStart) {
+                return;
+            }
+            if (w.ActiveRun?.RunId == attempt.RunId || w.LastRun?.RunId == attempt.RunId) {
+                _pendingStartAttempt = null;
+                return;
+            }
+            _quitAfterRun.Abandon();
+        }
         try {
-            await SubmitRunAsync(_pendingStartAttempt, ActiveConfigurationName, startupOnly);
-        } catch (Exception exception)
-            when (exception is not (WorkerProtocolErrorException or InvalidOperationException)) {
-            _unconfirmedRunId = _pendingStartAttempt.RunId;
+            await SubmitRunAsync(attempt, ActiveConfigurationName, startupOnly,
+                onSending: quitAfterRun is null ? null : () => quitAfterRun.Await(attempt.RunId));
+        } catch (WorkerProtocolErrorException) {
+            quitAfterRun?.Abandon();
             throw;
         }
         _pendingStartAttempt = null;
-        _runAccepted = true;
     }
 
-    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, bool startupOnly)
+    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, bool startupOnly, Action? onSending = null)
     {
         RunResultLog.WritePlan(_logger, attempt, name, startupOnly);
         _telemetry.Register(attempt.RedactionValues);
-        var response = await _workerCoordinator.StartRunAsync(attempt);
+        var response = await _workerCoordinator.StartRunAsync(attempt, onSending: onSending);
         if (response.Disposition is not ("accepted" or "already_accepted")) {
             throw new InvalidDataException($"未知 run.start disposition：{response.Disposition}。 ");
         }

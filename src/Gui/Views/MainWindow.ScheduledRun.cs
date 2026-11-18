@@ -4,7 +4,7 @@ using Protocol;
 
 namespace Gui.Views;
 
-internal enum ScheduledRunDisposition { Invalid, Busy, Admitted }
+internal enum ScheduledRunDisposition { Invalid, Busy, Failed, Admitted }
 
 internal sealed record ScheduledRunResult(
     Guid ConfigurationId, ScheduledRunDisposition Disposition, Guid? RunId = null, string? Reason = null);
@@ -13,6 +13,7 @@ public partial class MainWindow
 {
     private sealed record ScheduledSubmission(Guid ConfigurationId, string Name, Guid WorkerId, Guid RunId)
     {
+        public bool AwaitingConfirmation { get; set; }
         public bool CompletionReported { get; set; }
     }
 
@@ -52,32 +53,36 @@ public partial class MainWindow
         if (_environment.Closing || _environment.EndUnconfirmed) {
             return new(configurationId, ScheduledRunDisposition.Busy, Reason: "运行环境正在退出或结束未确认");
         }
+        if (project is null || project.ConfigurationsUnreadable) {
+            const string detail = "无法读取任务配置。";
+            ReportUnattendedFailure($"定时执行“{name}”失败", new InvalidOperationException(detail));
+            return new(configurationId, ScheduledRunDisposition.Failed, Reason: detail);
+        }
+        var active = configurationId == project.ActiveConfigurationId;
+        if (active) {
+            if (SaveEditor() is { } failure) {
+                return failure;
+            }
+            name = ActiveConfigurationName;
+        }
         RunStartAttempt attempt;
         try {
-            if (project is null || project.ConfigurationsUnreadable) {
-                throw new InvalidOperationException("无法读取任务配置。");
-            }
-            // Commit an active editor before resolving its saved values.
-            if (configurationId == project.ActiveConfigurationId) {
-                CommitFocusedConfigurationInput(unattended: true);
-                name = ConfigurationName(configurationId) ?? name;
-            }
             var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == configurationId)
                 .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value.Message);
             attempt = project.CreateRunStartAttempt(configurationId, inputErrors: drafts);
-            if (configurationId != project.ActiveConfigurationId) {
-                // Preserve the outgoing editor before locking the workspace. Its validation belongs to its own plan.
-                CommitFocusedConfigurationInput(unattended: true);
-            }
         } catch (Exception exception) {
             ReportUnattendedFailure($"定时执行“{name}”失败", exception);
             return new(configurationId, ScheduledRunDisposition.Invalid, Reason: exception.Message);
         }
 
+        if (!active && SaveEditor() is { } saveFailure) {
+            return saveFailure;
+        }
         if (_environment.ScheduledRunBlocker(out _) is { } changed) {
             return new(configurationId, ScheduledRunDisposition.Busy, Reason: changed);
         }
         Guid? submitted = null;
+        var sending = false;
         SetPendingOperation(PendingOperation.PreparingEnvironment);
         try {
             project.ActivateConfiguration(configurationId);
@@ -88,26 +93,24 @@ public partial class MainWindow
                 throw ended.Error ?? new InvalidOperationException("旧桌面分身未确认结束。");
             }
             if (!_exitInProgress && !_environment.Closing) {
-                await _prepareEnvironment(project, _settings.CreateFrameworkOptions, false);
+                await PrepareProjectEnvironmentAsync(project, showDesktop: false);
                 if (await WaitForRunStartAsync()) {
                     var worker = _workerCoordinator.Snapshot.WorkerSnapshot
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
                     _scheduledSubmission = new(configurationId, name, worker.WorkerInstanceId, attempt.RunId);
                     LastScheduledRunId = submitted = attempt.RunId;
-                    await SubmitRunAsync(attempt, name, startupOnly: false);
+                    await SubmitRunAsync(attempt, name, startupOnly: false, onSending: () => sending = true);
                 }
             }
             return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
         } catch (Exception exception) {
             if (submitted.HasValue && _scheduledSubmission is { } own) {
-                var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
-                if (current is { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } w }
-                    && w.WorkerInstanceId == own.WorkerId
-                    && (w.ActiveRun?.RunId == own.RunId || w.LastRun?.RunId == own.RunId)) {
+                var status = _workerCoordinator.ObserveStart(own.WorkerId, own.RunId);
+                if (status == StartObservation.Accepted) {
                     return new(configurationId, ScheduledRunDisposition.Admitted, submitted);
                 }
-                if (exception is not WorkerProtocolErrorException
-                    && (awaitingStart || exception is OperationCanceledException or IOException or TimeoutException)) {
+                if (sending && status == StartObservation.Unknown && exception is not WorkerProtocolErrorException) {
+                    own.AwaitingConfirmation = true;
                     var detail = $"开始请求未确认，等待 Worker 快照：{exception.Message}";
                     _logger.Warn($"定时执行“{name}”（Run {submitted}）：{detail}");
                     return new(configurationId, ScheduledRunDisposition.Admitted, submitted, detail);
@@ -119,6 +122,18 @@ public partial class MainWindow
         } finally {
             SetPendingOperation(PendingOperation.None);
         }
+
+        ScheduledRunResult? SaveEditor()
+        {
+            try {
+                CommitFocusedConfigurationInput(unattended: true);
+                return null;
+            } catch (Exception error) {
+                var operation = $"定时执行“{name}”时无法保存配置“{ActiveConfigurationName}”";
+                ReportUnattendedFailure(operation, error);
+                return new(configurationId, ScheduledRunDisposition.Failed, Reason: operation);
+            }
+        }
     }
 
     // Snapshot delivery and the start reply may arrive in either order. Only this exact Run earns cleanup.
@@ -126,6 +141,20 @@ public partial class MainWindow
     {
         if (_scheduledSubmission is not { } own || OperationOrExitInProgress || _environment.Closing) {
             return;
+        }
+        if (own.AwaitingConfirmation) {
+            switch (_workerCoordinator.ObserveStart(own.WorkerId, own.RunId)) {
+                case StartObservation.Unknown:
+                    return;
+                case StartObservation.NotAccepted:
+                    _scheduledSubmission = null;
+                    ReportUnattendedFailure($"定时执行“{own.Name}”失败",
+                        new InvalidOperationException($"Worker 已确认未接纳 Run {own.RunId}。"));
+                    return;
+                case StartObservation.Accepted:
+                    own.AwaitingConfirmation = false;
+                    break;
+            }
         }
         observed ??= _workerCoordinator.Snapshot;
         if (observed is not { Observation: WorkerObservation.Connected, SnapshotFresh: true,

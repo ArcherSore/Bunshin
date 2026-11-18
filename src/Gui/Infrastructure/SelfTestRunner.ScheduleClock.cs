@@ -6,59 +6,21 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
-    private sealed class ScheduleTestClock(bool deliverAtStartup = true) : TimeProvider, ITimer
+    private sealed class ScheduleTestClock : TimeProvider
     {
-        private TimerCallback? _tick;
-        private object? _state;
         private DateTimeOffset _now = new(2026, 11, 15, 23, 59, 42, TimeSpan.Zero);
-        private DateTimeOffset _next;
-        private TimeSpan _period;
         public override TimeZoneInfo LocalTimeZone { get; } =
             TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
         public override DateTimeOffset GetUtcNow() => _now;
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            _tick = callback;
-            _state = state;
-            Change(dueTime, period);
-            if (deliverAtStartup) {
-                Advance(TimeSpan.Zero);
-            }
-            return this;
-        }
-
-        public bool Change(TimeSpan dueTime, TimeSpan period)
-        {
-            _next = _now + dueTime;
-            _period = period;
-            return true;
-        }
-
-        // Sleeping hosts deliver a tick on wake, with the current time.
-        internal void Advance(TimeSpan by)
-        {
-            _now += by;
-            if (_tick is not null && _now >= _next) {
-                _next = _now + _period;
-                _tick(_state);
-            }
-        }
-
-        public void Dispose() => _tick = null;
-        public ValueTask DisposeAsync()
-        {
-            Dispose();
-            return ValueTask.CompletedTask;
-        }
+        internal void Advance(TimeSpan by) => _now += by;
     }
 
     private static void VerifyScheduleClock(AppLogger logger, string directory)
     {
         var clock = new ScheduleTestClock();
         var starts = new List<Guid>();
-        void Open(Action<MainWindow> verify) =>
-            WithRuntimeControlWindow(logger, directory, verify, scheduleClock: clock,
+        void Open(Action<MainWindow> verify, DispatcherTimer? timer = null) =>
+            WithRuntimeControlWindow(logger, directory, verify, scheduleClock: clock, scheduleTimer: timer,
                 launchCommand: new(AutoStart: true), prepareEnvironment: (project, _, _) => {
                     starts.Add(project.ActiveConfigurationId);
                     throw new InvalidOperationException("模拟准备失败");
@@ -91,12 +53,12 @@ internal static partial class SelfTestRunner
             closed = window;
             Require(starts.Count == 1, "同一分钟正常重开不能重复处理已获准但准备失败的机会。");
             clock.Advance(TimeSpan.FromSeconds(30));
-            PumpUntil(() => starts.Count == 2, "托盘中经过 30 秒必须检查当前分钟。");
+            PumpUntil(() => starts.Count == 2, "托盘中的 WPF 定时器应触发下一分钟的检查。");
             clock.Advance(TimeSpan.FromMinutes(2));
             window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
             Require(starts.Count == 2, "恢复后不能补跑错过的 08:02，也不能执行已禁用、删除的 08:03 策略。");
-        });
+        }, new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) });
         clock.Advance(TimeSpan.FromMinutes(1));
         closed!.CheckScheduledRunsAsync().GetAwaiter().GetResult();
         closed.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
@@ -142,6 +104,7 @@ internal static partial class SelfTestRunner
             logger.EntryWritten += Record;
             try {
                 clock.Advance(TimeSpan.FromMinutes(1));
+                _ = window.CheckScheduledRunsAsync();
                 PumpUntil(() => preparations.Count == 1, "首份无效配置之后应开始准备下一份。");
                 Require(preparations.SequenceEqual([b]) && failures is [{ } failure] && failure.Contains("无任务")
                     && project.ActiveConfigurationId == b, "同刻应先报告 A 无效，再按配置列表顺序接纳 B。");
@@ -150,6 +113,7 @@ internal static partial class SelfTestRunner
                     && logs.Any(line => line.Contains("新启用")),
                     "等待准备时新加入的同分钟机会应立即跳过。");
                 clock.Advance(TimeSpan.FromSeconds(30));
+                _ = window.CheckScheduledRunsAsync();
                 PumpUntil(() => logs.Any(line => line.Contains("第二班")), "相邻分钟的任务遇忙应立即跳过。");
                 release.SetResult();
                 PumpUntil(() => failures.Any(message => message.Contains("准备失败")), "获准后准备失败应报告原因。");
@@ -173,7 +137,7 @@ internal static partial class SelfTestRunner
     {
         foreach (var clockFirst in new[] { true, false }) {
             var host = Path.Combine(directory, clockFirst.ToString());
-            var clock = new ScheduleTestClock(deliverAtStartup: clockFirst);
+            var clock = new ScheduleTestClock();
             Guid day = default, boot = default;
             WithRuntimeControlWindow(logger, host, window => {
                 var project = ProjectOf(window);
@@ -185,7 +149,9 @@ internal static partial class SelfTestRunner
                 project.RenameConfiguration(boot, "登录配置");
                 project.AddTask(task);
             }, scheduleClock: clock);
-            clock.Advance(TimeSpan.FromMinutes(1));
+            if (clockFirst) {
+                clock.Advance(TimeSpan.FromMinutes(1));
+            }
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var preparations = new List<Guid>();
             var messages = new System.Collections.Concurrent.ConcurrentQueue<string>();
@@ -200,7 +166,10 @@ internal static partial class SelfTestRunner
                 WithRuntimeControlWindow(logger, host, window => {
                     var failures = new List<string>();
                     window.AutoRunFailed += (_, message) => failures.Add(message);
-                    clock.Advance(TimeSpan.Zero);
+                    if (!clockFirst) {
+                        clock.Advance(TimeSpan.FromMinutes(1));
+                        _ = window.CheckScheduledRunsAsync();
+                    }
                     var skipped = clockFirst ? "登录配置" : "定时配置";
                     PumpUntil(() => messages.Any(m => m.Contains(skipped)),
                         $"托盘登录时遇忙的配置 {skipped} 应记明跳过原因。");

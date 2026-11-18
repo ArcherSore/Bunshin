@@ -79,6 +79,7 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(logger, Path.Combine(directory, state.ToString()), state);
         }
         VerifyScheduledTerminal(logger, Path.Combine(directory, "lost-reply"), RunState.Succeeded, lostReply: true);
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle, lostReply: true);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "next-tick"),
             RunState.Failed, tickBeforeDispatch: true);
     }
@@ -97,6 +98,7 @@ internal static partial class SelfTestRunner
         WorkerAdmissionRecord? record = null;
         string digest = "";
         var preparations = 0;
+        var failPreparation = terminal == RunState.Cancelled;
         var coordinator = new WorkerCoordinator(logger, Path.Combine(directory, "state"), process.MainModule!.FileName,
             pipeName, usePipeAcl: false, captureProcesses: () =>
                 record == null ? [] : [new(process.Id, sessionId, Path.GetFileName(process.MainModule!.FileName))],
@@ -112,6 +114,13 @@ internal static partial class SelfTestRunner
                 var name = project.Configurations.Single(c => c.Id == target).Name;
                 var failures = new List<string>();
                 window.AutoRunFailed += (_, message) => failures.Add(message);
+                if (failPreparation) {
+                    var failed = window.TryStartScheduledRunAsync(target);
+                    PumpUntil(() => failed.IsCompleted, "模拟准备失败应结束。");
+                    Require(failures.Count == 1 && ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
+                        "定时准备失败时控制栏应允许重试准备。");
+                    failures.Clear();
+                }
                 if (terminal == RunState.Succeeded) {
                     wts.ReportedId = 77;
                     wts.Sessions.Add(77);
@@ -161,9 +170,17 @@ internal static partial class SelfTestRunner
                         "丢失回包后应保留现场等待 Worker 重连。");
                     ExpectBusy();
                     connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
-                        pipeName, record!, 0, token, activeRun: own, stateRevision: 3));
+                        pipeName, record!, 0, token, activeRun: terminal == RunState.Idle ? null : own,
+                        stateRevision: 3));
                     PumpUntil(() => connected.IsCompleted && coordinator.Snapshot.SnapshotFresh, "模拟 Worker 应重连。");
                     pipe = connected.Result;
+                    if (terminal == RunState.Idle) {
+                        PumpUntil(() => failures.Count > 0, "重连后确认未接纳应通知启动失败。");
+                        PumpOnboarding();
+                        Require(failures.Count == 1 && failures[0].Contains(name) && session.HasChildSession,
+                            "启动未被接纳时应保留分身且只报告一次。");
+                        return;
+                    }
                     ExpectBusy();
                 } else if (terminal == RunState.Succeeded) {
                     // Keep IPC up and omit only the start reply: the state event is authoritative.
@@ -235,10 +252,11 @@ internal static partial class SelfTestRunner
                     }
                     Require(completions.SequenceEqual([own.RunId]), "同一 Run 应只发出一次终态。");
                 }
-                var quit = new QuitAfterRunTracker(DateTime.MinValue);
+                var quit = new QuitAfterRunTracker();
+                quit.Await(Guid.NewGuid());
                 var observed = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true,
                     snapshot with { LastRun = done }, "已结束");
-                Require(!quit.Observe(observed, window.LastScheduledRunId) && quit.Observe(observed),
+                Require(!quit.Observe(observed),
                     "定时 Run 的终态不得触发开机自动执行的退出。");
                 if (terminal == RunState.Succeeded) {
                     PumpUntil(() => !session.HasChildSession, "仅本次成功后应结束分身。");
@@ -248,6 +266,10 @@ internal static partial class SelfTestRunner
                     Require(terminal == RunState.Cancelled ? failures.Count == 0
                         : failures.Single().Contains(name) && failures[0].Contains("计划项模拟失败"),
                         "任务失败通知必须包含配置与失败原因。");
+                    if (terminal == RunState.Cancelled) {
+                        Require(!ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
+                            "后续准备成功后，手停任务应清除此前准备失败的重试状态。");
+                    }
                     wts.ReportedId = sessionId + 97;
                     wts.Sessions.Add(wts.ReportedId.Value);
                     ExpectBusy();
@@ -269,6 +291,10 @@ internal static partial class SelfTestRunner
                 }
             }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
                 prepareEnvironment: async (project, options, show) => {
+                    if (failPreparation) {
+                        failPreparation = false;
+                        throw new InvalidOperationException("模拟首次准备失败");
+                    }
                     if (++preparations > 1) {
                         throw new InvalidOperationException("模拟第二次准备结束");
                     }

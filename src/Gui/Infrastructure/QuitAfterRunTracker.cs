@@ -3,19 +3,21 @@ using Gui.Worker;
 
 namespace Gui.Infrastructure;
 
-// Tells when the Run that --quit-after-run waits for has ended, however it ended. A Run that started before the
-// tracker was armed, a stale snapshot, and a Worker that never confirmed the stop (Faulted keeps the Active Run) are
-// not endings. The owner discards the tracker once it fires.
-internal sealed class QuitAfterRunTracker(DateTime armedAtUtc)
+internal sealed class QuitAfterRunTracker
 {
     private Guid? _runId;
 
-    // Narrows the wait to one Run, for a start request whose answer was lost.
+    internal bool IsWaitingFor(Guid runId) => _runId == runId;
     internal void Await(Guid runId) => _runId = runId;
+    internal void Abandon() => _runId = null;
 
-    internal bool Observe(WorkerCoordinatorSnapshot observation, Guid? scheduledRunId = null) =>
-        observation.SnapshotFresh && observation.WorkerSnapshot?.LastRun is { } run && run.RunId != scheduledRunId
-        && !(run.StartedAtUtc < armedAtUtc)
-        && (_runId is not { } runId || run.RunId == runId)
-        && run.State is RunState.Succeeded or RunState.Failed or RunState.Cancelled;
+    internal bool Observe(WorkerCoordinatorSnapshot observation)
+    {
+        if (observation.SnapshotFresh && observation.WorkerSnapshot?.LastRun is { } run && run.RunId == _runId
+            && run.State is RunState.Succeeded or RunState.Failed or RunState.Cancelled) {
+            _runId = null;
+            return true;
+        }
+        return false;
+    }
 }

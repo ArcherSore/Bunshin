@@ -25,6 +25,8 @@ internal enum WorkerObservation
     ChildSessionEnded
 }
 
+internal enum StartObservation { Unknown, Accepted, NotAccepted }
+
 internal sealed record WorkerCoordinatorSnapshot(
     WorkerObservation Observation, bool SnapshotFresh,
     WorkerSnapshot? WorkerSnapshot, string Detail)
@@ -385,6 +387,19 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     // A response can precede the first state event, or be lost altogether. Cached idle is then inconclusive.
     private Guid? _startAwaitingObservation;
 
+    internal StartObservation ObserveStart(Guid workerId, Guid runId)
+    {
+        var (current, awaitingStart) = ReadRunObservation();
+        if (current is not { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } worker }
+            || worker.WorkerInstanceId != workerId) {
+            return StartObservation.Unknown;
+        }
+        if (worker.ActiveRun?.RunId == runId || worker.LastRun?.RunId == runId) {
+            return StartObservation.Accepted;
+        }
+        return awaitingStart ? StartObservation.Unknown : StartObservation.NotAccepted;
+    }
+
     internal bool StartAwaitingObservation => ReadRunObservation().AwaitingStart;
 
     internal (WorkerCoordinatorSnapshot State, bool AwaitingStart) ReadRunObservation()
@@ -395,10 +410,12 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     internal async Task<RunStartResponse> StartRunAsync(
-        RunStartAttempt attempt, CancellationToken cancellationToken = default)
+        RunStartAttempt attempt, CancellationToken cancellationToken = default, Action? onSending = null)
     {
+        ProtocolConnection connection;
         lock (_gate) {
             EnsureStartAllowedLocked(attempt.Plan.RuntimeProfileDigest);
+            connection = _connection ?? throw new InvalidOperationException("Worker IPC 尚未连接。");
             if (_startAwaitingObservation is Guid pending && pending != attempt.RunId) {
                 throw new InvalidOperationException("上一次开始请求尚未确认。");
             }
@@ -412,7 +429,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                 ProtocolOperations.RunStart,
                 new RunStartRequest(attempt.RunId, attempt.PlanDigest, attempt.Plan) {
                     RedactionValues = attempt.RedactionValues
-                }, cancellationToken);
+                }, cancellationToken, onSending, connection);
         } catch (WorkerProtocolErrorException) {
             lock (_gate) {
                 if (_startAwaitingObservation == attempt.RunId) {
@@ -766,13 +783,15 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             if (Snapshot.WorkerSnapshot is { } current && current.WorkerInstanceId == snapshot.WorkerInstanceId
                 && current.StateRevision > snapshot.StateRevision) {
                 _awaitedFreshSnapshot?.TrySetResult(current);
-                _awaitedFreshSnapshot = null;
-                return;
+                if (reconciledStart is null) {
+                    _awaitedFreshSnapshot = null;
+                    return;
+                }
+            } else {
+                UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true, snapshot,
+                    "Worker Snapshot 已同步"));
+                _awaitedFreshSnapshot?.TrySetResult(snapshot);
             }
-            UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
-                WorkerObservation.Connected, true, snapshot,
-                "Worker Snapshot 已同步"));
-            _awaitedFreshSnapshot?.TrySetResult(snapshot);
             _awaitedFreshSnapshot = null;
         }
         RaiseStateChanged();
@@ -822,7 +841,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                 admission = _admission ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
             }
             var response = await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token);
+                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection);
             ApplyFreshSnapshot(response.Snapshot, admission, connection, reconciledStart);
         } catch (Exception exception) {
             _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
@@ -976,13 +995,15 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         && _admission?.WorkerInstanceId == workerInstanceId && _logSequence.WorkerInstanceId == workerInstanceId;
 
     private async Task<TResponse> SendRequestAsync<TRequest, TResponse>(
-        string operation, TRequest data, CancellationToken cancellationToken)
+        string operation, TRequest data, CancellationToken cancellationToken, Action? onSending = null,
+        ProtocolConnection? connection = null)
     {
         var started = Stopwatch.GetTimestamp();
         string Details() => AppLogger.Field("operation", operation)
             + AppLogger.Field("cost", $"{Stopwatch.GetElapsedTime(started).TotalMilliseconds:0}ms");
         try {
-            var response = await SendRequestCoreAsync<TRequest, TResponse>(operation, data, cancellationToken);
+            var response = await SendRequestCoreAsync<TRequest, TResponse>(
+                operation, data, cancellationToken, onSending, connection);
             // Log recovery pages can be frequent, and the logs they carry show their own effect.
             if (operation != ProtocolOperations.LogGetSince) {
                 _logger.Debug($"Worker 请求完成{Details()}");
@@ -998,11 +1019,11 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     private async Task<TResponse> SendRequestCoreAsync<TRequest, TResponse>(
-        string operation, TRequest data, CancellationToken cancellationToken)
+        string operation, TRequest data, CancellationToken cancellationToken, Action? onSending,
+        ProtocolConnection? connection)
     {
-        ProtocolConnection connection;
         lock (_gate) {
-            connection = _connection
+            connection ??= _connection
                          ?? throw new InvalidOperationException("Worker IPC 尚未连接。 ");
         }
         var requestId = Guid.NewGuid();
@@ -1011,7 +1032,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             throw new InvalidOperationException("无法登记 IPC requestId。 ");
         }
         try {
-            await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken);
+            await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
             var response = await completion.Task.WaitAsync(RequestTimeout, cancellationToken);
             if (response.Success != true) {
                 throw new WorkerProtocolErrorException(
