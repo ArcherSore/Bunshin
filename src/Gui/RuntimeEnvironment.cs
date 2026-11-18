@@ -49,6 +49,70 @@ internal sealed class RuntimeEnvironment
 
     internal Task RunExclusiveAsync(Func<Task> operation) => RunGatedAsync(operation, refuseWhileClosing: true);
 
+    // A scheduled opportunity expires when another operation already owns the gate.
+    internal async Task<bool> TryRunExclusiveAsync(Func<Task> operation)
+    {
+        if (Closing || !_gate.Wait(0)) {
+            return false;
+        }
+        try {
+            await ExecuteExclusiveAsync(operation, refuseWhileClosing: true);
+            return true;
+        } finally {
+            _gate.Release();
+        }
+    }
+
+    internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation, out bool hasSession)
+    {
+        observation = WorkerCoordinatorSnapshot.Empty;
+        hasSession = false;
+        if (Closing || EndUnconfirmed || Ending
+            || _session.Snapshot.State is ChildSessionState.Connecting or ChildSessionState.Disconnecting) {
+            return EndUnconfirmed ? "运行环境状态未知" : "正在运行其他任务";
+        }
+        try {
+            var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
+            hasSession = sessionId.HasValue;
+            var (current, awaitingStart) = _coordinator.ReadRunObservation();
+            if (sessionId is uint id && NoLiveAdmission(current)) {
+                // With no live Admission a surviving, untracked Worker cannot be known idle.
+                _coordinator.EnsureSessionHasNoWorker(id);
+                (current, awaitingStart) = _coordinator.ReadRunObservation();
+            }
+            observation = current;
+            if (NoLiveAdmission(current)) {
+                return null;
+            }
+            if (current is { SnapshotFresh: true, WorkerSnapshot.ActiveRun: not null }) {
+                return "正在运行其他任务";
+            }
+            return !awaitingStart && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+                WorkerSnapshot: { ActiveRun: null, WorkerState: WorkerState.Ready
+                    or WorkerState.NotReady } worker } && worker.ChildSessionId == sessionId
+                ? null : "运行环境状态未知";
+        } catch (Exception exception) {
+            _logger.Warn("无法确认桌面分身空闲。", exception);
+            return "运行环境状态未知";
+        }
+
+        static bool NoLiveAdmission(WorkerCoordinatorSnapshot snapshot) =>
+            snapshot.Observation is WorkerObservation.WorkerNotStarted or WorkerObservation.ChildSessionEnded
+                or WorkerObservation.WorkerExited;
+    }
+
+    // Called inside the end confirmation so a queued cleanup cannot close a newer Run or Child Session.
+    internal bool CanEndSuccessfulRun(Guid workerId, Guid runId)
+    {
+        var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
+        var (current, awaitingStart) = _coordinator.ReadRunObservation();
+        return !Closing && !EndUnconfirmed && !awaitingStart
+            && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+                WorkerSnapshot: { ActiveRun: null, LastRun: { State: RunState.Succeeded } last,
+                    WorkerState: WorkerState.Ready or WorkerState.NotReady } idle }
+            && idle.WorkerInstanceId == workerId && last.RunId == runId && sessionId == idle.ChildSessionId;
+    }
+
     // Runs inside an exclusive operation the caller has already entered. The framework options are read once the
     // Child Session is connected, just before the Worker is prepared.
     internal async Task PrepareAsync(
@@ -75,17 +139,22 @@ internal sealed class RuntimeEnvironment
     {
         var result = EnvironmentEndResult.Ended;
         await RunGatedAsync(async () => {
-            SetState(ending: true, EndUnconfirmed);
-            try {
-                result = await EndInGateAsync(confirm);
-            } finally {
-                SetState(ending: false, EndUnconfirmed);
-            }
+            result = await EndWhileExclusiveAsync(confirm);
             if (inGate is not null) {
                 await inGate(result);
             }
         }, refuseWhileClosing: false);
         return result;
+    }
+
+    internal async Task<EnvironmentEndResult> EndWhileExclusiveAsync(Func<bool>? confirm = null)
+    {
+        SetState(ending: true, EndUnconfirmed);
+        try {
+            return await EndInGateAsync(confirm);
+        } finally {
+            SetState(ending: false, EndUnconfirmed);
+        }
     }
 
     private async Task<EnvironmentEndResult> EndInGateAsync(Func<bool>? confirm)
@@ -195,20 +264,22 @@ internal sealed class RuntimeEnvironment
     private async Task RunGatedAsync(Func<Task> operation, bool refuseWhileClosing)
     {
         ThrowIfRefused(refuseWhileClosing);
-        if (_runExclusive is not null) {
-            await _runExclusive(async () => {
-                ThrowIfRefused(refuseWhileClosing);
-                await operation();
-            });
-            return;
-        }
         await _gate.WaitAsync();
         try {
-            ThrowIfRefused(refuseWhileClosing);
-            await operation();
+            await ExecuteExclusiveAsync(operation, refuseWhileClosing);
         } finally {
             _gate.Release();
         }
+    }
+
+    private Task ExecuteExclusiveAsync(Func<Task> operation, bool refuseWhileClosing)
+    {
+        Task Run()
+        {
+            ThrowIfRefused(refuseWhileClosing);
+            return operation();
+        }
+        return _runExclusive is null ? Run() : _runExclusive(Run);
     }
 
     private void ThrowIfRefused(bool refuseWhileClosing)

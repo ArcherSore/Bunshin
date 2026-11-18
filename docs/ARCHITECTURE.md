@@ -46,7 +46,11 @@ GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的
 
 ## 任务与状态流
 
-Configuration Set 保存多份独立任务配置及激活项；它是用户意图，不是执行结果。ProjectModel 按当前 Project Interface 校验激活配置，开始时生成不可变、有序的 Run Plan。Worker Launch Context 独立确定项目与框架环境；Run Plan 只描述本次任务与参数。
+Configuration Set 保存多份独立任务配置及激活项；它是用户意图，不是执行结果。ProjectModel 按当前 Project Interface 校验本次指定的配置，开始时生成不可变、有序的 Run Plan。Worker Launch Context 独立确定项目与框架环境；Run Plan 只描述本次任务与参数。
+
+每周定时策略归属于任务配置 ID。GUI 在进程内按本地当前分钟检查策略，把已处理的配置 ID 和分钟保存在运行状态目录，供同分钟重开时去重。
+同刻命中时按配置列表顺序校验，首份获准的配置与手动、开机启动共用运行环境操作闸门。定时执行先确认旧分身及其 Worker 已退出，再准备新分身。
+只有新鲜 Worker Snapshot 确认本次定时 Run 成功，GUI 才自动结束该分身。失败或手动停止后保留现场。
 
 Project Interface preset 作为新建配置的模板：ProjectModel 将预设的任务选择和选项值转换为现有 Task Configuration，
 保存后不再关联预设。新配置只在项目默认值上应用预设声明的内容，不继承当前配置；执行顺序仍遵循项目声明。

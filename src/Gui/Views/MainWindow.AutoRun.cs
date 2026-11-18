@@ -1,4 +1,5 @@
 using Gui.Infrastructure;
+using Gui.Worker;
 
 namespace Gui.Views;
 
@@ -7,8 +8,15 @@ public partial class MainWindow
     private readonly LaunchCommand _launchCommand;
     private readonly QuitAfterRunTracker? _quitAfterRun;
 
-    // Raised when something the launch started on its own failed. The text is for a notification.
-    internal event EventHandler<string>? AutoRunFailed;
+    private readonly RunTerminalNotificationTracker _terminalNotifications = new();
+    internal event EventHandler<RunTerminalNotification>? NotificationRequested;
+
+    internal void ObserveRunNotification(WorkerCoordinatorSnapshot snapshot)
+    {
+        if (_terminalNotifications.Observe(snapshot, ActiveConfigurationName) is { } notification) {
+            NotificationRequested?.Invoke(this, notification);
+        }
+    }
 
     // Starts the configuration this launch asks for, if any: activates it, prepares the Runtime Environment and
     // starts the Run, as the Start button does. Returns whether it did.
@@ -38,8 +46,7 @@ public partial class MainWindow
         }
         var direct = CurrentControls.Action is RuntimeAction.Start
             or RuntimeAction.Retry { Target: RetryTarget.Start };
-        await RunFromPanelAsync(prepare: !direct, automaticConfiguration: id);
-        return true;
+        return await RunFromPanelAsync(prepare: !direct, automaticConfiguration: id);
     }
 
     // Loaded starts everything and needs a shown window, so the window is shown and hidden before it is ever drawn,
@@ -58,12 +65,13 @@ public partial class MainWindow
     {
         var reason = $"自动执行：{message}";
         _logger.Warn(reason);
-        AutoRunFailed?.Invoke(this, reason);
+        NotificationRequested?.Invoke(this, new("自动执行未能完成", reason, true));
     }
 
     private void ReportUnattendedFailure(string operation, Exception exception)
     {
         _logger.Error($"{operation}。", exception);
-        AutoRunFailed?.Invoke(this, $"{operation}：{exception.GetBaseException().Message}");
+        var message = $"{operation}：{exception.GetBaseException().Message}";
+        NotificationRequested?.Invoke(this, new("自动执行未能完成", message, true));
     }
 }

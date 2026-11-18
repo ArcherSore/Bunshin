@@ -137,11 +137,11 @@ internal static partial class SelfTestRunner
             SaveWindowScreenshot(window, "secret-and-path-inputs.png");
 
             ToggleRealTask(items);
-            var texts = ConfigurationDescendants(items).OfType<System.Windows.Documents.Run>()
-                .Select(run => run.Text).ToArray();
-            Require(texts.Any(text => text.StartsWith("password：", StringComparison.Ordinal) && text.Length > 9)
-                && texts.All(text => !text.Contains(SecretInputValue, StringComparison.Ordinal)),
-                "折叠后的参数摘要应提示已填写，但不得显示密码原文。");
+            var tag = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
+                .SingleOrDefault(text => Equals(text.ToolTip, $"Login：{ProjectInputEditor.PasswordMask}"));
+            Require(tag is not null && tag.Text.Contains(ProjectInputEditor.PasswordMask, StringComparison.Ordinal)
+                && !tag.Text.Contains(SecretInputValue, StringComparison.Ordinal),
+                "折叠预览标签和悬停提示必须用掩码显示已填写的密码。");
         }, AddSecretAndPathInputs);
     }
 

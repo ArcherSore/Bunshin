@@ -51,6 +51,7 @@ internal static partial class SelfTestRunner
             "较新版本的主文件必须提示升级；即使有本项目备份，也不得回退或覆盖主文件。");
         var secondBytes = File.ReadAllBytes(older);
         foreach (var change in new Action<JsonNode>[] {
+            json => json["Configurations"]![0]!["SchedulePolicies"] = JsonNode.Parse("[null]"),
             json => json["SchemaVersion"] = 99,
             json => json.AsObject().Remove("SchemaVersion"),
             json => json["ProjectName"] = "Unrelated project",

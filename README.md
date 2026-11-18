@@ -6,10 +6,10 @@
 
 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 的 Windows 桌面界面
 
-[![License](https://img.shields.io/github/license/ArcherSore/Bunshin?style=flat-square&color=4a90d9)](./LICENSE)
+[![License](https://img.shields.io/github/license/ArcherSore/NarutoAutoGUI?style=flat-square&color=4a90d9)](./LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blueviolet?style=flat-square)](https://github.com/ArcherSore/Bunshin)
-[![Stars](https://img.shields.io/github/stars/ArcherSore/Bunshin?style=flat-square&color=ffca28)](https://github.com/ArcherSore/Bunshin/stargazers)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blueviolet?style=flat-square)](https://github.com/ArcherSore/NarutoAutoGUI)
+[![Stars](https://img.shields.io/github/stars/ArcherSore/NarutoAutoGUI?style=flat-square&color=ffca28)](https://github.com/ArcherSore/NarutoAutoGUI/stargazers)
 
 </div>
 
@@ -24,15 +24,14 @@ Bunshin 是 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 的图形界面。它
 
 - **桌面分身**：创建和管理独立运行环境，隐藏分身窗口后游戏和任务仍会继续。
 - **任务配置**：多份独立配置，标签页切换，可从项目预设新建；每份配置分别保存任务、启动阶段及参数。
+- **定时执行**：支持为每份任务配置安排每周运行时间，并预览下次运行。
 - **运行监控**：查看任务动态，通过小窗只读观看分身，大窗可手动解锁操作。
 - **自动运行**：开机自启动、启动后自动执行配置，也可通过命令行接入计划任务或外部脚本。
-- **提醒与诊断**：后台任务完成或失败时提醒，设置页可一键导出日志与版本信息。
-- **完整包更新**：更新检查、版本说明、下载与安装。
 
 ## 界面预览
 
 <p align="center">
-  <img alt="Bunshin 界面预览" src="./docs/images/homePage.png" width="100%" />
+  <img alt="Bunshin 任务首页，左侧导航含定时入口" src="./docs/images/homePage.png" width="100%" />
 </p>
 
 ## 运行要求
@@ -49,6 +48,14 @@ Bunshin 是 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 的图形界面。它
 2. 运行 `DependencySetup_依赖库安装.bat`，安装 .NET 10 桌面运行库和 Visual C++ 运行库（只需一次）。
 3. 运行 `Bunshin.exe`，按提示允许管理员权限。
 4. 阅读[用户使用手册](docs/USER-GUIDE.md)，完成 Windows 凭据和 QQ 大厅自动启动的一次性配置。
+
+## 定时执行
+
+打开左侧「定时」页，选中任务配置，在一周时间轴上添加定时。每条定时可选择一周中的多天，并设置多个时间点，
+例如每个工作日 08:00 和 20:00。页面顶部会显示下次运行的时间和配置。
+
+请保持 Bunshin 运行，窗口可以缩到托盘。到点后，程序会在新的桌面分身中执行对应配置，成功后自动关闭分身，
+失败或手动停止时保留现场供排查。到点时已有任务在运行会跳过，错过的时间点也不会补跑。
 
 ## 启动参数
 
@@ -79,7 +86,7 @@ Bunshin 是 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 的图形界面。它
 
 验证要求见 [AGENTS.md](AGENTS.md)，开发入口见[领域术语](GLOSSARY.md)、[当前架构](docs/ARCHITECTURE.md)、
 [架构决策](docs/adr/)、[GUI 开发说明](src/Gui/README.md)。
-当前工作与验收条件在 [GitHub Issues](https://github.com/ArcherSore/Bunshin/issues)。
+当前工作与验收条件在 [GitHub Issues](https://github.com/ArcherSore/NarutoAutoGUI/issues)。
 
 ## 鸣谢
 

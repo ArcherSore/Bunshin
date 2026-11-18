@@ -43,6 +43,11 @@ public sealed record TaskConfiguration
     public required string Name { get; init; }
     public IReadOnlyList<string> SelectedTasks { get; init; } = [];
     public IReadOnlyList<string> SelectedPretasks { get; init; } = [];
+    public IReadOnlyList<SchedulePolicy> SchedulePolicies
+    {
+        get;
+        init => field = value.ToList().AsReadOnly();
+    } = [];
     public IReadOnlyDictionary<string, JsonElement> ExplicitOptions { get; init; } =
         new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 }
@@ -322,6 +327,13 @@ internal sealed class ConfigurationSetStore
             }
             if (!IsNameList(item.SelectedPretasks)) {
                 throw new InvalidDataException("SelectedPretasks 必须为不重复的 pretask name 列表。");
+            }
+            var policyIds = new HashSet<Guid>();
+            foreach (var policy in item.SchedulePolicies) {
+                if (policy is null || policy.Id == Guid.Empty || !policyIds.Add(policy.Id)
+                    || string.IsNullOrWhiteSpace(policy.Name) || policy.Days.Any(day => !Enum.IsDefined(day))) {
+                    throw new InvalidDataException("定时策略必须有有效且唯一的 Id、非空名称和有效星期。");
+                }
             }
             foreach (var (name, value) in item.ExplicitOptions) {
                 if (string.IsNullOrWhiteSpace(name) || value.ValueKind != JsonValueKind.Object) {

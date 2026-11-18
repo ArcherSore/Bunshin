@@ -15,7 +15,8 @@ internal sealed class RunLogFeed(ObservableCollection<object> items, int capacit
     internal int Add(LogEntry entry)
     {
         var inserted = 1;
-        if (items.Count != 0 && items[0] is RunLogGroup { PlanItemId: var top } heading && top == entry.PlanItemId) {
+        if (items.Count != 0 && items[0] is RunLogGroup { PlanItemId: var top } heading && top == entry.PlanItemId
+            && (top.HasValue || heading.Label == (entry.TaskLabel ?? EnvironmentLabel))) {
             items.Insert(1, entry);
             // A heading made before the Run Plan label was known takes it from the first entry that has it.
             if (entry.TaskLabel is { } label && label != heading.Label) {

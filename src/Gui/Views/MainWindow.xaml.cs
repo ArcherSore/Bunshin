@@ -49,13 +49,13 @@ public partial class MainWindow : FluentWindow
     private enum MainSection
     {
         Home,
+        Schedule,
         Help,
         Settings
     }
 
     private readonly AppLogger _logger;
     private readonly ApplicationSettings _settings;
-    private readonly HelpPageModel _help;
     private MainSection _section;
     private readonly string _applicationDirectory;
     private readonly Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task> _prepareEnvironment;
@@ -103,7 +103,7 @@ public partial class MainWindow : FluentWindow
     private IInputElement? _descriptionDrawerPreviousFocus;
     private readonly List<Border> _dropIndicators = [];
     private readonly Dictionary<(PlanItemKind Kind, string Name), Border> _planItemContainers = [];
-    private readonly List<(TextBlock Summary, ProjectTaskChoice Task)> _planItemSummaries = [];
+    private readonly List<(StackPanel Preview, ProjectTaskChoice Task)> _planItemPreviews = [];
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
@@ -137,10 +137,13 @@ public partial class MainWindow : FluentWindow
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
-        GuiTelemetry? telemetry = null, QuitAfterRunTracker? quitAfterRun = null)
+        GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null, QuitAfterRunTracker? quitAfterRun = null,
+        DispatcherTimer? scheduleTimer = null)
     {
         _launchCommand = launchCommand ?? new LaunchCommand();
         _quitAfterRun = quitAfterRun;
+        _scheduleClock = scheduleClock ?? TimeProvider.System;
+        _scheduleTimer = scheduleTimer ?? new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         InitializeComponent();
         _runLog = new RunLogFeed(LogLines, MaximumGuiLogEntries);
         DataContext = this;
@@ -157,8 +160,9 @@ public partial class MainWindow : FluentWindow
             ManageChildSessionCredentialsAsync, ClearDebugFilesAsync, ViewWelcome, OpenTaskDescriptionLink,
             ReadLicense, autostart);
         SettingsView.DataContext = _settings.Page;
-        HelpView.DataContext = _help = new HelpPageModel(
-            _settings.ExportDiagnostics, new SettingsAction(OpenIssuesAsync), ReportCopyFailure);
+        HelpView.DataContext = new HelpPageModel();
+        ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock);
+        ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
         _sessionManager = sessionManager;
         _workerCoordinator = workerCoordinator;
@@ -189,6 +193,7 @@ public partial class MainWindow : FluentWindow
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         KeyDown += MainWindow_KeyDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
+        Activated += (_, _) => _ = CheckScheduledRunsAsync();
         StateChanged += MainWindow_StateChanged;
         SizeChanged += (_, _) => UpdateConfigurationLockText();
         RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
@@ -226,6 +231,11 @@ public partial class MainWindow : FluentWindow
     {
         Loaded -= MainWindow_Loaded;
         await InitializeStartupAsync(RestoreExistingSessionAsync);
+        // Deliver launch on the dispatcher like the independent clock signal. The first arrival gets the gate.
+        await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.Normal);
+        if (_allowClose || _exitInProgress) {
+            return;
+        }
         try {
             AutoSessionMenuItem.IsChecked = File.Exists(AutoSessionPath)
                 && File.ReadAllText(AutoSessionPath).Trim() == "true";
@@ -254,7 +264,9 @@ public partial class MainWindow : FluentWindow
         ShowWelcomeIfChanged();
         InitializeUpdates();
         try {
-            await restoreExistingSession();
+            var restore = restoreExistingSession();
+            StartScheduleClock();
+            await restore;
         } finally {
             _onboardingStartupCompleted = true;
             ReevaluateOnboarding();
@@ -289,6 +301,7 @@ public partial class MainWindow : FluentWindow
             RemoveModalWindowHook();
             RemoveConfigurationWheelHook();
             _runTimer.Stop();
+            _scheduleTimer.Stop();
             RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;
@@ -332,12 +345,14 @@ public partial class MainWindow : FluentWindow
             ? Visibility.Visible
             : Visibility.Collapsed;
         HelpView.Visibility = section == MainSection.Help ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleView.Visibility = section == MainSection.Schedule ? Visibility.Visible : Visibility.Collapsed;
         if (section == MainSection.Settings) {
             RefreshChildSessionCredentialStatus();
             RefreshDebugFileUsage();
         }
 
         HomeNavigationItem.IsActive = section == MainSection.Home;
+        ScheduleNavigationItem.IsActive = section == MainSection.Schedule;
         HelpNavigationItem.IsActive = section == MainSection.Help;
         SettingsNavigationItem.IsActive = section == MainSection.Settings;
         ReevaluateOnboarding();
@@ -573,7 +588,8 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async Task RunFromPanelAsync(bool prepare, bool startupOnly = false, Guid? automaticConfiguration = null)
+    private async Task<bool> RunFromPanelAsync(bool prepare, bool startupOnly = false,
+        Guid? automaticConfiguration = null)
     {
         var unattended = automaticConfiguration.HasValue;
         if (OperationOrExitInProgress || !CommitFocusedConfigurationInput(deferDraftCheck: true)) {
@@ -581,9 +597,9 @@ public partial class MainWindow : FluentWindow
             if (unattended) {
                 ReportAutoRunFailure("暂时无法开始任务，请完成当前操作后重试。");
             }
-            return;
+            return false;
         }
-        await RunOperationAsync(prepare ? PendingOperation.PreparingEnvironment : PendingOperation.StartingRun,
+        return await RunOperationAsync(prepare ? PendingOperation.PreparingEnvironment : PendingOperation.StartingRun,
             async () => {
                 if (_workerCoordinator.Snapshot.SnapshotFresh && await CheckPendingStartAsync()) {
                     return;
@@ -624,12 +640,8 @@ public partial class MainWindow : FluentWindow
                     if (_exitInProgress || _environment.Closing) {
                         return;
                     }
-                    using var readyWait = new CancellationTokenSource();
-                    _workerReadyWait = readyWait;
-                    try {
-                        await _workerCoordinator.WaitForReadyAsync(readyWait.Token);
-                    } finally {
-                        _workerReadyWait = null;
+                    if (!await WaitForRunStartAsync()) {
+                        return;
                     }
                 }
                 if (!_exitInProgress && !_environment.Closing) {
@@ -648,6 +660,23 @@ public partial class MainWindow : FluentWindow
         } else {
             _logger.Warn(message);
         }
+    }
+
+    private async Task<bool> WaitForRunStartAsync()
+    {
+        _logger.Info("等待 Worker 依赖检查完成后自动开始当前任务计划。");
+        using var readyWait = new CancellationTokenSource();
+        _workerReadyWait = readyWait;
+        try {
+            await _workerCoordinator.WaitForReadyAsync(readyWait.Token);
+        } finally {
+            _workerReadyWait = null;
+        }
+        if (_exitInProgress || _environment.Closing) {
+            return false;
+        }
+        SetPendingOperation(PendingOperation.StartingRun);
+        return true;
     }
 
     // RuntimeControls chooses what Retry means; this handler only carries it out.
@@ -693,7 +722,7 @@ public partial class MainWindow : FluentWindow
             return false;
         }
         // A lost response is ambiguous even when the reloaded PI or the user's choices changed.
-        var worker = await _workerCoordinator.RefreshSnapshotAsync();
+        var worker = await _workerCoordinator.RefreshSnapshotAsync(previous.RunId);
         if (worker.ActiveRun?.RunId == previous.RunId || worker.LastRun?.RunId == previous.RunId) {
             _pendingStartAttempt = null;
             _pendingStartSent = false;
@@ -731,30 +760,34 @@ public partial class MainWindow : FluentWindow
             }
         }
         _pendingStartAttempt = attempt;
-        _pendingStartupOnly = startupOnly;
         _pendingStartSent = false;
-        RunResultLog.WritePlan(_logger, attempt, ActiveConfigurationName, startupOnly);
-        _telemetry.Register(attempt.RedactionValues);
-        RunStartResponse response;
         try {
-            response = await _workerCoordinator.StartRunAsync(attempt,
-                onSending: () => {
-                    _pendingStartSent = true;
-                    quitAfterRun?.Await(attempt.RunId);
-                });
+            await SubmitRunAsync(attempt, ActiveConfigurationName, startupOnly, onSending: () => {
+                _pendingStartSent = true;
+                quitAfterRun?.Await(attempt.RunId);
+            });
         } catch (WorkerProtocolErrorException) {
-            // The start was rejected. A manual retry may reuse this ID and must not cause an automatic exit.
             _pendingStartSent = false;
             quitAfterRun?.Abandon();
             throw;
         }
+        _pendingStartAttempt = null;
+        _pendingStartSent = false;
+    }
+
+    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, bool startupOnly, Action? onSending = null)
+    {
+        _pendingStartupOnly = startupOnly;
+        _terminalNotifications.Register(attempt.RunId, name);
+        RunResultLog.WritePlan(_logger, attempt, name, startupOnly);
+        _telemetry.Register(attempt.RedactionValues);
+        var response = await _workerCoordinator.StartRunAsync(attempt, onSending: onSending);
         if (response.Disposition is not ("accepted" or "already_accepted")) {
             throw new InvalidDataException($"未知 run.start disposition：{response.Disposition}。 ");
         }
         _logger.Info(
-            $"run.start {response.Disposition}：runId={attempt.RunId:D}；planDigest={attempt.PlanDigest}。 ");
-        _pendingStartAttempt = null;
-        _pendingStartSent = false;
+            $"run.start {response.Disposition}：runId={attempt.RunId:D}；"
+            + $"planDigest={attempt.PlanDigest}。 ");
     }
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
@@ -1291,7 +1324,7 @@ public partial class MainWindow : FluentWindow
         PlanItemsPanel.Children.Clear();
         _dropIndicators.Clear();
         _planItemContainers.Clear();
-        _planItemSummaries.Clear();
+        _planItemPreviews.Clear();
         _taskDescriptionButtons.Clear();
         _optionInputEditors.Clear();
         _inspectorRows.Clear();
@@ -1310,31 +1343,19 @@ public partial class MainWindow : FluentWindow
         AddDropIndicator();
     }
 
-    private Task OpenAfdianAsync() =>
-        OpenWebPageAsync(_settings.OpenAfdian, ProjectProfile.SponsorUrl, "爱发电", "爱发电赞助页面");
-
-    private Task OpenIssuesAsync() => OpenWebPageAsync(
-        _help.OpenIssues, ProjectProfile.IssuesUrl, "GitHub Issues", "GitHub Issues 页面");
-
-    private Task OpenWebPageAsync(SettingsAction action, string address, string site, string page)
+    private Task OpenAfdianAsync()
     {
+        var address = ProjectProfile.SponsorUrl;
         try {
             Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
-            action.Status = string.Empty;
+            _settings.OpenAfdian.Status = string.Empty;
         } catch (Exception exception) {
-            action.Status = $"无法打开{site}，请检查默认浏览器设置。";
-            _logger.Warn($"打开{page}失败。", exception);
+            _settings.OpenAfdian.Status = "无法打开爱发电，请检查默认浏览器设置。";
+            _logger.Warn("打开爱发电赞助页面失败。", exception);
             WpfMessageBox.Show(this, $"请手动访问：{address}\n\n按 Ctrl+C 可复制此提示中的网址。",
-                $"无法打开{site}", MessageBoxButton.OK, MessageBoxImage.Information);
+                "无法打开爱发电", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         return Task.CompletedTask;
-    }
-
-    private void ReportCopyFailure(Exception exception)
-    {
-        _logger.Warn("复制 QQ 号失败。", exception);
-        WpfMessageBox.Show(this, $"剪贴板暂时不可用，请手动记下 QQ 号：{_help.Qq}",
-            "无法复制 QQ 号", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void OpenTaskDescriptionLink(Uri uri)
@@ -1427,39 +1448,25 @@ public partial class MainWindow : FluentWindow
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var title = new Grid();
-        title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var showSummary = (!expanded || task.Kind == PlanItemKind.Pretask) && hasParameters;
-        if (showSummary) {
+        var showPreview = !expanded && rows.Any(row => !row.IsGlobal && row.Depth == 0);
+        var title = new DockPanel { ClipToBounds = true };
+        if (showPreview) {
             label.TextWrapping = TextWrapping.NoWrap;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
             title.Children.Add(label);
-            var separator = new Border {
-                Width = 1,
-                Height = 16,
-                Margin = new Thickness(10, 0, 10, 0),
-                Background = (WpfBrush)FindResource("Brush.Border.Subtle"),
+            var preview = new StackPanel {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
                 VerticalAlignment = VerticalAlignment.Center,
-                SnapsToDevicePixels = true
+                Margin = new Thickness(12, 0, 0, 0),
+                ClipToBounds = true
             };
-            Grid.SetColumn(separator, 1);
-            title.Children.Add(separator);
-            var summaryText = new TextBlock {
-                FontWeight = FontWeights.Normal,
-                Foreground = (WpfBrush)FindResource("Brush.Text.Secondary"),
-                TextWrapping = TextWrapping.NoWrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            _planItemSummaries.Add((summaryText, task));
-            FillParameterSummary(summaryText, rows);
-            Grid.SetColumn(summaryText, 2);
-            title.Children.Add(summaryText);
+            _planItemPreviews.Add((preview, task));
+            FillParameterPreview(preview, rows);
+            title.Children.Add(preview);
         }
         var main = new WpfButton {
             Tag = task,
-            Content = showSummary ? title : label,
+            Content = showPreview ? title : label,
             Padding = new Thickness(4, 6, 8, 6),
             Style = (Style)FindResource("PlanHeaderButtonStyle")
         };
@@ -1542,35 +1549,78 @@ public partial class MainWindow : FluentWindow
             (option, input) => _inputDrafts.GetValueOrDefault((project.ActiveConfigurationId, option, input)), others);
     }
 
-    // An unfixed invalid draft replaces the saved value in red, so folded cards agree with the field and Start block.
-    private void FillParameterSummary(TextBlock summary, IReadOnlyList<InspectorRow> rows)
+    // Like MXU, a folded card previews up to three options declared directly on the task.
+    private void FillParameterPreview(StackPanel preview, IReadOnlyList<InspectorRow> rows)
     {
-        summary.Inlines.Clear();
-        foreach (var row in rows) {
-            var parts = row.Kind == ProjectOptionKind.Input
-                ? row.Inputs.Select(input =>
-                    (input.Label, Value: input.Show(input.DisplayValue), Invalid: input.Error is not null))
-                : [(row.Label, Value: row.Kind == ProjectOptionKind.Checkbox ? ParameterInspector.ShowCases(row.Option)
-                    : row.SelectedCase?.Label ?? string.Empty, Invalid: row.IsInvalid)];
-            foreach (var (label, value, invalid) in parts) {
-                if (summary.Inlines.Count != 0) {
-                    summary.Inlines.Add(new System.Windows.Documents.Run(" · "));
+        preview.Children.Clear();
+        foreach (var row in rows.Where(row => !row.IsGlobal && row.Depth == 0)) {
+            var option = row.Option;
+            var label = ParameterInspector.GetOptionLabel(option);
+            var invalid = row.IsInvalid;
+            var isSwitch = option.Kind == ProjectOptionKind.Switch;
+            var isOn = isSwitch && option.SelectedCase == GetSwitchCases(option).On.Name;
+            string value;
+            if (option.Kind == ProjectOptionKind.Input) {
+                if (row.Inputs.FirstOrDefault() is not { } input) {
+                    continue;
                 }
-                var run = new System.Windows.Documents.Run($"{label}：{value}");
-                if (invalid) {
-                    run.Foreground = (WpfBrush)FindResource("Brush.Error.Foreground");
+                value = input.Show(input.DisplayValue);
+                if (value.Length == 0 && !invalid) {
+                    continue;
                 }
-                summary.Inlines.Add(run);
+            } else if (isSwitch) {
+                value = isOn ? "开" : "关";
+            } else if (option.Kind == ProjectOptionKind.Checkbox) {
+                value = $"{option.SelectedCases.Count}/{option.Cases.Count}";
+            } else {
+                value = option.Cases.FirstOrDefault(item => item.Name == option.SelectedCase)?.Label ?? string.Empty;
+            }
+
+            var tag = new TextBlock {
+                FontSize = (double)FindResource("FontSize.Label"), MaxWidth = 140,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = (WpfBrush)FindResource(invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary"),
+                ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
+            };
+            if (isSwitch) {
+                tag.Text = ShortenPreview(label, 6);
+                var switchPreview = new StackPanel {
+                    Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 0, 8, 0),
+                    ToolTip = tag.ToolTip
+                };
+                switchPreview.Children.Add(tag);
+                switchPreview.Children.Add(new System.Windows.Shapes.Ellipse {
+                    Width = 6, Height = 6, Margin = new Thickness(4, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Fill = (WpfBrush)FindResource(isOn ? "Brush.TasksAccent" : "Brush.Text.Muted")
+                });
+                preview.Children.Add(switchPreview);
+            } else {
+                tag.Text = $"{ShortenPreview(label, 4)}：{ShortenPreview(ParameterInspector.ShowValue(value), 6)}";
+                tag.Margin = new Thickness(0, 0, 8, 0);
+                preview.Children.Add(tag);
+            }
+            if (preview.Children.Count == 3) {
+                break;
             }
         }
+        preview.Visibility = preview.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    // Saving a value or keeping a draft refreshes folded summaries and the open inspector's notes in place, so the
+    private static string ShortenPreview(string text, int limit)
+    {
+        var singleLine = new System.Globalization.StringInfo(text.ReplaceLineEndings(" "));
+        return singleLine.LengthInTextElements <= limit ? singleLine.String
+            : singleLine.SubstringByTextElements(0, limit) + "…";
+    }
+
+    // Saving a value or keeping a draft refreshes folded previews and the open inspector's notes in place, so the
     // focused editor and a switch's animation are not rebuilt.
     private void RefreshParameterDisplays()
     {
-        foreach (var (summary, task) in _planItemSummaries) {
-            FillParameterSummary(summary, InspectorRows(task.Name, task.Kind));
+        foreach (var (preview, task) in _planItemPreviews) {
+            FillParameterPreview(preview, InspectorRows(task.Name, task.Kind));
         }
         if (_inspectorRows.Count != 0 && _expandedTaskName is { } expanded) {
             foreach (var row in InspectorRows(expanded, _expandedTaskKind)) {
@@ -2041,18 +2091,35 @@ public partial class MainWindow : FluentWindow
         + $"{AppLogger.Field("pending", _pendingOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
 
     // An unattended operation (started by the launch itself) reports its failure without a dialog nobody can answer.
-    private async Task RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false,
+    private async Task<bool> RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false,
         [CallerMemberName] string caller = "")
     {
         if (OperationOrExitInProgress) {
             LogIgnoredAction(caller);
-            return;
+            return false;
         }
 
+        var entered = true;
+        if (pending is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment) {
+            await RunWindowOperationAsync(pending, async () => {
+                entered = await _environment.TryRunExclusiveAsync(operation);
+                if (!entered) {
+                    LogIgnoredAction(caller);
+                }
+            }, unattended);
+        } else {
+            await RunWindowOperationAsync(pending, () => _environment.RunExclusiveAsync(operation), unattended);
+        }
+        await ObserveScheduledRunAsync();
+        return entered;
+    }
+
+    private async Task RunWindowOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended)
+    {
         using var scope = _logger.Scope(OperationLabel(pending));
         SetPendingOperation(pending);
         try {
-            await _environment.RunExclusiveAsync(operation);
+            await operation();
         } catch (OperationCanceledException) {
             _logger.Warn($"操作已取消：正在{OperationLabel(pending)}...");
         } catch (Exception exception) when (unattended) {
@@ -2238,6 +2305,11 @@ public partial class MainWindow : FluentWindow
         if (entry is null) {
             return;
         }
+        AddActivityEntry(entry);
+    }
+
+    private void AddActivityEntry(LogEntry entry)
+    {
         var shouldFollow = _followLogs && IsLogNearTop();
         var previousOffset = _homeLogScrollViewer?.VerticalOffset ?? 0;
         var inserted = _runLog.Add(entry);
@@ -2265,10 +2337,16 @@ public partial class MainWindow : FluentWindow
         // coordinator's current snapshot is applied rather than the one the event carried.
         _workerSnapshot = _workerCoordinator.Snapshot;
         RefreshRuntimeControls();
+        _ = ObserveScheduledRunAsync();
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
-        => ReevaluateOnboarding();
+    {
+        ReevaluateOnboarding();
+        if (IsVisible) {
+            _ = CheckScheduledRunsAsync();
+        }
+    }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e) => ReevaluateOnboarding();
 
@@ -2402,7 +2480,11 @@ public partial class MainWindow : FluentWindow
         : ProjectReadiness.NotLoaded);
 
     private RuntimeControlState ControlsFor(ProjectReadiness project) => RuntimeControls.Derive(
-        new RuntimeControlInputs(_sessionSnapshot, _workerSnapshot, project, _pendingOperation,
+        new RuntimeControlInputs(_sessionSnapshot, _workerSnapshot, project,
+            _pendingOperation == PendingOperation.None && !_pendingStartSent
+                && _workerCoordinator.StartAwaitingObservation
+                && _workerSnapshot is { Observation: WorkerObservation.Connected, SnapshotFresh: true }
+                ? PendingOperation.StartingRun : _pendingOperation,
             _environmentPreparationFailed, _exitInProgress, _environment.Ending, _environment.EndUnconfirmed));
 
     // The only refresh path for runtime inputs.
@@ -2631,6 +2713,7 @@ public partial class MainWindow : FluentWindow
         RuntimeStatusText.Foreground = (WpfBrush)FindResource(foreground);
         RuntimeStatusText.Text = pill;
         AutomationProperties.SetName(RuntimeStatusPill, $"运行状态：{pill}");
+        ApplyScheduleCapsule(tone);
         RuntimeStatusTitle.Text = title;
         RuntimeStatusDetail.Text = detail;
         RuntimeStatusDetail.Visibility = detail.Length == 0 ? Visibility.Collapsed : Visibility.Visible;

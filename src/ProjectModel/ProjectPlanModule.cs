@@ -75,20 +75,23 @@ public sealed partial class ProjectPlanModule
     private IEnumerable<ProjectTaskChoice> SelectedItemsOf(TaskConfiguration config) =>
         Pretasks.Where(item => config.SelectedPretasks.Contains(item.Name))
             .Concat(config.SelectedTasks.Select(name => Tasks.Single(item => item.Name == name)));
-    public string? SkippedPretaskMessage
+    public string? SkippedPretaskMessage => GetSkippedPretaskMessage(LoadConfig());
+
+    private string? GetSkippedPretaskMessage(TaskConfiguration config)
     {
-        get
-        {
-            var skipped = _project.Pretasks.Where(item => !item.Applicable && SelectedPretaskNames.Contains(item.Name))
-                .Select(item => $"“{item.Label}”（{item.SkipReason}）").ToArray();
-            return skipped.Length == 0 ? null : $"已跳过前置任务：{string.Join("、", skipped)}。";
-        }
+        var skipped = _project.Pretasks.Where(item => !item.Applicable && config.SelectedPretasks.Contains(item.Name))
+            .Select(item => $"“{item.Label}”（{item.SkipReason}）").ToArray();
+        return skipped.Length == 0 ? null : $"已跳过前置任务：{string.Join("、", skipped)}。";
     }
+
     public int SelectedItemCount => SelectedItems.Count;
     public IReadOnlyList<ProjectTaskChoice> EnabledItems => GetExecutionItems();
     public IReadOnlyList<ProjectTaskChoice> GetExecutionItems(bool startupOnly = false) =>
-        SelectedItemsOf(LoadConfig()).Where(item => (!startupOnly || item.Kind == PlanItemKind.Pretask)
-            && IsItemEnabled(item.Kind, item.Name)).ToArray();
+        GetExecutionItems(LoadConfig(), startupOnly);
+
+    private ProjectTaskChoice[] GetExecutionItems(TaskConfiguration config, bool startupOnly) =>
+        SelectedItemsOf(config).Where(item => (!startupOnly || item.Kind == PlanItemKind.Pretask)
+            && !_disabledItems.Contains((config.Id, item.Kind, item.Name))).ToArray();
 
     public bool IsItemEnabled(PlanItemKind kind, string name) =>
         !_disabledItems.Contains((ActiveConfigurationId, kind, name));
@@ -366,21 +369,37 @@ public sealed partial class ProjectPlanModule
         _project.RuntimeProfileDigest, _project.ProjectRoot, _project.Provenance,
         _project.Controller, _project.Resources, _project.Agent);
 
-    public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false)
+    public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false) =>
+        CreateRunStartAttempt(ActiveConfigurationId, startupOnly);
+
+    public RunStartAttempt CreateRunStartAttempt(Guid configurationId, bool startupOnly = false,
+        IReadOnlyDictionary<(string Option, string Input), string>? inputDrafts = null)
     {
-        if (SkippedPretaskMessage is { } skipped) {
+        var config = FindConfiguration(configurationId);
+        var skippedMessage = GetSkippedPretaskMessage(config);
+        if (skippedMessage is { } skipped) {
             _log?.Invoke(skipped);
         }
-        var selected = GetExecutionItems(startupOnly);
-        if (selected.Count == 0) {
-            throw new InvalidOperationException(SkippedPretaskMessage ?? "请先勾选要执行的任务或前置任务。");
+        var selected = GetExecutionItems(config, startupOnly);
+        if (selected.Length == 0) {
+            throw new InvalidOperationException(skippedMessage ?? "请先勾选要执行的任务或前置任务。");
         }
 
-        var config = LoadConfig();
         var passwords = new HashSet<string>(StringComparer.Ordinal);
-        var items = new List<RunPlanItem>(selected.Count);
+        var items = new List<RunPlanItem>(selected.Length);
         var global = ProtocolJson.ToElement(new { });
         foreach (var choice in selected) {
+            if (inputDrafts is { Count: > 0 }) {
+                var view = BuildConfiguration(config, choice.Name, choice.Kind);
+                foreach (var (option, _, _) in view.ActiveOptions) {
+                    foreach (var input in option.Inputs) {
+                        if (inputDrafts.TryGetValue((option.Name, input.Name), out var draft)
+                            && input.CheckValue(draft) is { } error) {
+                            throw new InvalidOperationException($"参数“{option.Label} · {input.Label}”：{error}");
+                        }
+                    }
+                }
+            }
             if (choice.Kind == PlanItemKind.Pretask) {
                 var item = FindPretask(choice.Name);
                 var (values, argument) = ProjectOptionResolver.ResolvePretask(_project, item, config, passwords);

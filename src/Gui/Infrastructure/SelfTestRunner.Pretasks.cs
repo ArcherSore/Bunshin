@@ -491,7 +491,7 @@ internal static partial class SelfTestRunner
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "retired-task-case"), (window, _) => {
             current = window;
             var failures = 0;
-            window.AutoRunFailed += (_, _) => failures++;
+            window.NotificationRequested += (_, _) => failures++;
             var full = window.AutoRunOnLaunchAsync();
             PumpUntil(() => full.IsCompleted, "普通任务的旧选项恢复后，完整运行应进入准备。");
             Require(full.GetAwaiter().GetResult() && failures == 0 && preparations == 1,

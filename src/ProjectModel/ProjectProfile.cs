@@ -6,7 +6,5 @@ public static class ProjectProfile
 {
     // Configuration files from earlier releases predate the project identity field.
     internal const string LegacyConfigurationProject = "MaaNOP";
-    public const string SupportGroupQq = "368655734";
     public const string SponsorUrl = "https://afdian.com/a/archersore";
-    public const string IssuesUrl = "https://github.com/ArcherSore/MaaNOP/issues";
 }

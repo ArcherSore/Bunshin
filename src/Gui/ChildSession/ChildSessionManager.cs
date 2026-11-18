@@ -375,7 +375,7 @@ internal sealed class ChildSessionManager : IDisposable
 
     // WTSGetChildSessionId can keep reporting a Child Session whose RDP logon failed after that session is gone.
     // Such an ID counts as absent only when a successful session enumeration omits it; otherwise it still counts.
-    private uint? QueryChildSessionId()
+    internal uint? QueryChildSessionId(bool requireEnumeration = false)
     {
         if (_getChildSessionId() is not uint sessionId) {
             return null;
@@ -384,7 +384,7 @@ internal sealed class ChildSessionManager : IDisposable
         IReadOnlyCollection<uint> sessions;
         try {
             sessions = _enumerateSessions();
-        } catch (Exception exception) {
+        } catch (Exception exception) when (!requireEnumeration) {
             _logger.Warn($"无法枚举 Windows Session，按 Child Session {sessionId} 仍存在处理。", exception);
             return sessionId;
         }

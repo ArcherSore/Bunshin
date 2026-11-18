@@ -340,15 +340,6 @@ internal static partial class SelfTestRunner
         if (input.Text != "978-," || Hint() is null) {
             throw new InvalidOperationException("重绘后应保留非法输入及其提示。");
         }
-        SetOnboardingField(window, "_expandedTaskName", null!);
-        InvokeOnboarding(window, "RenderTaskPlan");
-        var draftSummary = ConfigurationDescendants(items).OfType<System.Windows.Documents.Run>()
-            .SingleOrDefault(run => run.Text == "Server：978-,");
-        if (draftSummary?.Foreground != window.FindResource("Brush.Error.Foreground")) {
-            throw new InvalidOperationException("折叠摘要必须以错误色显示未保存的非法输入，而非已保存值。");
-        }
-        SetOnboardingField(window, "_expandedTaskName", "RealTask");
-        InvokeOnboarding(window, "RenderTaskPlan");
         input = Server();
         using (var source = new System.Windows.Interop.HwndSource(
             new System.Windows.Interop.HwndSourceParameters("self-test"))) {
@@ -379,9 +370,14 @@ internal static partial class SelfTestRunner
         var projectDirectory = CreateProjectFixture(Path.Combine(testDirectory, "blank-labels"));
         var interfacePath = Path.Combine(projectDirectory, "interface.json");
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(interfacePath))!;
+        json["global_option"]!.AsArray().Clear();
+        json["task"]![0]!["option"] = new System.Text.Json.Nodes.JsonArray("Nested", "ServerRange", "Team");
         var option = json["option"]!["ServerRange"]!;
         option["label"] = "";
         option["inputs"]![0]!["label"] = "";
+        json["option"]!["Team"] = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"type":"input","label":"","inputs":[{"name":"team","label":"出战队伍","default":"7"}]}
+            """);
         File.WriteAllText(interfacePath, json.ToJsonString());
         var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
@@ -395,10 +391,19 @@ internal static partial class SelfTestRunner
             }
             SetOnboardingField(window, "_expandedTaskName", null!);
             InvokeOnboarding(window, "RenderTaskPlan");
-            if (!ConfigurationDescendants(items).OfType<System.Windows.Documents.Run>()
-                .Any(run => run.Text == "ServerRange：978-1012")) {
-                throw new InvalidOperationException("option 与 input label 均为空时，折叠摘要应显示 option 名称。");
-            }
+            var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
+            Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
+                && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7")),
+                "折叠预览应优先显示首个输入的标签，两级标签均为空时显示选项名称。");
+            var switchLabel = tags.Single(tag => Equals(tag.ToolTip, "Nested：开"));
+            var switchPreview = (System.Windows.FrameworkElement)switchLabel.Parent;
+            var dot = ConfigurationDescendants(switchPreview).OfType<System.Windows.Shapes.Ellipse>().Single();
+            switchPreview.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+            switchPreview.Arrange(new System.Windows.Rect(switchPreview.DesiredSize));
+            double CenterY(System.Windows.FrameworkElement element) =>
+                element.TranslatePoint(new System.Windows.Point(0, element.ActualHeight / 2), switchPreview).Y;
+            Require(Math.Abs(CenterY(switchLabel) - CenterY(dot)) <= PixelTolerance,
+                "开关预览圆点应与文字垂直居中。");
         });
     }
 
@@ -407,6 +412,8 @@ internal static partial class SelfTestRunner
         var directory = Path.Combine(testDirectory, "draft-summary");
         var projectDirectory = CreateProjectFixture(directory);
         EditInterface(projectDirectory, json => {
+            json["global_option"]!.AsArray().Clear();
+            json["task"]![0]!["option"]!.AsArray().Add("ServerRange");
             var other = json["task"]![0]!.DeepClone();
             other["name"] = "OtherTask";
             json["task"]!.AsArray().Add(other);
@@ -418,8 +425,9 @@ internal static partial class SelfTestRunner
             ToggleRealTask(items);
             var other = ConfigurationDescendants(items).OfType<System.Windows.Controls.Border>()
                 .Single(card => card.Tag is ProjectTaskChoice { Name: "OtherTask" });
-            System.Windows.Documents.Run? Summary(string value) => ConfigurationDescendants(other)
-                .OfType<System.Windows.Documents.Run>().SingleOrDefault(run => run.Text.EndsWith(value));
+            System.Windows.Controls.TextBlock? Summary(string value) => ConfigurationDescendants(other)
+                .OfType<System.Windows.Controls.TextBlock>()
+                .SingleOrDefault(tag => Equals(tag.ToolTip, $"Server range：{value}"));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");

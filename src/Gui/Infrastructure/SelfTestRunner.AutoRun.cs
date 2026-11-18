@@ -169,7 +169,7 @@ internal static partial class SelfTestRunner
                 page.Single(item => item.Definition.SettingKey == "autorun.onManualLaunch").Toggle!.Value
                     = onManualLaunch;
                 current = window;
-                window.AutoRunFailed += (_, message) => failures.Add(message);
+                window.NotificationRequested += (_, n) => failures.Add(n.Message);
                 beforeAutoRun?.Invoke(window, directory);
                 var run = window.AutoRunOnLaunchAsync();
                 PumpUntil(() => run.IsCompleted, "自动执行必须结束，失败时不能停在模态框上。");
