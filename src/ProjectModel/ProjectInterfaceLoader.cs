@@ -389,7 +389,7 @@ internal static partial class ProjectInterfaceLoader
                 var value => throw new InvalidDataException($"不支持 input_type={value}（{inputPath}）。 ")
             };
             result.Add(new InputDefinition(
-                name, DisplayText(input, "label", translations) ?? name,
+                name, DisplayText(input, "label", translations, keepEmpty: true) ?? name,
                 ReadDisplayString(input, "description") ?? string.Empty,
                 password ? string.Empty : defaultValue.GetString()!, pipelineKind, OptionalString(input, "verify"),
                 DisplayText(input, "pattern_msg", translations), password ? ProjectInputType.Password : inputType));

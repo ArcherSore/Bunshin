@@ -273,10 +273,8 @@ internal sealed class ConfigurationSetStore
     {
         var backup = Path.Combine(Path.GetDirectoryName(_path)!,
             $"{Path.GetFileNameWithoutExtension(_path)}.invalid-{Guid.NewGuid():N}.dpapi");
-        // Keep the bytes stable until replacement. The original may contain a newly designated password.
-        using var original = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-        var bytes = new byte[checked((int)original.Length)];
-        original.ReadExactly(bytes);
+        // Close the original before the Windows rename. The archive may contain a newly designated password.
+        var bytes = File.ReadAllBytes(_path);
         try {
             WriteAtomic(backup, ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser), null);
         } catch (CryptographicException exception) {
