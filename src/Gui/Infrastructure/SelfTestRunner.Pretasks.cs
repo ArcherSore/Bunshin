@@ -39,16 +39,10 @@ internal static partial class SelfTestRunner
                     == window.FindResource("PlanHeaderButtonStyle"));
 
             Click(Named<Button>(window, "TaskShelfHeaderButton"));
-            Require(!ConfigurationDescendants(catalog).OfType<Button>()
-                .Any(button => AutomationProperties.GetName(button).Contains("启动并登录")),
-                "可用任务不应包含启动阶段。");
-            Require(Cards().Length == 3, "所有适用的启动项应直接可见。");
-            foreach (var index in new[] { 1, 0 }) {
-                var toggle = ConfigurationDescendants(Cards()[index])
-                    .OfType<System.Windows.Controls.CheckBox>().Single();
-                toggle.IsChecked = true;
-                toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-                PumpOnboarding();
+            Require(Cards().Length == 1, "未添加的启动项不能占用计划卡片。");
+            foreach (var name in new[] { "RealTask", "SecondBoot" }) {
+                Click(ConfigurationDescendants(catalog).OfType<Button>().Single(button =>
+                    button.Tag is ProjectTaskChoice { Kind: PlanItemKind.Pretask } task && task.Name == name));
             }
             void Capture(string suffix)
             {
@@ -66,18 +60,14 @@ internal static partial class SelfTestRunner
             }
             Click(Named<Button>(window, "TaskShelfHeaderButton"));
             Capture("collapsed");
-            var startupPlan = project.CreateRunStartAttempt(startupOnly: true).Plan;
-            Require(startupPlan.Items.Count == 2 && startupPlan.Items.All(item => item.Kind == PlanItemKind.Pretask)
-                && project.SelectedTaskNames.Count == 1, "仅执行启动不能包含或移除普通任务。");
             Require(Cards().Select(card => ((ProjectTaskChoice)card.Tag).Kind)
                     .SequenceEqual(new[] { PlanItemKind.Pretask, PlanItemKind.Pretask, PlanItemKind.MaaTask })
                 && Cards().Select(card => ((ProjectTaskChoice)card.Tag).Name)
                     .SequenceEqual(new[] { "RealTask", "SecondBoot", "RealTask" }),
-                "前置任务应按 PI 顺序固定在前，普通任务与前置任务允许同名。");
-            Require(Cards().Where(card => ((ProjectTaskChoice)card.Tag).Kind == PlanItemKind.Pretask)
-                .All(card => ConfigurationDescendants(card).OfType<Button>()
+                "前置任务应集中显示在前，普通任务与前置任务允许同名。");
+            Require(Cards().All(card => ConfigurationDescendants(card).OfType<Button>()
                     .Single(button => AutomationProperties.GetName(button) == "拖动以调整顺序")
-                    .Visibility == Visibility.Collapsed), "前置任务不得提供重排入口。");
+                    .IsVisible), "每张任务卡片都应提供拖动入口。");
 
             var preCard = Cards()[0];
             Click(Header(preCard));
@@ -136,10 +126,10 @@ internal static partial class SelfTestRunner
             Select(0, false);
             Require(project.CreateRunStartAttempt().Plan.Items.Select(item => (item.Kind, item.TaskName))
                 .SequenceEqual(new[] { (PlanItemKind.Pretask, "SecondBoot"), (PlanItemKind.MaaTask, "RealTask") })
-                && File.ReadAllText(configPath) != saved && project.SelectedItemCount == 2,
+                && File.ReadAllText(configPath) != saved && project.SelectedItemCount == 3,
                 "关闭启动项应保存配置，且不能跳过同名普通任务。");
             InvokeOnboarding(window, "RenderTaskPlan");
-            Require(Selection(0).IsChecked == false, "重绘任务栏不能重置临时选择。");
+            Require(Selection(0).IsChecked == false, "重绘任务栏不能重置勾选状态。");
             InvokeOnboarding(window, "LoadProject");
             project = ProjectOf(window);
             Require(Selection(0).IsChecked == false && project.EnabledItems.Count == 2,
@@ -147,25 +137,23 @@ internal static partial class SelfTestRunner
             var originalConfiguration = project.ActiveConfigurationId;
             project.CreateConfiguration();
             project.AddPretask("RealTask");
-            Require(project.IsItemEnabled(PlanItemKind.Pretask, "RealTask"), "新配置不继承其他配置的临时选择。");
+            Require(project.IsItemEnabled(PlanItemKind.Pretask, "RealTask"), "新配置不继承其他配置的勾选状态。");
             project.ActivateConfiguration(originalConfiguration);
-            Require(!project.SelectedPretaskNames.Contains("RealTask"), "切换配置应保留各自的启动选择。");
+            Require(project.SelectedPretaskNames.Contains("RealTask"), "切换配置应保留各自的启动选择。");
             Require(ProjectPlanModule.Open(directory, configPath).EnabledItems.Count == 2,
                 "重新打开项目应保留启动开关。");
-            project.AddPretask("RealTask");
             foreach (var kind in new[] { PlanItemKind.Pretask, PlanItemKind.MaaTask }) {
                 project.SetItemEnabled(kind, "RealTask", false);
-                if (kind == PlanItemKind.Pretask) {
-                    project.RemovePretask("RealTask");
-                    project.AddPretask("RealTask");
-                } else {
-                    project.RemoveTask("RealTask");
-                    project.AddTask("RealTask");
-                }
+                var reopened = ProjectPlanModule.Open(directory, configPath);
+                Require(!reopened.IsItemEnabled(kind, "RealTask") && reopened.SelectedItemCount == 3,
+                    "取消勾选后重新打开配置必须保留任务及其禁用状态。");
+                project.RemoveItem(kind, "RealTask");
+                project.AddItem(kind, "RealTask");
                 Require(project.IsItemEnabled(kind, "RealTask"), "删除后重新添加任务必须恢复勾选。");
             }
-            project.RemovePretask("RealTask");
+            project.MoveTask("RealTask", 0, PlanItemKind.Pretask);
             InvokeOnboarding(window, "RenderTaskPlan");
+            Select(0, false);
             Select(1, false);
             Select(2, false);
             Require(project.EnabledItems.Count == 0 && !Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
@@ -204,8 +192,7 @@ internal static partial class SelfTestRunner
             Observe(idle with { RunState = RunState.Running, ActiveRun = run });
             Require(ConfigurationDescendants(planPanel).OfType<TextBlock>().Select(text => text.Text)
                 .SequenceEqual(planText), "任务配置区不能随运行状态展示进度、耗时或执行结果。");
-            Require(!ButtonNamed(planPanel, "仅执行启动").IsEnabled
-                && !Selection(0).IsEnabled && !Selection(2).IsEnabled
+            Require(!Selection(0).IsEnabled && !Selection(2).IsEnabled
                 && Named<TextBlock>(window, "RuntimeStatusTitle").Text == "第二个前置"
                 && Named<Button>(window, "StopTaskHeaderButton").IsEnabled,
                 "运行期间勾选被锁定，控制面板显示当前前置任务并可停止。");
@@ -245,7 +232,7 @@ internal static partial class SelfTestRunner
             Require(Named<Button>(window, "StopTaskHeaderButton").IsEnabled,
                 "前置任务启动阶段也必须提供停止，不能等待游戏控制器创建。");
             Observe(idle);
-            Select(0, false);
+            Click(ButtonNamed(Cards()[0], "从执行计划移除 启动并登录"));
             Require(project.SelectedPretaskNames.SequenceEqual(new[] { "SecondBoot" }),
                 "前置任务的移除入口必须更新当前配置。");
         }, beforeLoad: directory => {

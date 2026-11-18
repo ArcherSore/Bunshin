@@ -44,6 +44,11 @@ internal static partial class SelfTestRunner
                 && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
                 "未填写的必填输入必须标红、显示 pattern_msg，并阻止开始。");
 
+            var activeProject = ProjectOf(window);
+            activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", false);
+            Require(!(bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
+                "取消勾选后，任务的必填参数不得阻止其他任务开始。");
+            activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", true);
             editor.Text = "Kakashi";
             typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [editor, false]);
             Require(!Row().IsInvalid && !Note()

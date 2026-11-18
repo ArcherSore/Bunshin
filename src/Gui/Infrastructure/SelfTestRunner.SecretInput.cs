@@ -41,14 +41,15 @@ internal static partial class SelfTestRunner
                 .Contains(SecretInputValue, StringComparison.Ordinal),
             "pipeline_override 与前置程序参数必须拿到密码原文。");
         // Telemetry redacts exactly the passwords this Run uses, found through PI's inputs[].password.
+        reopened.SetItemEnabled(PlanItemKind.MaaTask, "RealTask", false);
         Require(attempt.RedactionValues.SequenceEqual([SecretInputValue])
-            && reopened.CreateRunStartAttempt(startupOnly: true).RedactionValues.SequenceEqual([SecretInputValue]),
+            && reopened.CreateRunStartAttempt().RedactionValues.SequenceEqual([SecretInputValue]),
             "Run 用到的每个非空密码（含前置任务选项）都必须列入 RedactionValues，且不重复。");
         var written = new List<LogEntry>();
         void Capture(object? sender, LogEntry entry) => written.Add(entry);
         logger.EntryWritten += Capture;
         try {
-            RunResultLog.WritePlan(logger, attempt, "配置 1", startupOnly: false);
+            RunResultLog.WritePlan(logger, attempt, "配置 1");
         } finally {
             logger.EntryWritten -= Capture;
         }

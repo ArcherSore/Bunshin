@@ -81,15 +81,18 @@ internal static partial class SelfTestRunner
             && Throws<InvalidOperationException>(() => project.AddPretask("OtherResource"))
             && Throws<ArgumentException>(() => project.AddPretask("Missing")),
             "前置任务目录和添加入口必须过滤不适用的 controller/resource 并拒绝未知名称。");
-        project.AddPretask("Second");
         project.AddPretask("First");
+        project.AddPretask("Second");
+        Require(project.MoveTask("Second", 0, PlanItemKind.Pretask), "应允许拖动前置任务调整显示顺序。");
+        project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
         var attempt = project.CreateRunStartAttempt();
-        Require(project.SelectedItems.Select(choice => choice.Name).SequenceEqual(["First", "Second", "RealTask"])
+        Require(project.SelectedItems.Select(choice => choice.Name).SequenceEqual(["Second", "First", "RealTask"])
+            && project.EnabledItems.Select(item => item.Name).SequenceEqual(["First", "Second", "RealTask"])
             && attempt.Plan.Items.Select(item => item.TaskName).SequenceEqual(["First", "Second", "RealTask"])
             && attempt.Plan.Items.Take(2).All(item => item.Kind == PlanItemKind.Pretask
                 && item.Program!.Arguments.Count == 0)
             && attempt.Plan.Items[2].Kind == PlanItemKind.MaaTask,
-            "添加顺序不能改变 PI 前置任务顺序，且所有前置任务必须位于普通任务之前。");
+            "重新打开应保留拖动顺序，运行和进度仍按 PI 顺序先执行前置任务。");
 
         var baseline = attempt.Plan;
         var first = baseline.Items[0];
@@ -295,7 +298,8 @@ internal static partial class SelfTestRunner
         }));
         var project = ProjectPlanModule.Open(directory, path);
         using (var document = JsonDocument.Parse(File.ReadAllBytes(path))) {
-            Require(document.RootElement.GetProperty("SchemaVersion").GetInt32() == 3
+            var version = document.RootElement.GetProperty("SchemaVersion").GetInt32();
+            Require(version == ConfigurationSet.CurrentSchemaVersion
                 && project.ActiveConfigurationId == first && project.SelectedTaskNames.SequenceEqual(["RealTask"])
                 && project.Configurations.All(config => config.SelectedPretasks.Count == 0)
                 && project.Configurations.All(config => config.ExplicitOptions["Mode"]
@@ -311,8 +315,14 @@ internal static partial class SelfTestRunner
         project.AddPretask("Prepare");
         project.SetInputValue("LaunchInput", "caption", "second");
         project.SetInputValue(first, "LaunchInput", "caption", "late-first");
+        var legacy = JsonNode.Parse(File.ReadAllText(path))!;
+        legacy["SchemaVersion"] = 3;
+        foreach (var item in legacy["Configurations"]!.AsArray()) {
+            item!.AsObject().Remove("DisabledItems");
+        }
+        File.WriteAllText(path, legacy.ToJsonString());
         project = ProjectPlanModule.Open(directory, path);
-        Require(project.ActiveConfigurationId == second
+        Require(project.Configurations.Count == 2 && project.ActiveConfigurationId == second
             && project.CreateRunStartAttempt().Plan.Items.Select(item => item.TaskName)
                 .SequenceEqual(["Prepare", "Finish"])
             && project.CreateRunStartAttempt().Plan.Items[0].ResolvedOptions.GetProperty("LaunchInput")
@@ -332,6 +342,16 @@ internal static partial class SelfTestRunner
         Require(project.GetConfiguration("Prepare", PlanItemKind.Pretask).TaskOptions.Single()
                 .ActiveChildren.Single().Inputs.Single(input => input.Name == "caption").Value == "late-first",
             "移除并重新添加前置任务后必须恢复显式参数。");
+
+        var interfacePath = Path.Combine(directory, "interface.json");
+        var definition = JsonNode.Parse(File.ReadAllText(interfacePath))!;
+        definition["pretask"]![0]!["controller"] = new JsonArray("OtherController");
+        File.WriteAllText(interfacePath, definition.ToJsonString());
+        project = ProjectPlanModule.Open(directory, path);
+        Require(project.SelectedItems.Any(item => item.Name == "Prepare" && !item.Applicable)
+            && project.CreateRunStartAttempt().Plan.Items.All(item => item.TaskName != "Prepare")
+            && project.RemoveItem(PlanItemKind.Pretask, "Prepare"),
+            "升级资源后不再适用的前置任务应保留在配置中供删除，运行时跳过。");
     }
 
     private static void VerifyInvalidPretaskDefinitions(string testDirectory)

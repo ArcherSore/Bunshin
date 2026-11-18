@@ -524,7 +524,7 @@ internal static partial class SelfTestRunner
 
         File.WriteAllText(path, """{"SchemaVersion":1,"SelectedTasks":["RealTask"],"ExplicitOptions":{}}""");
         _ = Open();
-        Expect("迁移应写明版本", "已更新任务配置文件 [reason=SchemaVersion 1 -> 3]");
+        Expect("迁移应写明版本", "已更新任务配置文件 [reason=SchemaVersion 1 -> 4]");
 
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
         json["ActiveConfigurationId"] = Guid.NewGuid().ToString();
@@ -534,7 +534,7 @@ internal static partial class SelfTestRunner
 
         File.WriteAllText(path, """{"SchemaVersion":2,"Configurations":[]}""");
         _ = Open();
-        Expect("多个原因都应写出", "已更新任务配置文件 [reason=SchemaVersion 2 -> 3；配置列表为空]");
+        Expect("多个原因都应写出", "已更新任务配置文件 [reason=SchemaVersion 2 -> 4；配置列表为空]");
 
         File.WriteAllText(path, """{"SchemaVersion":1,"SelectedTasks":[],"ExplicitOptions":{}}""");
         ProjectPlanModule locked;
