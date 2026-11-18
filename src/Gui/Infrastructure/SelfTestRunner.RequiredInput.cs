@@ -41,11 +41,11 @@ internal static partial class SelfTestRunner
             bool Note() => ConfigurationDescendants(Row()).OfType<System.Windows.Controls.TextBlock>()
                 .Any(text => text.Text == "Fill in the recipient");
             Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error")
-                && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
+                && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false])!,
                 "未填写的必填输入必须标红、显示 pattern_msg，并阻止开始。");
 
             editor.Text = "Kakashi";
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [editor]);
+            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [editor, false]);
             Require(!Row().IsInvalid && !Note()
                 && editor.ReadLocalValue(System.Windows.Controls.Control.BorderBrushProperty)
                     == System.Windows.DependencyProperty.UnsetValue,

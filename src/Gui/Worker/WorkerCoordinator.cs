@@ -382,7 +382,8 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    internal async Task<RunStartResponse> StartRunAsync(RunStartAttempt attempt, CancellationToken cancellationToken = default)
+    internal async Task<RunStartResponse> StartRunAsync(
+        RunStartAttempt attempt, CancellationToken cancellationToken = default, Action? onSending = null)
     {
         EnsureStartAllowed(attempt.Plan.RuntimeProfileDigest);
         return await SendRequestAsync<RunStartRequest, RunStartResponse>(
@@ -390,7 +391,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             new RunStartRequest(attempt.RunId, attempt.PlanDigest, attempt.Plan) {
                 RedactionValues = attempt.RedactionValues
             },
-            cancellationToken);
+            cancellationToken, onSending);
     }
 
     internal async Task<RunStopResponse> StopRunAsync(Guid runId, CancellationToken cancellationToken = default)
@@ -772,17 +773,22 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     private async Task RefreshSnapshotAfterGapAsync()
     {
         try {
-            var response = await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token);
-            WorkerAdmissionRecord admission;
-            lock (_gate) {
-                admission = _admission
-                            ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
-            }
-            ApplyFreshSnapshot(response.Snapshot, admission);
+            await RefreshSnapshotAsync();
         } catch (Exception exception) {
             _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
         }
+    }
+
+    internal async Task<WorkerSnapshot> RefreshSnapshotAsync()
+    {
+        var response = await SendRequestAsync<object, GetSnapshotResponse>(
+            ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token);
+        WorkerAdmissionRecord admission;
+        lock (_gate) {
+            admission = _admission ?? throw new ProtocolException("刷新 Snapshot 时 Admission Record 已失效。 ");
+        }
+        ApplyFreshSnapshot(response.Snapshot, admission);
+        return response.Snapshot;
     }
 
     private void ApplyLiveLog(
@@ -932,13 +938,14 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         && _admission?.WorkerInstanceId == workerInstanceId && _logSequence.WorkerInstanceId == workerInstanceId;
 
     private async Task<TResponse> SendRequestAsync<TRequest, TResponse>(
-        string operation, TRequest data, CancellationToken cancellationToken)
+        string operation, TRequest data, CancellationToken cancellationToken, Action? onSending = null)
     {
         var started = Stopwatch.GetTimestamp();
         string Details() => AppLogger.Field("operation", operation)
             + AppLogger.Field("cost", $"{Stopwatch.GetElapsedTime(started).TotalMilliseconds:0}ms");
         try {
-            var response = await SendRequestCoreAsync<TRequest, TResponse>(operation, data, cancellationToken);
+            var response = await SendRequestCoreAsync<TRequest, TResponse>(
+                operation, data, cancellationToken, onSending);
             // Log recovery pages can be frequent, and the logs they carry show their own effect.
             if (operation != ProtocolOperations.LogGetSince) {
                 _logger.Debug($"Worker 请求完成{Details()}");
@@ -954,7 +961,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     private async Task<TResponse> SendRequestCoreAsync<TRequest, TResponse>(
-        string operation, TRequest data, CancellationToken cancellationToken)
+        string operation, TRequest data, CancellationToken cancellationToken, Action? onSending)
     {
         ProtocolConnection connection;
         lock (_gate) {
@@ -967,7 +974,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             throw new InvalidOperationException("无法登记 IPC requestId。 ");
         }
         try {
-            await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken);
+            await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
             var response = await completion.Task.WaitAsync(RequestTimeout, cancellationToken);
             if (response.Success != true) {
                 throw new WorkerProtocolErrorException(

@@ -391,9 +391,10 @@ internal static partial class SelfTestRunner
         ChildSessionManager? session = null, WorkerCoordinator? coordinator = null,
         Func<Func<Task>, Task>? runOperation = null, bool loadProject = true, RuntimeEnvironment? environment = null,
         Func<Task>? endEnvironment = null,
-        Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null)
+        Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
+        string? projectDirectory = null)
     {
-        var projectDirectory = CreateProjectFixture(directory);
+        projectDirectory ??= CreateProjectFixture(directory);
         if (!loadProject) {
             File.Delete(Path.Combine(projectDirectory, "interface.json"));
         }

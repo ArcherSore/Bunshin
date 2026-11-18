@@ -85,35 +85,29 @@ internal static partial class SelfTestRunner
     private static void VerifyQuitAfterRunTracker()
     {
         var running = CreateNotificationSnapshot(RunState.Running);
-        var runStarted = running.WorkerSnapshot!.ActiveRun!.StartedAtUtc!.Value;
-        QuitAfterRunTracker ArmedBeforeRun() => new(runStarted.AddMinutes(-1));
-
-        var tracker = ArmedBeforeRun();
+        var worker = running.WorkerSnapshot!;
+        var run = worker.ActiveRun!;
+        var tracker = new QuitAfterRunTracker();
+        Require(!tracker.Observe(FinishNotificationRun(running, RunState.Succeeded)), "提交之前不能自动退出。");
+        tracker.Await(run.RunId);
         Require(!tracker.Observe(running), "任务运行中不能退出。");
         var faulted = running with {
-            WorkerSnapshot = running.WorkerSnapshot with { WorkerState = WorkerState.Faulted }
+            WorkerSnapshot = worker with { WorkerState = WorkerState.Faulted }
         };
         Require(!tracker.Observe(faulted), "执行终止未确认（Faulted）时不能退出。");
 
+        var other = CreateNotificationSnapshot(RunState.Running);
+        Require(!tracker.Observe(FinishNotificationRun(other, RunState.Succeeded)), "其他 Run 结束不能触发退出。");
+        var earlier = running with {
+            WorkerSnapshot = worker with { ActiveRun = run with { StartedAtUtc = DateTime.UnixEpoch } }
+        };
         foreach (var state in new[] { RunState.Succeeded, RunState.Failed, RunState.Cancelled }) {
-            tracker = ArmedBeforeRun();
-            var ended = FinishNotificationRun(running, state);
+            tracker.Await(run.RunId);
+            var ended = FinishNotificationRun(earlier, state);
             Require(!tracker.Observe(ended with { SnapshotFresh = false }), "断线后的旧快照不能推测任务已结束。");
-            Require(tracker.Observe(ended), $"{state} 终态必须触发退出。");
+            Require(tracker.Observe(ended), $"系统时钟回拨后，已绑定 Run 的 {state} 终态仍须触发退出。");
+            Require(!tracker.Observe(ended), "重复的终态快照不能再次触发退出。");
         }
-
-        var late = new QuitAfterRunTracker(runStarted.AddMinutes(1));
-        Require(!late.Observe(FinishNotificationRun(running, RunState.Succeeded)),
-            "自动执行触发之前就已结束的 Run 不能让程序退出。");
-
-        // A start request whose answer was lost: only the Run that was requested may end the wait.
-        var requested = ArmedBeforeRun();
-        requested.Await(Guid.NewGuid());
-        Require(!requested.Observe(FinishNotificationRun(running, RunState.Succeeded)),
-            "按 Run ID 等待时，其他 Run 结束不能让程序退出。");
-        var awaited = ArmedBeforeRun();
-        awaited.Await(running.WorkerSnapshot.ActiveRun!.RunId);
-        Require(awaited.Observe(FinishNotificationRun(running, RunState.Succeeded)), "等待的那个 Run 结束必须触发退出。");
     }
 
     // Two configurations, "日常" active and "周常" second, each with the project's first task unless left empty.
@@ -140,9 +134,7 @@ internal static partial class SelfTestRunner
     {
         var boot = new LaunchCommand(AutoStart: true, QuitAfterRun: true);
         var prepared = new List<string>();
-        var started = 0;
         var failures = new List<string>();
-        var abandoned = 0;
         MainWindow? current = null;
         var desktopShown = new List<bool>();
         Task PrepareThenFail(ProjectPlanModule project, Func<MaaFrameworkOptions> options, bool showDesktop)
@@ -166,9 +158,7 @@ internal static partial class SelfTestRunner
         {
             prepared.Clear();
             desktopShown.Clear();
-            started = 0;
             failures.Clear();
-            abandoned = 0;
             RunOnboardingScenario(logger, Path.Combine(testDirectory, name), (window, directory) => {
                 CompleteOnboardingStartup(window);
                 var page = SettingsPageFor(window).Sections.SelectMany(section => section.Items).ToArray();
@@ -179,9 +169,7 @@ internal static partial class SelfTestRunner
                 page.Single(item => item.Definition.SettingKey == "autorun.onManualLaunch").Toggle!.Value
                     = onManualLaunch;
                 current = window;
-                window.AutoRunStarted += (_, _) => started++;
                 window.AutoRunFailed += (_, message) => failures.Add(message);
-                window.AutoRunAbandoned += (_, _) => abandoned++;
                 beforeAutoRun?.Invoke(window, directory);
                 var run = window.AutoRunOnLaunchAsync();
                 PumpUntil(() => run.IsCompleted, "自动执行必须结束，失败时不能停在模态框上。");
@@ -191,42 +179,39 @@ internal static partial class SelfTestRunner
         }
 
         Launch("manual", new LaunchCommand(), "周常", false, (_, ran) =>
-            Require(!ran && prepared.Count == 0 && started == 0 && abandoned == 0,
-                "手动启动且未开启开关时不得自动执行。"));
+            Require(!ran && prepared.Count == 0, "手动启动且未开启开关时不得自动执行。"));
         Launch("boot", boot, "周常", false, (window, ran) => {
             Require(ran && prepared.SequenceEqual(["周常"]), "开机自启必须先激活所选配置再准备并开始。");
             Require(desktopShown.SequenceEqual([false]), "自动执行准备运行环境时不得弹出分身窗口。");
-            Require(started == 1, "触发自动执行后必须通知，--quit-after-run 才能开始等待。");
             Require(failures is [{ } failure] && failure.Contains("模拟准备失败"),
                 "自动执行开始前失败必须报告，而不是弹模态框。");
-            Require(abandoned == 1, "任务没能开始时必须放弃 --quit-after-run 的等待，以免之后手动任务结束时退出。");
             Require(ProjectOf(window).ActiveConfigurationId == ProjectOf(window).Configurations
                 .Single(item => item.Name == "周常").Id, "激活的配置必须保存下来。");
         });
         Launch("exit-requested", boot, "周常", false, (_, ran) =>
-            Require(ran && started == 1 && failures.Count == 0 && abandoned == 1,
-                "准备时用户要求退出，自动执行没有开始任务，必须放弃 --quit-after-run 的等待。"),
+            Require(ran && prepared.SequenceEqual(["周常"]) && failures.Count == 0,
+                "准备时用户要求退出，应结束自动执行并避免报告任务失败。"),
             prepare: PrepareThenExit);
         Launch("manual-flag", new LaunchCommand(), "周常", true, (_, ran) =>
             Require(ran && prepared.SequenceEqual(["周常"]), "开启“手动启动时也自动执行”后手动启动应自动执行。"));
         Launch("instance", boot with { Instance = "周常" }, "日常", false, (_, ran) =>
             Require(ran && prepared.SequenceEqual(["周常"]), "--instance 必须优先于设置里的配置。"));
         Launch("unknown-instance", boot with { Instance = "不存在" }, "日常", false, (_, ran) =>
-            Require(!ran && prepared.Count == 0 && started == 0 && failures.Count == 0,
+            Require(!ran && prepared.Count == 0 && failures.Count == 0,
                 "--instance 找不到时必须跳过，不回退到其他配置。"));
         Launch("not-startable", boot, "周常", false, (_, ran) =>
-            Require(!ran && prepared.Count == 0 && started == 0, "运行控制栏不允许开始时必须跳过。"),
+            Require(!ran && prepared.Count == 0, "运行控制栏不允许开始时必须跳过。"),
             (window, _) => window.SetExitInProgress(true));
         Launch("empty-active-configuration", boot, "周常", false, (_, ran) =>
             Require(ran && prepared.SequenceEqual(["周常"]), "目标配置有效时，原来激活的配置没有任务不能挡住它。"),
             fixture: TwoConfigurations(dailyHasTask: false));
         Launch("target-without-tasks", boot, "周常", false, (_, ran) =>
-            Require(ran && prepared.Count == 0 && started == 0 && failures.Count == 1,
+            Require(ran && prepared.Count == 0 && failures.Count == 1,
                 "目标配置没有任务时必须报告失败，不能白白创建桌面分身。"),
             fixture: TwoConfigurations(weeklyHasTask: false));
         var twoConfigurations = TwoConfigurations();
         Launch("unreadable-configurations", boot with { Instance = "周常" }, null, false, (_, ran) =>
-            Require(ran && prepared.Count == 0 && started == 0 && failures.Count == 1,
+            Require(ran && prepared.Count == 0 && failures.Count == 1,
                 "任务配置读不出来时必须报告失败，不能悄悄跳过，也不能运行占位的配置。"),
             fixture: directory => {
                 twoConfigurations(directory);
@@ -235,7 +220,7 @@ internal static partial class SelfTestRunner
         FileStream? locked = null;
         Launch("switch-refused", boot, "周常", false, (window, ran) => {
             locked?.Dispose();
-            Require(ran && prepared.Count == 0 && started == 0 && failures.Count == 1,
+            Require(ran && prepared.Count == 0 && failures.Count == 1,
                 "无法切换到目标配置时必须报告失败，不能弹模态框，也不能改跑原来的配置。");
             Require(ProjectOf(window).Configurations.Single(item => item.Name == "日常").Id
                 == ProjectOf(window).ActiveConfigurationId, "切换失败后仍是原配置。");

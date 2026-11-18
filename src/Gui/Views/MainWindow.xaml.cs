@@ -79,6 +79,7 @@ public partial class MainWindow : FluentWindow
     private bool _exitInProgress;
     private bool _followLogs = true;
     private bool _projectConfigurationValid;
+    private bool _startupConfigurationValid;
     private bool _updatingOptionEditors;
     private bool _taskShelfExpanded;
     private double? _preferredRuntimeSidebarWidth;
@@ -131,9 +132,10 @@ public partial class MainWindow : FluentWindow
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
-        GuiTelemetry? telemetry = null)
+        GuiTelemetry? telemetry = null, QuitAfterRunTracker? quitAfterRun = null)
     {
         _launchCommand = launchCommand ?? new LaunchCommand();
+        _quitAfterRun = quitAfterRun;
         InitializeComponent();
         _runLog = new RunLogFeed(LogLines, MaximumGuiLogEntries);
         DataContext = this;
@@ -534,7 +536,7 @@ public partial class MainWindow : FluentWindow
 
     private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!CommitFocusedConfigurationInput() || RevealInvalidParameter() || OperationOrExitInProgress) {
+        if (!ValidateRunInputs() || OperationOrExitInProgress) {
             LogIgnoredAction();
             return;
         }
@@ -561,6 +563,13 @@ public partial class MainWindow : FluentWindow
             {
                 try {
                     LoadProject();
+                    // Reload may change which fields the selected Plan Items require.
+                    if (startRun && RevealInvalidParameter(startupOnly)) {
+                        if (unattended) {
+                            ReportAutoRunFailure("所选配置有未通过校验的参数。");
+                        }
+                        return;
+                    }
                     await _prepareEnvironment(RequireProject(), _settings.CreateFrameworkOptions, showDesktop);
                 } catch {
                     _environmentPreparationFailed = true;
@@ -581,7 +590,7 @@ public partial class MainWindow : FluentWindow
                         return;
                     }
                     SetPendingOperation(PendingOperation.StartingRun);
-                    await StartCurrentPlanAsync(startupOnly);
+                    await StartCurrentPlanAsync(startupOnly, unattended ? _quitAfterRun : null);
                 }
             },
             unattended);
@@ -609,7 +618,7 @@ public partial class MainWindow : FluentWindow
 
     private async void StartRunButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!CommitFocusedConfigurationInput() || RevealInvalidParameter()
+        if (!ValidateRunInputs()
             || CurrentControls.Action is not (RuntimeAction.Start { Enabled: true }
                 or RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true })) {
             LogIgnoredAction();
@@ -619,7 +628,7 @@ public partial class MainWindow : FluentWindow
     }
 
     // Called only while the application operation gate is held, after preparation or a direct Start.
-    private async Task StartCurrentPlanAsync(bool startupOnly = false)
+    private async Task StartCurrentPlanAsync(bool startupOnly = false, QuitAfterRunTracker? quitAfterRun = null)
     {
         // The operation may wait behind another one, so the session is checked again when it runs.
         if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
@@ -627,7 +636,7 @@ public partial class MainWindow : FluentWindow
             throw new InvalidOperationException("Child Session 尚未连接，当前不能开始任务。 ");
         }
         var project = RequireProject();
-        if (!_projectConfigurationValid) {
+        if (!(startupOnly ? _startupConfigurationValid : _projectConfigurationValid)) {
             throw new InvalidOperationException(
                 "当前 任务配置尚未通过正式 PI Resolver 校验。 ");
         }
@@ -635,26 +644,36 @@ public partial class MainWindow : FluentWindow
             _pendingStartAttempt = null;
         }
         _pendingStartupOnly = startupOnly;
-        _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
-        RunResultLog.WritePlan(_logger, _pendingStartAttempt, ActiveConfigurationName, startupOnly);
-        _telemetry.Register(_pendingStartAttempt.RedactionValues);
+        var attempt = _pendingStartAttempt ??= project.CreateRunStartAttempt(startupOnly);
+        if (quitAfterRun is null && _quitAfterRun?.IsWaitingFor(attempt.RunId) == true) {
+            // A manual retry reuses the ID. Ask the Worker whether it saw the automatic request before replaying it.
+            var worker = await _workerCoordinator.RefreshSnapshotAsync();
+            if (worker.ActiveRun?.RunId == attempt.RunId || worker.LastRun?.RunId == attempt.RunId) {
+                _pendingStartAttempt = null;
+                return;
+            }
+            if (_exitInProgress || _environment.Closing) {
+                return;
+            }
+            _quitAfterRun.Abandon();
+        }
+        RunResultLog.WritePlan(_logger, attempt, ActiveConfigurationName, startupOnly);
+        _telemetry.Register(attempt.RedactionValues);
         RunStartResponse response;
         try {
-            response = await _workerCoordinator.StartRunAsync(_pendingStartAttempt);
-        } catch (Exception exception)
-            when (exception is not (WorkerProtocolErrorException or InvalidOperationException)) {
-            // Sent, but no answer: the Worker may have started it, so a retry reuses the same Run ID.
-            _unconfirmedRunId = _pendingStartAttempt.RunId;
+            response = await _workerCoordinator.StartRunAsync(attempt,
+                onSending: quitAfterRun is null ? null : () => quitAfterRun.Await(attempt.RunId));
+        } catch (WorkerProtocolErrorException) {
+            // The start was rejected. A manual retry may reuse this ID and must not cause an automatic exit.
+            quitAfterRun?.Abandon();
             throw;
         }
         if (response.Disposition is not ("accepted" or "already_accepted")) {
             throw new InvalidDataException($"未知 run.start disposition：{response.Disposition}。 ");
         }
         _logger.Info(
-            $"run.start {response.Disposition}：runId={_pendingStartAttempt.RunId:D}；"
-            + $"planDigest={_pendingStartAttempt.PlanDigest}。 ");
+            $"run.start {response.Disposition}：runId={attempt.RunId:D}；planDigest={attempt.PlanDigest}。 ");
         _pendingStartAttempt = null;
-        _runAccepted = true;
     }
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
@@ -778,14 +797,18 @@ public partial class MainWindow : FluentWindow
             new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
     }
 
+    // Preserve any edit first, then decide whether its draft belongs to this Run, including shared options.
+    private bool ValidateRunInputs(bool startupOnly = false) =>
+        CommitFocusedConfigurationInput(deferDraftCheck: true) && !RevealInvalidParameter(startupOnly);
+
     // An invalid parameter blocks Start: show the field holding an invalid, unsaved value, or the checkbox row below
     // min_count, instead of running.
-    private bool RevealInvalidParameter()
+    private bool RevealInvalidParameter(bool startupOnly = false)
     {
         if (_projectPlan is not { } project) {
             return false;
         }
-        var match = project.SelectedItems.OrderBy(task => IsExpanded(task) ? 0 : 1)
+        var match = project.GetExecutionItems(startupOnly).OrderBy(task => IsExpanded(task) ? 0 : 1)
             .SelectMany(task => DeriveInspectorRows(task.Name, GetConfigurationOrEmpty(task.Name, task.Kind),
                 shared: false, task.Kind).Where(row => row.IsInvalid).Select(row => (Task: task, Row: row)))
             .FirstOrDefault();
@@ -986,7 +1009,7 @@ public partial class MainWindow : FluentWindow
         try {
             RenderTaskPlan();
         } catch (Exception exception) {
-            _projectConfigurationValid = false;
+            _projectConfigurationValid = _startupConfigurationValid = false;
             ShowProjectValidationError(exception);
             _logger.Warn("刷新 option 编辑器失败。", exception);
             RefreshRuntimeControls();
@@ -1009,15 +1032,25 @@ public partial class MainWindow : FluentWindow
 
     private void RefreshConfigurationValidity(ProjectPlanModule project)
     {
-        try {
-            project.ValidateConfiguration();
-            _projectConfigurationValid = true;
+        Exception? ValidationError(bool startupOnly)
+        {
+            try {
+                project.ValidateConfiguration(startupOnly);
+                return null;
+            } catch (Exception exception) {
+                return exception;
+            }
+        }
+
+        var error = ValidationError(startupOnly: false);
+        _projectConfigurationValid = error is null;
+        _startupConfigurationValid = _projectConfigurationValid || ValidationError(startupOnly: true) is null;
+        if (error is null) {
             ProjectValidationText.Text = project.LoadWarning ?? string.Empty;
             ProjectValidationBorder.Visibility = project.LoadWarning is null
                 ? Visibility.Collapsed : Visibility.Visible;
-        } catch (Exception exception) {
-            _projectConfigurationValid = false;
-            ShowProjectValidationError(exception);
+        } else {
+            ShowProjectValidationError(error);
         }
         RefreshRuntimeControls();
     }
@@ -2048,7 +2081,7 @@ public partial class MainWindow : FluentWindow
         ShowProjectIdentity(null);
         _invalidInputDrafts.Clear();
         _pendingStartAttempt = null;
-        _projectConfigurationValid = false;
+        _projectConfigurationValid = _startupConfigurationValid = false;
         _expandedTaskName = null;
         AvailableTasksPanel.Children.Clear();
         PlanItemsPanel.Children.Clear();
@@ -2257,13 +2290,14 @@ public partial class MainWindow : FluentWindow
     }
 
     // Derived fresh on every read, so a click handler never acts on a decision the window no longer shows.
-    private RuntimeControlState CurrentControls => RuntimeControls.Derive(new RuntimeControlInputs(
-        _sessionSnapshot, _workerSnapshot, _projectPlan is { } project
-            ? new ProjectReadiness(true, project.EnabledItems.Count, _projectConfigurationValid,
-                project.RuntimeProfileDigest)
-            : ProjectReadiness.NotLoaded,
-        _pendingOperation, _environmentPreparationFailed, _exitInProgress, _environment.Ending,
-        _environment.EndUnconfirmed));
+    private RuntimeControlState CurrentControls => ControlsFor(_projectPlan is { } project
+        ? new ProjectReadiness(true, project.EnabledItems.Count, _projectConfigurationValid,
+            project.RuntimeProfileDigest)
+        : ProjectReadiness.NotLoaded);
+
+    private RuntimeControlState ControlsFor(ProjectReadiness project) => RuntimeControls.Derive(
+        new RuntimeControlInputs(_sessionSnapshot, _workerSnapshot, project, _pendingOperation,
+            _environmentPreparationFailed, _exitInProgress, _environment.Ending, _environment.EndUnconfirmed));
 
     // The only refresh path for runtime inputs.
     private void RefreshRuntimeControls()
@@ -2441,7 +2475,7 @@ public partial class MainWindow : FluentWindow
 
     private RunProgressView? CurrentRunProgress => _projectPlan is { } project
         ? RunProgress.Derive(_workerSnapshot.WorkerSnapshot,
-            project.EnabledItems.Where(item => !_pendingStartupOnly || item.Kind == PlanItemKind.Pretask)
+            project.GetExecutionItems(_pendingStartupOnly)
                 .Select(item => (item.Kind, item.Name)).ToArray()) : null;
 
     private enum StatusTone { Idle, Busy, Ok, Run, Bad }

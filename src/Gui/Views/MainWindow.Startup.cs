@@ -123,8 +123,8 @@ public partial class MainWindow
 
     private async void RunStartupOnly_Click(object sender, RoutedEventArgs e)
     {
-        if (_startupOnlyButton?.IsEnabled != true || !CommitFocusedConfigurationInput()
-            || RevealInvalidParameter() || OperationOrExitInProgress) {
+        if (_startupOnlyButton?.IsEnabled != true || !ValidateRunInputs(startupOnly: true)
+            || OperationOrExitInProgress) {
             LogIgnoredAction();
             return;
         }
@@ -142,8 +142,11 @@ public partial class MainWindow
         if (_startupOnlyButton is null || _projectPlan is not { } project) {
             return;
         }
-        var enabled = project.EnabledItems.Any(item => item.Kind == PlanItemKind.Pretask);
-        _startupOnlyButton.IsEnabled = state.ConfigurationEditable && enabled && _projectConfigurationValid
+        var count = project.GetExecutionItems(startupOnly: true).Count;
+        if (!_projectConfigurationValid && _startupConfigurationValid) {
+            state = ControlsFor(new ProjectReadiness(true, count, true, project.RuntimeProfileDigest));
+        }
+        _startupOnlyButton.IsEnabled = state.ConfigurationEditable && count > 0 && _startupConfigurationValid
             && state.Action is RuntimeAction.Prepare { Enabled: true }
                 or RuntimeAction.Start { Enabled: true } or RuntimeAction.Retry { Enabled: true };
     }

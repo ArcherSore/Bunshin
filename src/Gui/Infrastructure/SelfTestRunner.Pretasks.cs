@@ -18,6 +18,103 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static Button PlanHeader(Border card) => ConfigurationDescendants(card).OfType<Button>()
+        .Single(b => b.Tag is ProjectTaskChoice && b.Style == card.FindResource("PlanHeaderButtonStyle"));
+
+    private static void ToggleRealTask(Panel plan)
+    {
+        var card = ConfigurationDescendants(plan).OfType<Border>()
+            .Single(card => card.Tag is ProjectTaskChoice { Kind: PlanItemKind.MaaTask, Name: "RealTask" });
+        PlanHeader(card).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    }
+
+    private static void VerifyStartScopeWiring(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "start-scope");
+        var projectDirectory = CreatePretaskFixture(directory, """
+            [{"name":"Boot","exec":"boot-fixture","option":["LaunchInput"]}]
+            """);
+        AddRequiredInput(projectDirectory);
+        var interfacePath = Path.Combine(projectDirectory, "interface.json");
+        var definition = JsonNode.Parse(File.ReadAllText(interfacePath))!;
+        definition["task"]!.AsArray().Add(new JsonObject { ["name"] = "ReadyTask", ["entry"] = "ReadyEntry" });
+        File.WriteAllText(interfacePath, definition.ToJsonString());
+        var configPath = Path.Combine(projectDirectory, "config", "configurations.json");
+        var project = ProjectPlanModule.Open(projectDirectory, configPath);
+        project.AddPretask("Boot");
+        project.SetInputValue("LaunchInput", "caption", "启动参数");
+        project.AddTask("ReadyTask");
+
+        WithFakeWorker(logger, Path.Combine(directory, "worker"), (coordinator, record, pipeName) => {
+            using var session = new SimulatedWts().CreateManager(logger);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(WaitLimitMilliseconds));
+            var pipe = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, timeout.Token))
+                .GetAwaiter().GetResult();
+            try {
+                WithRuntimeControlWindow(logger, directory, window => {
+                    // Publish a connected simulated session after the window's normal startup probe.
+                    const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                    typeof(ChildSessionManager).GetMethod("UpdateState", flags)!
+                        .Invoke(session, [ChildSessionState.ConnectedHidden, record.ChildSessionId, 1, "fixture"]);
+                    var items = Named<Panel>(window, "PlanItemsPanel");
+                    T FindControl<T>(string name) where T : UIElement => ConfigurationDescendants(items)
+                        .OfType<T>().Single(control => AutomationProperties.GetName(control) == name);
+
+                    RunPlan Submit(Button button, string failure)
+                    {
+                        PumpUntil(() => button.IsEnabled, failure);
+                        button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                        Require(!ConfigurationEditable(window), failure);
+                        var received = Task.Run(async () => {
+                            var request = await WorkerCoordinatorSelfTest.ReadRequestAsync(
+                                pipe, ProtocolOperations.RunStart, timeout.Token);
+                            await pipe.WriteAsync(WireEnvelope.Response(request.Operation, request.RequestId!.Value,
+                                new RunStartResponse("accepted")), timeout.Token);
+                            return System.Text.Json.JsonSerializer.Deserialize<RunStartRequest>(request.Data,
+                                ProtocolJson.Options)!;
+                        });
+                        PumpUntil(() => received.IsCompleted, failure);
+                        var plan = received.GetAwaiter().GetResult().Plan;
+                        PumpUntil(() => ConfigurationEditable(window), "Worker 接受启动请求后应释放操作锁。");
+                        return plan;
+                    }
+
+                    void VerifyStartupOnly(string failure)
+                    {
+                        var plan = Submit(FindControl<Button>("仅执行启动"), failure);
+                        Require(plan.Items is [{ Kind: PlanItemKind.Pretask, TaskName: "Boot" }],
+                            "仅执行启动应只向 Worker 提交所选前置任务。");
+                        var args = JsonNode.Parse(plan.Items[0].Program!.Arguments.Single());
+                        Require((string?)args!["LaunchInput"]!["caption"] == "启动参数",
+                            "仅执行启动应把前置任务填写的参数交给 Worker。");
+                    }
+
+                    VerifyStartupOnly("普通任务缺少必填参数时，仅执行启动仍应提交前置任务。");
+                    SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+                    Click(window, "StartTaskHeaderButton");
+                    Require(ConfigurationEditable(window), "完整运行应在提交前阻止缺少必填参数的任务。");
+                    var recipient = FindControl<TextBox>("Recipient");
+                    PumpUntil(() => recipient.IsKeyboardFocused, "完整运行应展开普通任务并定位到缺少的必填字段。");
+                    recipient.Text = "  ";
+                    VerifyStartupOnly("正在编辑普通任务的无效参数时，仍应能仅执行启动。");
+                    ToggleRealTask(items);
+                    ToggleRealTask(items);
+                    Require(FindControl<TextBox>("Recipient").Text == "  ", "仅执行启动应保留普通任务的未保存草稿。");
+
+                    var selection = FindControl<System.Windows.Controls.CheckBox>("执行 Real task");
+                    selection.IsChecked = false;
+                    selection.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                    var full = Submit(Named<Button>(window, "StartTaskHeaderButton"), "跳过无效任务后应可完整运行。");
+                    Require(full.Items is [{ Kind: PlanItemKind.Pretask, TaskName: "Boot" },
+                        { Kind: PlanItemKind.MaaTask, TaskName: "ReadyTask" }], "完整运行应提交前置任务及其余勾选的普通任务。");
+                }, session: session, coordinator: coordinator, projectDirectory: projectDirectory);
+            } finally {
+                timeout.Cancel();
+                Task.Run(async () => await pipe.DisposeAsync()).GetAwaiter().GetResult();
+            }
+        }, runtimeProfileDigest: project.RuntimeProfileDigest);
+    }
+
     private static void VerifyPretaskGuiWiring(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "pretask-gui"), (window, directory) => {
@@ -34,9 +131,6 @@ internal static partial class SelfTestRunner
                 .OfType<Button>().Single(button => AutomationProperties.GetName(button) == name);
             Border[] Cards() => ConfigurationDescendants(planPanel).OfType<Border>()
                 .Where(card => card.Tag is ProjectTaskChoice).ToArray();
-            Button Header(Border card) => ConfigurationDescendants(card).OfType<Button>()
-                .Single(button => button.Tag is ProjectTaskChoice && button.Style
-                    == window.FindResource("PlanHeaderButtonStyle"));
 
             Click(Named<Button>(window, "TaskShelfHeaderButton"));
             Require(!ConfigurationDescendants(catalog).OfType<Button>()
@@ -80,7 +174,7 @@ internal static partial class SelfTestRunner
                     .Visibility == Visibility.Collapsed), "前置任务不得提供重排入口。");
 
             var preCard = Cards()[0];
-            Click(Header(preCard));
+            Click(PlanHeader(preCard));
             preCard = Cards()[0];
             Capture("expanded");
             var account = ConfigurationDescendants(preCard).OfType<TextBox>()
@@ -106,7 +200,7 @@ internal static partial class SelfTestRunner
                     "同名的前置任务与普通任务应打开各自的说明。");
                 Click(Named<Button>(window, "TaskDescriptionCloseButton"));
             }
-            Click(Header(Cards()[2]));
+            Click(PlanHeader(Cards()[2]));
             InvokeOnboarding(window, "ReplayOnboarding");
             PumpOnboarding();
             ClickOnboarding(window, "OnboardingNext");
@@ -265,5 +359,102 @@ internal static partial class SelfTestRunner
                 """);
             File.WriteAllText(path, root.ToJsonString());
         });
+    }
+
+    private static void VerifyStartupWithRetiredTaskCase(AppLogger logger, string testDirectory)
+    {
+        const string configuration = "已保存的配置";
+        var preparations = 0;
+        MainWindow? current = null;
+        RunOnboardingScenario(logger, Path.Combine(testDirectory, "retired-task-case"), (window, _) => {
+            current = window;
+            var failures = 0;
+            window.AutoRunFailed += (_, _) => failures++;
+            var full = window.AutoRunOnLaunchAsync();
+            PumpUntil(() => full.IsCompleted, "普通任务的旧选项失效时，完整运行必须报告失败。");
+            Require(full.GetAwaiter().GetResult() && failures == 1 && preparations == 0,
+                "完整运行必须在准备环境、向 Worker 提交之前拒绝已删除的普通任务选项。");
+
+            var panel = Named<Panel>(window, "PlanItemsPanel");
+            var startup = ConfigurationDescendants(panel).OfType<Button>()
+                .Single(button => AutomationProperties.GetName(button) == "仅执行启动");
+            Require(startup.IsEnabled, "普通任务的旧选项失效时，仍应允许单独执行有效的启动阶段。");
+            startup.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            PumpUntil(() => preparations == 1, "单独执行有效的启动阶段必须进入环境准备。");
+        }, beforeLoad: directory => {
+            var path = Path.Combine(directory, "interface.json");
+            var root = JsonNode.Parse(File.ReadAllText(path))!;
+            root["pretask"] = JsonNode.Parse("""[{"name":"Boot","exec":"boot-fixture"}]""");
+            File.WriteAllText(path, root.ToJsonString());
+            var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config", "configurations.json"));
+            project.RenameConfiguration(project.ActiveConfigurationId, configuration);
+            project.AddPretask("Boot");
+            project.SetSelectedCase("Mode", "Minimal");
+
+            var cases = root["option"]!["Mode"]!["cases"]!.AsArray();
+            cases.Remove(cases.Single(item => item!["name"]!.GetValue<string>() == "Minimal"));
+            File.WriteAllText(path, root.ToJsonString());
+        }, recoveryCompleted: true, launchCommand: new LaunchCommand(AutoStart: true, Instance: configuration),
+            prepareEnvironment: (_, _, _) => {
+                preparations++;
+                current!.SetExitInProgress(true);
+                return Task.CompletedTask;
+            });
+    }
+
+    private static void VerifyStartupDraftAfterProjectReload(AppLogger logger, string testDirectory)
+    {
+        VerifyReloadedStartupInput(logger, Path.Combine(testDirectory, "missing"), editDraft: false);
+        VerifyReloadedStartupInput(logger, Path.Combine(testDirectory, "draft"), editDraft: true);
+    }
+
+    private static void VerifyReloadedStartupInput(AppLogger logger, string directory, bool editDraft)
+    {
+        var projectDirectory = CreatePretaskFixture(directory, """[{"name":"Boot","exec":"boot-fixture"}]""");
+        AddRequiredInput(projectDirectory);
+        var configPath = Path.Combine(projectDirectory, "config", "configurations.json");
+        var project = ProjectPlanModule.Open(projectDirectory, configPath);
+        project.AddPretask("Boot");
+        if (editDraft) {
+            project.SetInputValue("Recipient", "recipient", "Kakashi");
+        }
+
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, directory, window => {
+            var items = Named<Panel>(window, "PlanItemsPanel");
+            T Find<T>(string name) where T : UIElement => ConfigurationDescendants(items).OfType<T>()
+                .Single(element => AutomationProperties.GetName(element) == name);
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            if (editDraft) {
+                ToggleRealTask(items);
+                var editor = Find<TextBox>("Recipient");
+                PumpUntil(() => editor.IsLoaded, "普通任务展开后，参数输入框应加载。");
+                Require(editor.Text == "Kakashi" && editor.Focus(), "应能编辑普通任务已保存的有效参数。");
+                editor.Text = "  ";
+            }
+            var startup = Find<Button>("仅执行启动");
+            Require(startup.IsEnabled && startup.Focus()
+                && project.CreateRunStartAttempt(startupOnly: true).Plan.Items is
+                    [{ TaskName: "Boot", Program.Arguments.Count: 0 }], "重载前 Boot 不使用该字段，应能单独启动。");
+
+            var path = Path.Combine(projectDirectory, "interface.json");
+            var definition = JsonNode.Parse(File.ReadAllText(path))!;
+            definition["pretask"]![0]!["option"] = new JsonArray("Recipient");
+            File.WriteAllText(path, definition.ToJsonString());
+            startup.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+            bool InvalidInputFocusedInBoot()
+            {
+                var boot = ConfigurationDescendants(items).OfType<Border>()
+                    .Single(card => card.Tag is ProjectTaskChoice { Kind: PlanItemKind.Pretask, Name: "Boot" });
+                return ConfigurationDescendants(boot).OfType<TextBox>().Any(field => field.IsKeyboardFocused
+                    && field.Text == (editDraft ? "  " : "") && AutomationProperties.GetName(field) == "Recipient");
+            }
+            PumpUntil(() => preparations > 0 || InvalidInputFocusedInBoot(), "重载后应在 Boot 内定位到无效输入。");
+            Require(preparations == 0, "重载后 Boot 缺少有效必填值，必须在准备环境之前阻止启动。");
+        }, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(canceled: true));
+        }, projectDirectory: projectDirectory);
     }
 }

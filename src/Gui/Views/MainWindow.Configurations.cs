@@ -231,12 +231,12 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitFocusedConfigurationInput()
+    private bool CommitFocusedConfigurationInput(bool deferDraftCheck = false)
     {
         if (Keyboard.FocusedElement is not WpfTextBox editor) {
             return true;
         }
-        return editor.Tag is OptionInputTag ? CommitOptionInput(editor)
+        return editor.Tag is OptionInputTag ? CommitOptionInput(editor, deferDraftCheck)
             : editor == _configurationNameEditor ? CommitConfigurationName() : true;
     }
 
@@ -435,7 +435,7 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitOptionInput(WpfTextBox textBox)
+    private bool CommitOptionInput(WpfTextBox textBox, bool deferDraftCheck = false)
     {
         var text = GetInputText(textBox);
         if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
@@ -443,7 +443,7 @@ public partial class MainWindow
             return true;
         }
         if (_invalidInputDrafts.TryGetValue(tag.Key, out var draft) && draft.Text == text) {
-            return false;
+            return deferDraftCheck;
         }
         _committingConfigurationInput = true;
         try {
@@ -455,7 +455,7 @@ public partial class MainWindow
                 ShowOptionInputError(textBox, message);
                 RefreshParameterDisplays();
                 _logger.Info($"input 未通过校验，未保存：option={tag.OptionName}，input={tag.InputName}。 ");
-                return false;
+                return deferDraftCheck;
             }
             _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text);
             _invalidInputDrafts.Remove(tag.Key);

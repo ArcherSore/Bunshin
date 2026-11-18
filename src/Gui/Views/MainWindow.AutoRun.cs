@@ -5,21 +5,10 @@ namespace Gui.Views;
 public partial class MainWindow
 {
     private readonly LaunchCommand _launchCommand;
-
-    // Raised just before the launch starts a configuration by itself, so --quit-after-run can start watching.
-    internal event EventHandler? AutoRunStarted;
+    private readonly QuitAfterRunTracker? _quitAfterRun;
 
     // Raised when something the launch started on its own failed. The text is for a notification.
     internal event EventHandler<string>? AutoRunFailed;
-
-    // Raised when an auto-run ended without any Run having begun, so --quit-after-run has nothing to wait for.
-    internal event EventHandler? AutoRunAbandoned;
-
-    // Raised when the start request got no answer, so the Worker may have started this Run anyway.
-    internal event EventHandler<Guid>? AutoRunUnconfirmed;
-
-    private bool _runAccepted;
-    private Guid? _unconfirmedRunId;
 
     // Starts the configuration this launch asks for, if any: activates it, prepares the Runtime Environment and
     // starts the Run, as the Start button does. Returns whether it did.
@@ -60,22 +49,11 @@ public partial class MainWindow
             return true;
         }
         _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
-        _runAccepted = false;
-        _unconfirmedRunId = null;
-        AutoRunStarted?.Invoke(this, EventArgs.Empty);
         if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(), unattended: true);
+            await RunOperationAsync(PendingOperation.StartingRun,
+                () => StartCurrentPlanAsync(quitAfterRun: _quitAfterRun), unattended: true);
         } else {
             await PrepareFromPanelAsync(startRun: true, unattended: true);
-        }
-        if (_runAccepted) {
-            return true;
-        }
-        // Otherwise no Run is known to have begun, whatever the reason, unless the Worker never answered.
-        if (_unconfirmedRunId is { } runId) {
-            AutoRunUnconfirmed?.Invoke(this, runId);
-        } else {
-            AutoRunAbandoned?.Invoke(this, EventArgs.Empty);
         }
         return true;
     }

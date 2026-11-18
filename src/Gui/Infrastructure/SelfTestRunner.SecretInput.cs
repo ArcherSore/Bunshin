@@ -127,7 +127,7 @@ internal static partial class SelfTestRunner
             var password = Editor("Login") as Wpf.Ui.Controls.PasswordBox;
             Require(password is not null && !HasBrowse(password), "密码字段必须使用不带选择按钮的密码框。");
             password!.Password = SecretInputValue;
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [password]);
+            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [password, false]);
             Require(!password.Text.Contains(SecretInputValue, StringComparison.Ordinal),
                 "密码框不得显示密码原文。");
             SaveWindowScreenshot(window, "secret-and-path-inputs.png");

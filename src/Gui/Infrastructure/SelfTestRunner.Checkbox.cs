@@ -99,7 +99,7 @@ internal static partial class SelfTestRunner
                 && ConfigurationDescendants(row).OfType<TextBlock>()
                     .Any(text => text.Text == "至少选择 1 项，否则不能开始任务")
                 && ParameterInspector.ShowCases(Option("Features")) == "无"
-                && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!,
+                && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false])!,
                 "少于 min_count 时必须保存、标红并阻止开始。");
 
             Segments("Tier").SelectedItems.Add(Case(Segments("Tier"), "Low"));

@@ -64,24 +64,23 @@ public sealed partial class ProjectPlanModule
     public IReadOnlyList<ProjectTaskChoice> Pretasks { get; }
     public IReadOnlyList<ProjectTaskGroup> Groups => _project.Groups;
     public IReadOnlyList<string> SelectedPretaskNames => LoadConfig().SelectedPretasks;
-    public IReadOnlyList<ProjectTaskChoice> SelectedItems
+    public IReadOnlyList<ProjectTaskChoice> SelectedItems => SelectedItemsOf(LoadConfig());
+
+    private IReadOnlyList<ProjectTaskChoice> SelectedItemsOf(TaskConfiguration config)
     {
-        get
-        {
-            var config = LoadConfig();
-            var pretasks = Pretasks.Where(item => config.SelectedPretasks.Contains(item.Name, StringComparer.Ordinal));
-            var missing = config.SelectedPretasks.Where(name => !_project.Pretasks.Any(item => item.Name == name))
-                .Select(name => new ProjectTaskChoice(name, name, "前置任务已不在项目中，请移除。") {
-                    Kind = PlanItemKind.Pretask
-                });
-            var tasks = config.SelectedTasks.Select(name => Tasks.SingleOrDefault(item => item.Name == name)
-                ?? new ProjectTaskChoice(name, name, "任务已不在项目中，请移除。"));
-            return pretasks.Concat(missing).Concat(tasks).ToArray();
-        }
+        var pretasks = Pretasks.Where(item => config.SelectedPretasks.Contains(item.Name, StringComparer.Ordinal));
+        var missing = config.SelectedPretasks.Where(name => !_project.Pretasks.Any(item => item.Name == name))
+            .Select(name => new ProjectTaskChoice(name, name, "前置任务已不在项目中，请移除。") {
+                Kind = PlanItemKind.Pretask
+            });
+        var tasks = config.SelectedTasks.Select(name => Tasks.SingleOrDefault(item => item.Name == name)
+            ?? new ProjectTaskChoice(name, name, "任务已不在项目中，请移除。"));
+        return pretasks.Concat(missing).Concat(tasks).ToArray();
     }
     public int SelectedItemCount => SelectedItems.Count;
-    public IReadOnlyList<ProjectTaskChoice> EnabledItems =>
-        SelectedItems.Where(item => IsItemEnabled(item.Kind, item.Name)).ToArray();
+    public IReadOnlyList<ProjectTaskChoice> EnabledItems => GetExecutionItems();
+    public IReadOnlyList<ProjectTaskChoice> GetExecutionItems(bool startupOnly = false) =>
+        SelectedItemsOf(ExecutionConfiguration(startupOnly));
 
     public bool IsItemEnabled(PlanItemKind kind, string name) =>
         !_disabledItems.Contains((ActiveConfigurationId, kind, name));
@@ -100,11 +99,12 @@ public sealed partial class ProjectPlanModule
         }
     }
 
-    private TaskConfiguration ExecutionConfiguration()
+    private TaskConfiguration ExecutionConfiguration(bool startupOnly = false)
     {
         var config = LoadConfig();
         return config with {
-            SelectedTasks = config.SelectedTasks.Where(name => IsItemEnabled(PlanItemKind.MaaTask, name)).ToArray(),
+            SelectedTasks = startupOnly ? []
+                : config.SelectedTasks.Where(name => IsItemEnabled(PlanItemKind.MaaTask, name)).ToArray(),
             SelectedPretasks = config.SelectedPretasks
                 .Where(name => IsItemEnabled(PlanItemKind.Pretask, name)).ToArray()
         };
@@ -156,7 +156,8 @@ public sealed partial class ProjectPlanModule
         return true;
     }
 
-    public void ValidateConfiguration() => ValidateActiveConfiguration(ExecutionConfiguration());
+    public void ValidateConfiguration(bool startupOnly = false) =>
+        ValidateActiveConfiguration(ExecutionConfiguration(startupOnly));
 
     public static ProjectPlanModule Open(string projectDirectory, string configPath, ProjectPlanModule? previous = null,
         Action<string>? log = null)
@@ -357,10 +358,7 @@ public sealed partial class ProjectPlanModule
 
     public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false)
     {
-        var config = ExecutionConfiguration();
-        if (startupOnly) {
-            config = config with { SelectedTasks = [] };
-        }
+        var config = ExecutionConfiguration(startupOnly);
         ValidateActiveConfiguration(config);
         if (config.SelectedTasks.Count + config.SelectedPretasks.Count == 0) {
             throw new InvalidOperationException("请先勾选要执行的任务或前置任务。");
