@@ -385,12 +385,12 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     // A response can precede the first state event, or be lost altogether. Cached idle is then inconclusive.
     private Guid? _startAwaitingObservation;
 
-    internal bool StartAwaitingObservation
+    internal bool StartAwaitingObservation => ReadRunObservation().AwaitingStart;
+
+    internal (WorkerCoordinatorSnapshot State, bool AwaitingStart) ReadRunObservation()
     {
-        get {
-            lock (_gate) {
-                return _startAwaitingObservation.HasValue;
-            }
+        lock (_gate) {
+            return (Snapshot, _startAwaitingObservation.HasValue);
         }
     }
 
@@ -402,7 +402,10 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             if (_startAwaitingObservation is Guid pending && pending != attempt.RunId) {
                 throw new InvalidOperationException("上一次开始请求尚未确认。");
             }
-            _startAwaitingObservation = attempt.RunId;
+            // A retry of the known Last Run can return already_accepted without another state event.
+            if (Snapshot.WorkerSnapshot?.LastRun?.RunId != attempt.RunId) {
+                _startAwaitingObservation = attempt.RunId;
+            }
         }
         try {
             return await SendRequestAsync<RunStartRequest, RunStartResponse>(

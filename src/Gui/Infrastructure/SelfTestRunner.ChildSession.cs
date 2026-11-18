@@ -314,6 +314,7 @@ internal static partial class SelfTestRunner
         internal uint? ReportedId { get; set; }
         internal HashSet<uint> Sessions { get; init; } = [0, 1];
         internal bool EnumerationFails { get; init; }
+        internal Action? DuringEnumeration { get; set; }
         internal int? LogoffError { get; init; }
         internal bool SessionSurvivesLogoff { get; init; }
         internal Action<SimulatedWts>? DuringLogoff { get; set; }
@@ -324,9 +325,11 @@ internal static partial class SelfTestRunner
             new(logger, () => ReportedId, Enumerate, Logoff,
                 credentials ?? new ChildSessionCredentialStore(logger, new MemoryCredentialVault()));
 
-        private IReadOnlyCollection<uint> Enumerate() => EnumerationFails
-            ? throw new Win32Exception(5, "self-test enumeration failure")
-            : Sessions.ToArray();
+        private IReadOnlyCollection<uint> Enumerate()
+        {
+            DuringEnumeration?.Invoke();
+            return EnumerationFails ? throw new Win32Exception(5, "self-test enumeration failure") : Sessions.ToArray();
+        }
 
         private uint? Logoff()
         {

@@ -79,10 +79,12 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(logger, Path.Combine(directory, state.ToString()), state);
         }
         VerifyScheduledTerminal(logger, Path.Combine(directory, "lost-reply"), RunState.Succeeded, lostReply: true);
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "next-tick"),
+            RunState.Failed, tickBeforeDispatch: true);
     }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
-        bool lostReply = false)
+        bool lostReply = false, bool tickBeforeDispatch = false)
     {
         using var process = Process.GetCurrentProcess();
         var sessionId = (uint)process.SessionId;
@@ -94,6 +96,7 @@ internal static partial class SelfTestRunner
         Task<ProtocolConnection>? connected = null;
         WorkerAdmissionRecord? record = null;
         string digest = "";
+        var preparations = 0;
         var coordinator = new WorkerCoordinator(logger, Path.Combine(directory, "state"), process.MainModule!.FileName,
             pipeName, usePipeAcl: false, captureProcesses: () =>
                 record == null ? [] : [new(process.Id, sessionId, Path.GetFileName(process.MainModule!.FileName))],
@@ -172,7 +175,34 @@ internal static partial class SelfTestRunner
                 }
                 Require(start.Result is { Disposition: ScheduledRunDisposition.Admitted, RunId: { } runId }
                     && runId == own.RunId && start.Result.ConfigurationId == target, "启动结果必须对应提交给 Worker 的计划。");
-                Publish(done, lostReply ? 4 : 3);
+                if (terminal == RunState.Cancelled) {
+                    // The pending start is resolved by a Running event during the synchronous Windows inspection.
+                    wts.DuringEnumeration = () => {
+                        wts.DuringEnumeration = null;
+                        var active = snapshot with { StateRevision = 3, ActiveRun = own, RunState = RunState.Running };
+                        Task.Run(() => pipe.WriteAsync(StateEvent(active), token)).GetAwaiter().GetResult();
+                        AwaitWorker(coordinator, s => s.WorkerSnapshot?.ActiveRun?.RunId == own.RunId,
+                            "Worker 应在 WTS 查询期间报告 Active Run。");
+                    };
+                    ExpectBusy();
+                    Publish(done, 4);
+                } else if (tickBeforeDispatch) {
+                    // Advance IPC on the pool while the dispatcher is still handling the clock tick.
+                    var received = snapshot with { LastRun = done, StateRevision = 3 };
+                    Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
+                    AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
+                        "下一分钟已到时 Worker 应已报告此前 Run 的失败。");
+                    var completed = new List<Guid>();
+                    window.ScheduledRunCompleted += (_, e) => completed.Add(e.Run.RunId);
+                    var next = window.TryStartScheduledRunAsync(target);
+                    PumpUntil(() => next.IsCompleted, "下一次机会应消化上次终态，再在新环境中启动。");
+                    Require(next.Result.Disposition == ScheduledRunDisposition.Admitted
+                        && completed.SequenceEqual([own.RunId]) && failures.Count(line => line.Contains("计划项模拟失败")) == 1
+                        && wts.LogoffAttempts.SequenceEqual([sessionId]), "下次清理不得吞掉上一 Run 的失败提醒。");
+                    return;
+                } else {
+                    Publish(done, lostReply ? 4 : 3);
+                }
                 var quit = new QuitAfterRunTracker(DateTime.MinValue);
                 var observed = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true,
                     snapshot with { LastRun = done }, "已结束");
@@ -190,9 +220,26 @@ internal static partial class SelfTestRunner
                     wts.Sessions.Add(wts.ReportedId.Value);
                     ExpectBusy();
                     Require(wts.LogoffAttempts.Count == 0, "已知空闲的 Worker 不属于当前 WTS 分身时不得注销。");
+                    wts.ReportedId = sessionId;
+                    var retry = coordinator.StartRunAsync(new(own.RunId, payload.Plan, payload.PlanDigest));
+                    var duplicate = Task.Run(async () => {
+                        var request = await WorkerCoordinatorSelfTest.ReadRequestAsync(
+                            pipe, ProtocolOperations.RunStart, token);
+                        await pipe.WriteAsync(WireEnvelope.Response(request.Operation, request.RequestId!.Value,
+                            new RunStartResponse("already_accepted")), token);
+                    });
+                    PumpUntil(() => retry.IsCompleted && duplicate.IsCompleted, "已终结的同 ID 重试应返回已接纳。");
+                    Require(retry.Result.Disposition == "already_accepted", "应保留 Worker 对同一 Run 的幂等答复。");
+                    var next = window.TryStartScheduledRunAsync(target);
+                    PumpUntil(() => next.IsCompleted, "相同 Run 的终态已知时无需再等一次快照。");
+                    Require(next.Result.Disposition == ScheduledRunDisposition.Admitted,
+                        "重试已终结的 Run 之后仍应可以运行新的配置。");
                 }
             }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
                 prepareEnvironment: async (project, options, show) => {
+                    if (++preparations > 1) {
+                        throw new InvalidOperationException("模拟第二次准备结束");
+                    }
                     Require(!session.HasChildSession && !show, "准备前应已确认没有旧桌面分身。");
                     wts.ReportedId = sessionId;
                     wts.Sessions.Add(sessionId);

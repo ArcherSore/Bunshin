@@ -63,30 +63,36 @@ internal sealed class RuntimeEnvironment
         }
     }
 
-    internal string? ScheduledRunBlocker()
+    internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation)
     {
+        observation = WorkerCoordinatorSnapshot.Empty;
         if (Closing || EndUnconfirmed || Ending
             || _session.Snapshot.State is ChildSessionState.Connecting or ChildSessionState.Disconnecting) {
             return "运行环境正在操作或上次结束未确认";
         }
-        var observation = _coordinator.Snapshot;
         try {
             var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
-            if (observation.Observation is WorkerObservation.WorkerNotStarted or WorkerObservation.ChildSessionEnded
-                or WorkerObservation.WorkerExited) {
+            var (current, awaitingStart) = _coordinator.ReadRunObservation();
+            if (sessionId is uint id && NoLiveAdmission(current)) {
                 // With no live Admission a surviving, untracked Worker cannot be known idle.
-                if (sessionId is uint id) {
-                    _coordinator.EnsureSessionHasNoWorker(id);
-                }
+                _coordinator.EnsureSessionHasNoWorker(id);
+                (current, awaitingStart) = _coordinator.ReadRunObservation();
+            }
+            observation = current;
+            if (NoLiveAdmission(current)) {
                 return null;
             }
-            return observation is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+            return !awaitingStart && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
                 WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, WorkerState: WorkerState.Ready
                     or WorkerState.NotReady } worker } && worker.ChildSessionId == sessionId
-                && !_coordinator.StartAwaitingObservation ? null : $"Worker 或桌面分身尚未确认空闲（{observation.Detail}）";
+                ? null : $"Worker 或桌面分身尚未确认空闲（{current.Detail}）";
         } catch (Exception exception) {
             return $"无法确认桌面分身空闲：{exception.Message}";
         }
+
+        static bool NoLiveAdmission(WorkerCoordinatorSnapshot snapshot) =>
+            snapshot.Observation is WorkerObservation.WorkerNotStarted or WorkerObservation.ChildSessionEnded
+                or WorkerObservation.WorkerExited;
     }
 
     // Runs inside an exclusive operation the caller has already entered. The framework options are read once the

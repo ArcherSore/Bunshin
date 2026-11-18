@@ -40,8 +40,13 @@ public partial class MainWindow
     private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(
         ProjectPlanModule? project, Guid configurationId, string name)
     {
-        if (_environment.ScheduledRunBlocker() is { } reason) {
+        if (_environment.ScheduledRunBlocker(out var observed) is { } reason) {
             return new(configurationId, ScheduledRunDisposition.Busy, Reason: reason);
+        }
+        // The clock may run ahead of the dispatcher's snapshot callback. Consume the old Run before replacing it.
+        await ObserveScheduledRunAsync(observed, gateHeld: true);
+        if (_environment.Closing || _environment.EndUnconfirmed) {
+            return new(configurationId, ScheduledRunDisposition.Busy, Reason: "运行环境正在退出或结束未确认");
         }
         RunStartAttempt attempt;
         try {
@@ -49,25 +54,27 @@ public partial class MainWindow
                 throw new InvalidOperationException("无法读取任务配置。");
             }
             // Commit an active editor before resolving its saved values.
-            if (configurationId == project.ActiveConfigurationId && !CommitFocusedConfigurationInput()
-                || _invalidInputDrafts.Keys.Any(key => key.Item1 == configurationId)) {
-                throw new InvalidOperationException("配置中有尚未通过校验的输入。");
+            if (configurationId == project.ActiveConfigurationId) {
+                CommitFocusedConfigurationInput(unattended: true);
+                name = ConfigurationName(configurationId) ?? name;
             }
-            attempt = project.CreateRunStartAttempt(configurationId);
+            var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == configurationId)
+                .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value.Message);
+            attempt = project.CreateRunStartAttempt(configurationId, inputErrors: drafts);
         } catch (Exception exception) {
             ReportUnattendedFailure($"定时执行“{name}”失败", exception);
             return new(configurationId, ScheduledRunDisposition.Invalid, Reason: exception.Message);
         }
 
+        if (_environment.ScheduledRunBlocker(out _) is { } changed) {
+            return new(configurationId, ScheduledRunDisposition.Busy, Reason: changed);
+        }
         Guid? submitted = null;
         SetPendingOperation(PendingOperation.PreparingEnvironment);
         try {
             project.ActivateConfiguration(configurationId);
             _pendingStartAttempt = null;
             ScheduledConfigurationActivated?.Invoke(this, configurationId);
-            if (_environment.ScheduledRunBlocker() is { } changed) {
-                throw new InvalidOperationException(changed);
-            }
             var ended = await _environment.EndWhileExclusiveAsync();
             if (ended.Outcome != EnvironmentEndOutcome.Ended) {
                 throw ended.Error ?? new InvalidOperationException("旧桌面分身未确认结束。");
@@ -98,12 +105,12 @@ public partial class MainWindow
     }
 
     // Snapshot delivery and the start reply may arrive in either order. Only this exact Run earns cleanup.
-    private async Task ObserveScheduledRunAsync()
+    private async Task ObserveScheduledRunAsync(WorkerCoordinatorSnapshot? observed = null, bool gateHeld = false)
     {
         if (_scheduledSubmission is not { } own || OperationOrExitInProgress || _environment.Closing) {
             return;
         }
-        var observed = _workerCoordinator.Snapshot;
+        observed ??= _workerCoordinator.Snapshot;
         if (observed is not { Observation: WorkerObservation.Connected, SnapshotFresh: true,
                 WorkerSnapshot: { LastRun: { } run } worker }
             || worker.WorkerInstanceId != own.WorkerId || run.RunId != own.RunId
@@ -118,13 +125,18 @@ public partial class MainWindow
             ReportUnattendedFailure($"定时执行“{own.Name}”失败", new InvalidOperationException(detail));
         } else if (run.State == RunState.Succeeded) {
             try {
-                var ended = await _environment.EndAsync(() =>
-                    !_environment.Closing && !OperationOrExitInProgress && !_workerCoordinator.StartAwaitingObservation
-                    && _workerCoordinator.Snapshot is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-                        WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, LastRun: { } last } current }
-                    && current.WorkerInstanceId == own.WorkerId && last.RunId == own.RunId
-                    && last.State == RunState.Succeeded
-                    && _sessionManager.QueryChildSessionId(requireEnumeration: true) == current.ChildSessionId);
+                bool CanClose()
+                {
+                    var sessionId = _sessionManager.QueryChildSessionId(requireEnumeration: true);
+                    var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
+                    return !_environment.Closing && !OperationOrExitInProgress && !awaitingStart
+                        && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+                            WorkerSnapshot: { ActiveRun: null, RunState: RunState.Idle, LastRun: { } last } idle }
+                        && idle.WorkerInstanceId == own.WorkerId && last.RunId == own.RunId
+                        && last.State == RunState.Succeeded && sessionId == idle.ChildSessionId;
+                }
+                var ended = gateHeld ? await _environment.EndWhileExclusiveAsync(CanClose)
+                    : await _environment.EndAsync(CanClose);
                 if (ended.Error is { } error) {
                     throw error;
                 }

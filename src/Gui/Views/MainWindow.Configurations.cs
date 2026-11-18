@@ -231,13 +231,13 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitFocusedConfigurationInput()
+    private bool CommitFocusedConfigurationInput(bool unattended = false)
     {
         if (Keyboard.FocusedElement is not WpfTextBox editor) {
             return true;
         }
-        return editor.Tag is OptionInputTag ? CommitOptionInput(editor)
-            : editor == _configurationNameEditor ? CommitConfigurationName() : true;
+        return editor.Tag is OptionInputTag ? CommitOptionInput(editor, unattended)
+            : editor != _configurationNameEditor || CommitConfigurationName(unattended);
     }
 
     private void NewConfigurationButton_Click(object sender, RoutedEventArgs e)
@@ -406,7 +406,7 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitConfigurationName()
+    private bool CommitConfigurationName(bool unattended = false)
     {
         if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not { Tag: Guid id } editor
             || _committingConfigurationInput) {
@@ -425,7 +425,7 @@ public partial class MainWindow
             EndConfigurationRename();
             RestoreConfigurationSelection();
             return true;
-        } catch (Exception exception) {
+        } catch (Exception exception) when (!unattended) {
             editor.Text = _projectPlan!.Configurations.Single(item => item.Id == id).Name;
             EndConfigurationRename();
             HandleOperationError("保存配置名称失败", exception);
@@ -435,7 +435,7 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitOptionInput(WpfTextBox textBox)
+    private bool CommitOptionInput(WpfTextBox textBox, bool unattended = false)
     {
         var text = GetInputText(textBox);
         if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
@@ -464,7 +464,7 @@ public partial class MainWindow
             ShowOptionInputError(textBox, null);
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;
-        } catch (Exception exception) {
+        } catch (Exception exception) when (!unattended) {
             SetInputText(textBox, tag.Value);
             textBox.Tag = tag with { Submitted = true };
             HandleOperationError("保存 input option 失败", exception);
