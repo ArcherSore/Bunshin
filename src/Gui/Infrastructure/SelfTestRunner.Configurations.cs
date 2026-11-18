@@ -226,15 +226,6 @@ internal static partial class SelfTestRunner
         if (input.Text != "978-," || Hint() is null || !RevealDraft()) {
             throw new InvalidOperationException("未修正的非法输入在重绘后必须保留，并阻止开始任务。");
         }
-        SetOnboardingField(window, "_expandedTaskName", null!);
-        InvokeOnboarding(window, "RenderTaskPlan");
-        var draftSummary = ConfigurationDescendants(items).OfType<System.Windows.Documents.Run>()
-            .SingleOrDefault(run => run.Text == "Server：978-,");
-        if (draftSummary?.Foreground != window.FindResource("Brush.Error.Foreground")) {
-            throw new InvalidOperationException("折叠摘要必须以错误色显示未保存的非法输入，而非已保存值。");
-        }
-        SetOnboardingField(window, "_expandedTaskName", "RealTask");
-        InvokeOnboarding(window, "RenderTaskPlan");
         input = Server();
         using (var source = new System.Windows.Interop.HwndSource(
             new System.Windows.Interop.HwndSourceParameters("self-test"))) {
@@ -265,9 +256,15 @@ internal static partial class SelfTestRunner
         var projectDirectory = CreateProjectFixture(Path.Combine(testDirectory, "blank-labels"));
         var interfacePath = Path.Combine(projectDirectory, "interface.json");
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(interfacePath))!;
+        json["global_option"]!.AsArray().Clear();
+        json["task"]![0]!["option"]!.AsArray().Add("ServerRange");
         var option = json["option"]!["ServerRange"]!;
         option["label"] = "";
         option["inputs"]![0]!["label"] = "";
+        json["task"]![0]!["option"]!.AsArray().Add("Team");
+        json["option"]!["Team"] = System.Text.Json.Nodes.JsonNode.Parse("""
+            {"type":"input","label":"","inputs":[{"name":"team","label":"出战队伍","default":"7"}]}
+            """);
         File.WriteAllText(interfacePath, json.ToJsonString());
         var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
@@ -281,10 +278,10 @@ internal static partial class SelfTestRunner
             }
             SetOnboardingField(window, "_expandedTaskName", null!);
             InvokeOnboarding(window, "RenderTaskPlan");
-            if (!ConfigurationDescendants(items).OfType<System.Windows.Documents.Run>()
-                .Any(run => run.Text == "ServerRange：978-1012")) {
-                throw new InvalidOperationException("option 与 input label 均为空时，折叠摘要应显示 option 名称。");
-            }
+            var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
+            Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
+                && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7")),
+                "折叠预览应优先显示首个输入的标签，两级标签均为空时显示选项名称。");
         });
     }
 
@@ -293,6 +290,8 @@ internal static partial class SelfTestRunner
         var projectDirectory = CreateProjectFixture(Path.Combine(testDirectory, "draft-summary"));
         var interfacePath = Path.Combine(projectDirectory, "interface.json");
         var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(interfacePath))!;
+        json["global_option"]!.AsArray().Clear();
+        json["task"]![0]!["option"]!.AsArray().Add("ServerRange");
         var other = json["task"]![0]!.DeepClone();
         other["name"] = "OtherTask";
         json["task"]!.AsArray().Add(other);
@@ -302,8 +301,8 @@ internal static partial class SelfTestRunner
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
             SetOnboardingField(window, "_expandedTaskName", "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
-            System.Windows.Documents.Run? OtherSummary(string text) => ConfigurationDescendants(items)
-                .OfType<System.Windows.Documents.Run>().SingleOrDefault(run => run.Text == text);
+            System.Windows.Controls.TextBlock? OtherPreview(string text) => ConfigurationDescendants(items)
+                .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => Equals(tag.ToolTip, text));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
@@ -312,8 +311,8 @@ internal static partial class SelfTestRunner
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, input, null) {
                 RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
             });
-            if (OtherSummary("Server：978-,")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
-                throw new InvalidOperationException("共享参数的非法草稿必须立即以错误色同步到其他折叠任务摘要。");
+            if (OtherPreview("Server range：978-,")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
+                throw new InvalidOperationException("共享参数的非法草稿必须立即以错误色同步到其他折叠任务的预览。");
             }
             using (var source = new System.Windows.Interop.HwndSource(
                 new System.Windows.Interop.HwndSourceParameters("self-test"))) {
@@ -322,7 +321,7 @@ internal static partial class SelfTestRunner
                     RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
                 });
             }
-            if (OtherSummary("Server：978-1012") is not { } restored
+            if (OtherPreview("Server range：978-1012") is not { } restored
                 || restored.Foreground == window.FindResource("Brush.Error.Foreground")
                 || !ConfigurationDescendants(items).Contains(input)) {
                 throw new InvalidOperationException("Esc 必须立即恢复其他摘要的已保存值，且不重建正在编辑的输入框。");

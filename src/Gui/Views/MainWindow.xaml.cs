@@ -99,7 +99,7 @@ public partial class MainWindow : FluentWindow
     private IInputElement? _descriptionDrawerPreviousFocus;
     private readonly List<Border> _dropIndicators = [];
     private readonly Dictionary<(PlanItemKind Kind, string Name), Border> _planItemContainers = [];
-    private readonly List<(TextBlock Summary, ProjectTaskChoice Task)> _planItemSummaries = [];
+    private readonly List<(StackPanel Preview, ProjectTaskChoice Task)> _planItemPreviews = [];
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
@@ -1224,7 +1224,7 @@ public partial class MainWindow : FluentWindow
         PlanItemsPanel.Children.Clear();
         _dropIndicators.Clear();
         _planItemContainers.Clear();
-        _planItemSummaries.Clear();
+        _planItemPreviews.Clear();
         _taskDescriptionButtons.Clear();
         _optionInputEditors.Clear();
         _inspectorRows.Clear();
@@ -1366,39 +1366,25 @@ public partial class MainWindow : FluentWindow
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var title = new Grid();
-        title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var showSummary = (!expanded || task.Kind == PlanItemKind.Pretask) && hasParameters;
-        if (showSummary) {
+        var showPreview = !expanded && configuration.TaskOptions.Count != 0;
+        var title = new DockPanel { ClipToBounds = true };
+        if (showPreview) {
             label.TextWrapping = TextWrapping.NoWrap;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
             title.Children.Add(label);
-            var separator = new Border {
-                Width = 1,
-                Height = 16,
-                Margin = new Thickness(10, 0, 10, 0),
-                Background = (WpfBrush)FindResource("Brush.Border.Subtle"),
+            var preview = new StackPanel {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
                 VerticalAlignment = VerticalAlignment.Center,
-                SnapsToDevicePixels = true
+                Margin = new Thickness(12, 0, 0, 0),
+                ClipToBounds = true
             };
-            Grid.SetColumn(separator, 1);
-            title.Children.Add(separator);
-            var summaryText = new TextBlock {
-                FontWeight = FontWeights.Normal,
-                Foreground = (WpfBrush)FindResource("Brush.Text.Secondary"),
-                TextWrapping = TextWrapping.NoWrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            _planItemSummaries.Add((summaryText, task));
-            FillParameterSummary(summaryText, task.Name, configuration, task.Kind);
-            Grid.SetColumn(summaryText, 2);
-            title.Children.Add(summaryText);
+            _planItemPreviews.Add((preview, task));
+            FillParameterPreview(preview, configuration);
+            title.Children.Add(preview);
         }
         var main = new WpfButton {
             Tag = task,
-            Content = showSummary ? title : label,
+            Content = showPreview ? title : label,
             Padding = new Thickness(4, 6, 8, 6),
             Style = (Style)FindResource("PlanHeaderButtonStyle")
         };
@@ -1483,36 +1469,73 @@ public partial class MainWindow : FluentWindow
         return ParameterInspector.Derive(configuration, drafts, others);
     }
 
-    // An unfixed invalid draft replaces the saved value in red, so folded cards agree with the field and Start block.
-    private void FillParameterSummary(TextBlock summary, string taskName, ProjectConfigurationView configuration,
-        PlanItemKind kind)
+    // Like MXU, a folded card previews up to three options declared directly on the task.
+    private void FillParameterPreview(StackPanel preview, ProjectConfigurationView configuration)
     {
-        summary.Inlines.Clear();
-        foreach (var row in DeriveInspectorRows(taskName, configuration, shared: false, kind)) {
-            var parts = row.Kind == ProjectOptionKind.Input
-                ? row.Inputs.Select(input =>
-                    (input.Label, Value: input.Show(input.DisplayValue), Invalid: input.Error is not null))
-                : [(row.Label, Value: row.Kind == ProjectOptionKind.Checkbox ? ParameterInspector.ShowCases(row.Option)
-                    : row.SelectedCase?.Label ?? string.Empty, Invalid: row.IsInvalid)];
-            foreach (var (label, value, invalid) in parts) {
-                if (summary.Inlines.Count != 0) {
-                    summary.Inlines.Add(new System.Windows.Documents.Run(" · "));
+        preview.Children.Clear();
+        var configurationId = RequireProject().ActiveConfigurationId;
+        foreach (var option in configuration.TaskOptions) {
+            var label = ParameterInspector.GetOptionLabel(option);
+            var invalid = option.StartBlocker is not null;
+            var isSwitch = option.Kind == ProjectOptionKind.Switch;
+            var isOn = isSwitch && option.SelectedCase == GetSwitchCases(option).On.Name;
+            string value;
+            if (option.Kind == ProjectOptionKind.Input) {
+                if (option.Inputs.FirstOrDefault() is not { } input) {
+                    continue;
                 }
-                var run = new System.Windows.Documents.Run($"{label}：{value}");
-                if (invalid) {
-                    run.Foreground = (WpfBrush)FindResource("Brush.Error.Foreground");
+                var draft = _invalidInputDrafts.GetValueOrDefault((configurationId, option.Name, input.Name));
+                value = draft?.Text ?? input.Value;
+                invalid = draft is not null || input.Error is not null;
+                if (value.Length == 0 && !invalid) {
+                    continue;
                 }
-                summary.Inlines.Add(run);
+                if (input.IsPassword && value.Length != 0) {
+                    value = ProjectInputEditor.PasswordMask;
+                }
+            } else if (isSwitch) {
+                value = isOn ? "开" : "关";
+            } else if (option.Kind == ProjectOptionKind.Checkbox) {
+                value = $"{option.SelectedCases.Count}/{option.Cases.Count}";
+            } else {
+                value = option.Cases.FirstOrDefault(item => item.Name == option.SelectedCase)?.Label ?? string.Empty;
+            }
+
+            var tag = new TextBlock {
+                MaxWidth = 140, Margin = new Thickness(0, 0, 8, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = (WpfBrush)FindResource(invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary"),
+                ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
+            };
+            if (isSwitch) {
+                tag.Inlines.Add(ShortenPreview(label, 6));
+                tag.Inlines.Add(new System.Windows.Documents.Run(" ●") {
+                    Foreground = (WpfBrush)FindResource(isOn ? "Brush.TasksAccent" : "Brush.Text.Muted"), FontSize = 10
+                });
+            } else {
+                tag.Text = $"{ShortenPreview(label, 4)}：{ShortenPreview(ParameterInspector.ShowValue(value), 6)}";
+            }
+            preview.Children.Add(tag);
+            if (preview.Children.Count == 3) {
+                break;
             }
         }
+        preview.Visibility = preview.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    // Saving a value or keeping a draft refreshes folded summaries and the open inspector's notes in place, so the
+    private static string ShortenPreview(string text, int limit)
+    {
+        var singleLine = new System.Globalization.StringInfo(text.ReplaceLineEndings(" "));
+        return singleLine.LengthInTextElements <= limit ? singleLine.String
+            : singleLine.SubstringByTextElements(0, limit) + "…";
+    }
+
+    // Saving a value or keeping a draft refreshes folded previews and the open inspector's notes in place, so the
     // focused editor and a switch's animation are not rebuilt.
     private void RefreshParameterDisplays()
     {
-        foreach (var (summary, task) in _planItemSummaries) {
-            FillParameterSummary(summary, task.Name, GetConfigurationOrEmpty(task.Name, task.Kind), task.Kind);
+        foreach (var (preview, task) in _planItemPreviews) {
+            FillParameterPreview(preview, GetConfigurationOrEmpty(task.Name, task.Kind));
         }
         if (_expandedTaskName is not { } expanded || _inspectorRows.Count == 0) {
             return;
