@@ -1,0 +1,1402 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 一次性代码，不要合入 main。
+  问题：Schedule Policy（定时策略）在每份任务配置标签页中应该长什么样？
+  三个方案挂在同一个仿真主窗口里，用 ?variant=A|B|C 或底部切换条切换：
+    A 稳妥：执行计划上方的可折叠“定时”面板，沿用 PlanItem 展开编辑模式
+    B 效率：星期矩阵表格 + 一行快速新建 + 运行栏“定时队列”
+    C 创新：一周时间轴，直接点击/拖动时间点
+  数据只在内存中；模型与 PR #85 的 SchedulePolicy 一致（名称、启用、星期、多个分钟级时间点）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Schedule UI Prototype</title>
+<style>
+:root {
+  --canvas: #F6F8FB; --surface: #FFFFFF; --option: #F8FAFD; --disabled: #EEF2F6; --bar: #E9EDF3;
+  --border: #D6DEE8; --border-subtle: #E4EAF0; --border-strong: #7B899B; --rail-border: #E3E8EF;
+  --rail-active: #E6EDFA; --text: #182230; --body: #26313F; --secondary: #465467; --muted: #5F6E80;
+  --primary: #3156A3; --primary-hover: #284A91; --primary-surface: #EDF3FF; --primary-surface-hover: #DCE8FC;
+  --primary-border: #B8CCF4; --success: #26734D; --success-surface: #E7F5EC; --success-border: #A9D7BF;
+  --warning: #8A5400; --warning-fg: #7A4700; --warning-surface: #FFF4E5; --warning-border: #F0C98A;
+  --error: #B4232F; --error-surface: #FDEBED; --error-border: #E7AAB0; --error-fg: #9E1C2A;
+  --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: #C9D1DC; font: 13px/1.45 var(--font); color: var(--body); overflow: auto; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input { font: inherit; color: inherit; }
+.ic { flex: none; display: block; }
+.muted { color: var(--muted); }
+.sec { color: var(--secondary); }
+
+/* ---------- 仿真主窗口（宿主页面，三方案共用） ---------- */
+.win { width: min(1320px, 100vw); min-width: 1120px; height: min(860px, 100vh); min-height: 700px; margin: 0 auto;
+  background: var(--canvas); display: grid; grid-template-rows: 48px 1fr; box-shadow: 0 10px 40px #18223033; }
+.titlebar { display: flex; align-items: center; gap: 10px; padding: 0 0 0 16px; }
+.titlebar .logo { width: 20px; height: 20px; border-radius: 5px; background: linear-gradient(135deg, #F08A24, #C2410C);
+  color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.titlebar .name { font-size: 13px; color: var(--text); }
+.titlebar .winbtns { margin-left: auto; display: flex; height: 100%; }
+.titlebar .winbtns span { width: 46px; display: grid; place-items: center; color: var(--secondary); }
+.body { display: grid; grid-template-columns: 64px 1fr; min-height: 0; }
+.rail { border-right: 1px solid var(--rail-border); display: flex; flex-direction: column; padding: 6px 0 10px; gap: 2px; }
+.rail .item { margin: 0 6px; height: 52px; border-radius: 6px; display: grid; place-items: center; align-content: center;
+  gap: 2px; color: var(--secondary); font-size: 11px; position: relative; }
+.rail .item.active { background: var(--rail-active); color: var(--primary); }
+.rail .item.active::before { content: ""; position: absolute; left: -6px; top: 16px; bottom: 16px; width: 3px;
+  border-radius: 2px; background: var(--primary); }
+.rail .spacer { flex: 1; }
+.home { display: grid; grid-template-columns: minmax(460px, 1fr) 392px; min-height: 0; }
+.tasks { display: grid; grid-template-rows: 36px 1fr; padding: 12px 16px; min-height: 0; min-width: 0; }
+.tasks-head { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.tasks-head h1 { font-size: 20px; font-weight: 600; color: var(--text); margin: 0; flex: none; }
+.cfgbar { height: 34px; padding: 3px; border-radius: 8px; background: var(--bar); display: flex; gap: 2px;
+  min-width: 0; overflow: hidden; }
+.tab { height: 28px; padding: 0 10px 0 11px; border-radius: 6px; border: 1px solid transparent; background: transparent;
+  color: var(--secondary); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tab:hover { background: #FFFFFF8C; color: var(--text); }
+.tab.sel { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px #18223024; }
+.tab .badge { display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 400; color: var(--muted); }
+.tab .badge.on { color: var(--primary); }
+.tab .badge.off { opacity: .55; }
+.tab .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+.addtab { width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; display: grid;
+  place-items: center; color: var(--secondary); flex: none; }
+.ws { margin-top: 12px; min-height: 0; overflow: auto; padding-right: 8px; display: flex; flex-direction: column; gap: 12px; }
+
+/* 执行计划（只读仿真） */
+.plan-head { display: flex; align-items: center; height: 34px; }
+.plan-head h2 { font-size: 15px; font-weight: 600; color: var(--text); margin: 0; }
+.plan-head .count { margin-left: 8px; color: var(--muted); }
+.plan-head .grow { flex: 1; }
+.btn { height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface);
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--body); white-space: nowrap; }
+.btn:hover { background: var(--option); border-color: var(--border-strong); }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.primary:hover { background: var(--primary-hover); }
+.btn.subtle { border-color: transparent; background: transparent; font-weight: 400; color: var(--secondary); }
+.btn.subtle:hover { background: var(--disabled); }
+.btn.sm { height: 26px; padding: 0 8px; font-size: 12px; }
+.btn[disabled] { opacity: .45; pointer-events: none; }
+.iconbtn { width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  display: grid; place-items: center; flex: none; }
+.iconbtn:hover { background: var(--disabled); color: var(--text); }
+.iconbtn.danger:hover { background: var(--error-surface); color: var(--error); }
+.planitem { height: 44px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  display: flex; align-items: center; gap: 10px; padding: 0 10px; margin-bottom: 8px; }
+.planitem .grip { color: #A3AFBF; }
+.planitem b { font-weight: 600; color: var(--text); }
+.planitem .pre { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--disabled); color: var(--secondary); }
+.plan-empty { padding: 16px 0; }
+.plan-empty b { display: block; color: var(--text); }
+
+/* 运行控制栏 */
+.console { margin: 14px 16px 16px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 4px 18px #1822300F; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.rc { padding: 10px 12px 14px 16px; }
+.rc-head { height: 32px; display: flex; align-items: center; gap: 10px; }
+.rc-head b { font-size: 13px; color: var(--text); }
+.status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary); }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: #A3AFBF; }
+.status.run i { background: var(--success); } .status.prep i { background: #D08A16; } .status.err i { background: var(--error); }
+.rc-head .grow { flex: 1; }
+.rc-body { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.rc-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.rc-actions .btn { height: 36px; justify-content: center; }
+.progress { height: 4px; border-radius: 2px; background: #E3E8EF; overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--success); transition: width .4s; }
+.nextline { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; background: var(--option);
+  border: 1px solid var(--border-subtle); color: var(--secondary); font-size: 12px; }
+.nextline b { color: var(--text); font-weight: 600; }
+.nextline .grow { flex: 1; }
+.nextline a { color: var(--primary); cursor: pointer; }
+.csec { border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; min-height: 0; }
+.csec.fill { flex: 1; }
+.csec-head { height: 42px; margin: 0 8px 0 16px; display: flex; align-items: center; gap: 8px; }
+.csec-head b { font-size: 13px; color: var(--text); }
+.csec-head .grow { flex: 1; }
+.feed { overflow: auto; padding: 0 16px 12px; min-height: 0; }
+.feed .row { display: grid; grid-template-columns: 58px 1fr; gap: 8px; padding: 5px 0; font-size: 12px;
+  border-bottom: 1px dashed var(--border-subtle); }
+.feed .row time { font-family: var(--mono); color: var(--muted); font-size: 11px; padding-top: 1px; }
+.feed .row.err span { color: var(--error-fg); } .feed .row.ok span { color: var(--success); }
+.feed .row.skip span { color: var(--muted); }
+.tag { display: inline-block; font-size: 10.5px; padding: 0 5px; border-radius: 4px; margin-right: 4px;
+  background: var(--primary-surface); color: var(--primary); vertical-align: 1px; }
+.feed-empty { text-align: center; color: var(--muted); padding: 40px 12px; }
+.feed-empty b { display: block; color: var(--text); margin-bottom: 4px; font-size: 14px; }
+
+/* 共用小控件 */
+.sw { position: relative; width: 34px; height: 18px; flex: none; display: inline-block; }
+.sw input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.sw span { position: absolute; inset: 0; border-radius: 9px; background: #fff; border: 1px solid var(--border-strong);
+  transition: .15s; }
+.sw span::after { content: ""; position: absolute; width: 10px; height: 10px; border-radius: 50%; top: 3px; left: 3px;
+  background: var(--secondary); transition: .15s; }
+.sw input:checked + span { background: var(--primary); border-color: var(--primary); }
+.sw input:checked + span::after { left: 19px; background: #fff; }
+.sw input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+.field-input { height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; background: #fff;
+  outline: none; min-width: 0; }
+.field-input:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.days { display: flex; gap: 4px; }
+.day { width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border); background: #fff;
+  color: var(--secondary); display: grid; place-items: center; }
+.day:hover { border-color: var(--border-strong); }
+.day.on { background: var(--primary-surface); border-color: var(--primary-border); color: var(--primary); font-weight: 600; }
+.chip { height: 28px; display: inline-flex; align-items: center; gap: 2px; padding: 0 4px 0 10px; border-radius: 14px;
+  background: var(--primary-surface); border: 1px solid var(--primary-border); color: var(--primary);
+  font-family: var(--mono); font-size: 12.5px; }
+.chip button { width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent; color: inherit;
+  display: grid; place-items: center; }
+.chip button:hover { background: var(--primary-surface-hover); }
+.link { border: 0; background: none; color: var(--primary); padding: 0 2px; font-size: 12px; }
+.link:hover { text-decoration: underline; }
+.warnbox { display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border-radius: 6px; font-size: 12px;
+  background: var(--warning-surface); color: var(--warning-fg); border: 1px solid var(--warning-border); }
+.warnbox.err { background: var(--error-surface); color: var(--error-fg); border-color: var(--error-border); }
+.warnbox .ic { margin-top: 2px; }
+.seg { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--bar); gap: 2px; }
+.seg button { height: 26px; padding: 0 12px; border: 0; border-radius: 5px; background: transparent; color: var(--secondary); }
+.seg button.on { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 3px #18223024; }
+
+/* ---------- 方案 A：可折叠定时面板 ---------- */
+.a-card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.a-head { width: 100%; height: 44px; border: 0; background: transparent; display: flex; align-items: center; gap: 10px;
+  padding: 0 12px; text-align: left; border-radius: 8px; }
+.a-head:hover { background: var(--option); }
+.a-head .t { font-weight: 600; color: var(--text); }
+.a-head .summary { flex: 1; min-width: 0; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.a-head .next { color: var(--primary); font-size: 12px; white-space: nowrap; }
+.a-head .next.skip { color: var(--warning-fg); }
+.a-head .chev { color: var(--muted); transition: transform .15s; }
+.a-card.open .a-head .chev { transform: rotate(180deg); }
+.a-card.open .a-head { border-bottom: 1px solid var(--border-subtle); border-radius: 8px 8px 0 0; }
+.a-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--option);
+  border-radius: 0 0 8px 8px; }
+.a-pol { border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+.a-pol.open { border-left: 3px solid var(--primary); }
+.a-pol.off .a-main b, .a-pol.off .a-main span { color: var(--muted); }
+.a-row { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 12px; }
+.a-main { flex: 1; min-width: 0; border: 0; background: transparent; text-align: left; display: flex; align-items: baseline;
+  gap: 10px; padding: 6px 0; }
+.a-main b { color: var(--text); font-weight: 600; white-space: nowrap; }
+.a-main span { color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.a-editor { border-top: 1px solid var(--border-subtle); padding: 12px 14px 14px; display: grid;
+  grid-template-columns: 56px 1fr; gap: 12px 12px; align-items: center; background: var(--option); }
+.a-editor > label { font-size: 12px; font-weight: 600; color: var(--secondary); }
+.a-editor .line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.a-pol .warnbox { margin: 0 10px 10px; }
+.a-foot { display: flex; align-items: center; gap: 12px; }
+.a-foot .muted { font-size: 12px; }
+.a-empty { text-align: center; padding: 14px 0 6px; color: var(--secondary); }
+.a-empty b { display: block; color: var(--text); margin-bottom: 2px; }
+
+/* ---------- 方案 B：矩阵表格 ---------- */
+.b-card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.b-head { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--border-subtle); }
+.b-head b { font-size: 14px; color: var(--text); }
+.b-head .grow { flex: 1; }
+.b-head .kbd { font-size: 11.5px; color: var(--muted); }
+kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 4px; background: #fff; color: var(--secondary); }
+table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.grid th { height: 30px; font-size: 11.5px; font-weight: 600; color: var(--muted); text-align: left; padding: 0 6px;
+  background: var(--option); border-bottom: 1px solid var(--border-subtle); }
+.grid th.d { text-align: center; padding: 0; }
+.grid td { height: 38px; padding: 0 6px; border-bottom: 1px solid var(--border-subtle); vertical-align: middle; }
+.grid tr.off td { background: #FBFCFD; }
+.grid tr.off .cell-name, .grid tr.off .tok { color: var(--muted); }
+.grid tr.warn td:first-child { box-shadow: inset 3px 0 0 #D08A16; }
+.grid tr.group td { height: 30px; background: var(--canvas); font-size: 12px; font-weight: 600; color: var(--secondary); }
+.grid tr.group td button { border: 0; background: none; color: var(--primary); font-weight: 600; padding: 0; }
+.grid tr.group.cur td button { color: var(--text); }
+.grid tr:hover td:not(.nohover) { background: #F9FBFE; }
+.cell-name { width: 100%; height: 28px; border: 1px solid transparent; border-radius: 4px; background: transparent;
+  padding: 0 6px; font-weight: 600; color: var(--text); outline: none; }
+.cell-name:hover { border-color: var(--border); }
+.cell-name:focus { border-color: var(--primary); background: #fff; }
+.dc { width: 100%; height: 26px; border: 0; border-radius: 4px; background: transparent; display: grid; place-items: center; }
+.dc i { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border); background: #fff; }
+.dc.on i { background: var(--primary); border-color: var(--primary); }
+.grid tr.off .dc.on i { background: #A3AFBF; border-color: #A3AFBF; }
+.dc:hover i { border-color: var(--border-strong); }
+.dc:focus-visible { outline: 2px solid var(--primary); }
+.times-cell { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-height: 28px; margin: 3px 0;
+  border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; cursor: text; }
+.times-cell:focus-within { border-color: var(--primary); background: #fff; }
+.tok { font-family: var(--mono); font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--disabled);
+  color: var(--body); white-space: nowrap; cursor: pointer; }
+.tok:hover { background: var(--error-surface); color: var(--error-fg); text-decoration: line-through; }
+.times-cell input { border: 0; outline: none; background: transparent; min-width: 50px; flex: 1; font-family: var(--mono);
+  font-size: 12px; height: 24px; }
+.next-cell { font-size: 12px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.next-cell.skip { color: var(--warning-fg); } .next-cell.never { color: var(--muted); }
+.b-quick { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--option); }
+.b-quick .field-input { flex: 1; font-size: 12.5px; }
+.b-quick .hint { font-size: 11.5px; color: var(--muted); }
+.b-preview { font-size: 12px; color: var(--primary); padding: 0 12px 10px; background: var(--option); margin-top: -4px; }
+.b-preview.bad { color: var(--muted); }
+.b-plan .planitem { height: 36px; }
+.queue { overflow: auto; padding: 0 8px 8px; }
+.qrow { display: grid; grid-template-columns: 74px 1fr auto; gap: 8px; align-items: center; padding: 6px 8px;
+  border-radius: 6px; font-size: 12px; cursor: pointer; }
+.qrow:hover { background: var(--option); }
+.qrow time { font-family: var(--mono); color: var(--text); font-size: 11.5px; }
+.qrow .who b { color: var(--text); font-weight: 600; }
+.qrow .who span { color: var(--muted); margin-left: 6px; }
+.qrow.cur { background: var(--primary-surface); }
+.pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
+.pill.run { background: var(--success-surface); color: var(--success); }
+.pill.skip { background: var(--disabled); color: var(--muted); }
+.pill.bad { background: var(--error-surface); color: var(--error-fg); }
+.qday { font-size: 11px; font-weight: 600; color: var(--muted); padding: 8px 8px 2px; }
+
+/* ---------- 方案 C：一周时间轴 ---------- */
+.c-top { display: flex; align-items: center; gap: 12px; }
+.c-top .grow { flex: 1; }
+.c-top label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--secondary); cursor: pointer; }
+.c-hero { border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; gap: 18px;
+  background: linear-gradient(120deg, #203F7E, #3156A3 60%, #4D72BF); color: #fff; }
+.c-hero .lbl { font-size: 12px; opacity: .8; }
+.c-hero .big { font-size: 28px; font-weight: 600; letter-spacing: .5px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.c-hero .sub { font-size: 12.5px; opacity: .9; }
+.c-hero .grow { flex: 1; }
+.c-hero .ring { width: 54px; height: 54px; flex: none; }
+.c-hero.skip { background: linear-gradient(120deg, #6B4A12, #8A5400 60%, #A86C10); }
+.c-hero.none { background: var(--surface); color: var(--secondary); border: 1px dashed var(--border); }
+.c-hero.none .big { font-size: 16px; color: var(--text); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lg { height: 30px; display: inline-flex; align-items: center; gap: 7px; padding: 0 6px 0 10px; border-radius: 15px;
+  border: 1px solid var(--border); background: #fff; color: var(--body); }
+.lg i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.lg.off i { background: transparent; border: 2px solid #A3AFBF; }
+.lg.off { color: var(--muted); }
+.lg.act { border-color: var(--c); box-shadow: 0 0 0 1px var(--c); font-weight: 600; }
+.lg .n { font-size: 11px; color: var(--muted); font-weight: 400; }
+.tl { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 6px 12px 10px 0; user-select: none; }
+.tl-axis, .tl-row { display: grid; grid-template-columns: 66px 1fr; }
+.tl-axis .ticks { position: relative; height: 20px; }
+.tl-axis .ticks span { position: absolute; transform: translateX(-50%); font-size: 10.5px; color: var(--muted);
+  font-family: var(--mono); top: 2px; }
+.tl-row { height: 40px; }
+.tl-day { border: 0; background: transparent; display: flex; align-items: center; justify-content: center; gap: 4px;
+  font-size: 12px; color: var(--secondary); border-radius: 6px; margin: 4px 6px 4px 4px; position: relative; white-space: nowrap; }
+.tl-day:hover { background: var(--disabled); }
+.tl-day.in { color: var(--c); font-weight: 700; }
+.tl-day.in::before { content: ""; position: absolute; left: 3px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--c); }
+.tl-day.today::after { content: "今"; font-size: 9.5px; font-weight: 600; color: #fff; background: var(--primary);
+  border-radius: 3px; padding: 0 3px; }
+.track { position: relative; margin: 3px 0; border-radius: 6px; cursor: copy;
+  background-color: #FBFCFE;
+  background-image: linear-gradient(to right, #DCE3EC 1px, transparent 1px), linear-gradient(to right, #E9EEF4 1px, transparent 1px),
+    linear-gradient(to right, #F1F4F8 0 25%, transparent 25% 91.667%, #F1F4F8 91.667%);
+  background-size: 25% 100%, 4.1667% 100%, 100% 100%; }
+.tl-row.today .track { box-shadow: inset 0 0 0 1px var(--primary-border); }
+.tl-row.dim .track { opacity: .75; }
+.nowline { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: #E03131; border-radius: 1px;
+  pointer-events: none; z-index: 3; }
+.nowtag { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); font: 600 10px/14px var(--mono); color: #fff;
+  background: #E03131; padding: 0 5px; border-radius: 3px; white-space: nowrap; }
+.past { position: absolute; left: 0; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, #18223008 0 4px, transparent 4px 8px);
+  border-radius: 6px 0 0 6px; pointer-events: none; }
+.pin { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: var(--c); border: 2px solid #fff; box-shadow: 0 1px 3px #18223055; cursor: grab; z-index: 2; touch-action: none; }
+.pin.off { background: #fff; border: 2px solid #A3AFBF; box-shadow: none; }
+.pin.inact { width: 10px; height: 10px; margin: -5px 0 0 -5px; opacity: .35; }
+.pin.inact:hover { opacity: .8; }
+.pin.hl { transform: scale(1.3); z-index: 4; }
+.pin.sel { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--c); z-index: 4; }
+.pin.lose::after { content: "!"; position: absolute; left: -10px; top: -9px; width: 12px; height: 12px; border-radius: 50%;
+  background: #D08A16; color: #fff; font: 700 9px/12px var(--font); text-align: center; box-shadow: 0 0 0 1.5px #fff; }
+.pin.drag { cursor: grabbing; }
+.pin .pl { position: absolute; top: 50%; left: 13px; transform: translateY(-50%); font-family: var(--mono); font-size: 10px;
+  color: var(--c); font-weight: 700; white-space: nowrap; pointer-events: none; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
+.ghost { position: absolute; bottom: 4px; width: 7px; height: 7px; margin-left: -3.5px; transform: rotate(45deg);
+  border-radius: 1px; background: #A3AFBF;
+  z-index: 1; cursor: help; }
+.hovermark { position: absolute; top: 2px; bottom: 2px; width: 1px; background: var(--primary); pointer-events: none;
+  display: none; z-index: 1; }
+.hovermark span { position: absolute; top: -17px; left: 50%; transform: translateX(-50%); font: 600 10px var(--mono);
+  color: #fff; background: var(--primary); padding: 0 4px; border-radius: 3px; white-space: nowrap; }
+.track:hover .hovermark { display: block; }
+.tl-key { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 0 0 66px; font-size: 11.5px; color: var(--muted); }
+.tl-key span { display: inline-flex; align-items: center; gap: 6px; }
+.tl-key .k { position: relative; width: 12px; height: 12px; flex: none; }
+.k.dot { border-radius: 50%; background: var(--primary); border: 2px solid #fff; box-shadow: 0 1px 2px #18223055; }
+.k.hollow { border-radius: 50%; border: 2px solid #A3AFBF; }
+.k.dia { width: 7px; height: 7px; transform: rotate(45deg); background: #A3AFBF; border-radius: 1px; margin: 0 2px; }
+.k.bang { border-radius: 50%; background: #D08A16; color: #fff; font: 700 9px/12px var(--font); text-align: center; font-style: normal; }
+.k.now { width: 2px; height: 14px; background: #E03131; margin: 0 5px; }
+.k.hatch { width: 18px; border-radius: 3px; background: repeating-linear-gradient(135deg, #18223018 0 3px, #F1F4F8 3px 6px); }
+.tip { position: fixed; z-index: 200; pointer-events: none; background: var(--text); color: #fff; font-size: 12px; line-height: 1.5;
+  padding: 6px 9px; border-radius: 6px; max-width: 280px; white-space: pre-line; box-shadow: 0 4px 14px #0004; display: none; }
+.dmain { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
+.d-head { display: flex; align-items: center; gap: 14px; height: 36px; flex: none; }
+.d-head h1 { font-size: 20px; font-weight: 600; color: var(--text); margin: 0; }
+.d-head > .muted { font-size: 12.5px; }
+.d-strip { margin-left: auto; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 12px;
+  border: 1px solid var(--border); border-radius: 16px; background: #fff; }
+.c-hero.compact { padding: 10px 16px; gap: 14px; flex: none; }
+.c-hero.compact .big { font-size: 20px; }
+.d-body { display: grid; grid-template-columns: 236px 1fr; gap: 12px; align-items: start; }
+.d-list { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.d-cap { font-size: 11.5px; font-weight: 600; color: var(--muted); padding: 4px 10px 2px; }
+.d-cfg { border: 0; background: transparent; text-align: left; padding: 8px 10px; border-radius: 8px; display: grid;
+  grid-template-columns: 10px 1fr auto; gap: 2px 8px; align-items: center; }
+.d-cfg:hover { background: var(--option); }
+.d-cfg.sel { background: var(--primary-surface); box-shadow: inset 3px 0 0 var(--c); }
+.d-cfg i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+.d-cfg b { color: var(--text); font-weight: 600; }
+.d-cfg .n { font-size: 11px; color: var(--muted); }
+.d-cfg .st { grid-column: 2 / 4; font-size: 11.5px; color: var(--secondary); }
+.d-cfg .st.skip { color: var(--warning-fg); } .d-cfg .st.bad { color: var(--error-fg); } .d-cfg .st.none { color: var(--muted); }
+.d-list .note { font-size: 11px; color: var(--muted); padding: 8px 10px 4px; border-top: 1px solid var(--border-subtle); margin-top: 4px; }
+.d-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pin.other { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; opacity: .8; cursor: pointer; }
+.pin.other:hover { opacity: 1; }
+.k.dot.small { width: 9px; height: 9px; background: #A3AFBF; margin: 0 1.5px; }
+.c-insp { border: 1px solid var(--border); border-left: 4px solid var(--c); border-radius: 8px; background: #fff; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; }
+.c-insp .line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.c-insp .grow { flex: 1; }
+.c-insp .hint { font-size: 12px; color: var(--muted); }
+.c-insp .bigtime { font: 600 13px var(--mono); }
+
+/* ---------- 原型工具条（不属于被评估的设计） ---------- */
+.proto { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center;
+  gap: 4px; background: #0B0F17; color: #F3F4F6; border-radius: 999px; padding: 5px; box-shadow: 0 8px 30px #000a;
+  font: 12.5px/1 system-ui, sans-serif; }
+.proto button { white-space: nowrap; height: 30px; border: 0; border-radius: 999px; background: transparent; color: inherit; padding: 0 10px; }
+.proto button:hover { background: #ffffff1f; }
+.proto .lbl { padding: 0 8px; min-width: 210px; text-align: center; font-weight: 600; }
+.proto .lbl small { font-weight: 400; opacity: .65; margin-left: 4px; }
+.proto .sep { width: 1px; height: 18px; background: #ffffff30; margin: 0 4px; }
+.proto .clock { font-family: var(--mono); opacity: .75; padding: 0 6px; }
+.drawer { position: fixed; right: 14px; bottom: 64px; width: 420px; max-height: 60vh; overflow: auto; z-index: 99;
+  background: #0B0F17; color: #D1FAE5; border-radius: 10px; padding: 12px 14px; font: 11.5px/1.5 var(--mono);
+  white-space: pre; box-shadow: 0 8px 30px #000a; display: none; }
+.drawer.show { display: block; }
+body.scn-open .win { margin-left: 306px; width: min(1320px, calc(100vw - 318px)); }
+.proto button.on { background: #3156A3; }
+.scn { position: fixed; left: 12px; top: 12px; bottom: 70px; width: 282px; overflow: auto; z-index: 101; background: #0B0F17;
+  color: #E5E7EB; border-radius: 10px; padding: 8px 8px 12px; font: 12.5px/1.45 system-ui, "Microsoft YaHei UI", sans-serif;
+  box-shadow: 0 8px 30px #000a; }
+.scn .hd { display: flex; align-items: center; padding: 4px 6px 2px; font-weight: 700; }
+.scn .hd span { flex: 1; } .scn .hd small { font-weight: 400; opacity: .55; }
+.scn h4 { margin: 12px 8px 4px; font-size: 11px; color: #9CA3AF; font-weight: 600; }
+.scn .it { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; padding: 6px 8px;
+  border-radius: 6px; font: inherit; }
+.scn .it:hover { background: #ffffff14; } .scn .it.on { background: #3156A3; }
+.scn .it small { display: block; opacity: .6; font-size: 11px; }
+.scn .it .q { color: #FCD34D; font-weight: 700; margin-left: 4px; }
+.scn .note { margin: 6px 0 2px; padding: 8px 9px; border-radius: 6px; background: #F59E0B26; color: #FDE68A; font-size: 12px; }
+.balloon { position: fixed; right: 16px; bottom: 72px; z-index: 102; width: 364px; font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif; }
+.balloon .cap { font: 11px system-ui; color: #fff; background: #0B0F17; display: inline-block; padding: 2px 8px; border-radius: 4px 4px 0 0; }
+.balloon .card { background: #F3F3F3; border: 1px solid #0000001a; border-radius: 0 8px 8px 8px; box-shadow: 0 8px 28px #0004; padding: 12px 14px 14px; }
+.balloon .bh { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #444; }
+.balloon .bh .logo { width: 16px; height: 16px; border-radius: 4px; background: linear-gradient(135deg, #F08A24, #C2410C);
+  color: #fff; font-size: 9px; font-weight: 700; display: grid; place-items: center; }
+.balloon .bh span.grow { flex: 1; } .balloon .bh button { border: 0; background: none; color: #666; }
+.balloon .bb { display: flex; gap: 12px; margin-top: 10px; }
+.balloon .bb .bi { width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center; color: #fff;
+  font: 700 15px var(--font); background: #2563EB; }
+.balloon .bb .bi.err { background: #C42B1C; }
+.balloon .bb b { display: block; font-size: 14px; color: #1A1A1A; font-weight: 600; }
+.balloon .bb div div { font-size: 13px; color: #333; margin-top: 2px; }
+.spot { outline: 2px dashed #E03131 !important; outline-offset: 3px; border-radius: 6px; animation: spot 1.1s ease-in-out 3; }
+@keyframes spot { 50% { outline-color: transparent; } }
+.toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 98; background: var(--text);
+  color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 12.5px; box-shadow: 0 6px 20px #0005; max-width: 560px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="drawer" id="drawer"></div>
+<script>
+// ---------------------------------------------------------------- 数据与工具
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const DAY_CN = { 0: '日', 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六' };
+const DAY_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEKDAYS = [1, 2, 3, 4, 5], WEEKEND = [6, 0], ALL = [1, 2, 3, 4, 5, 6, 0];
+const COLORS = ['#3156A3', '#26734D', '#B26A00', '#0E7C86', '#7A3E9D', '#B4232F'];
+const VARIANTS = { A: '稳妥：折叠面板', B: '效率：矩阵与队列', C: '创新：一周时间轴', D: '对比：左侧定时页' };
+let seq = 100;
+const nid = p => p + (++seq);
+
+function initialState() {
+  return {
+    activeId: 'c1',
+    configs: [
+      { id: 'c1', name: '日常', pretask: '打开游戏', plan: ['批量领取', '忍术特训', '竞技场一键六道'], policies: [
+        { id: 'p1', name: '工作日早晚', enabled: true, days: [1, 2, 3, 4, 5], times: ['08:00', '20:00'] },
+        { id: 'p2', name: '周末上午', enabled: true, days: [6, 0], times: ['10:30'] } ] },
+      { id: 'c2', name: '周末活动', pretask: '打开游戏', plan: ['购物节送礼', '注册并练级'], policies: [
+        { id: 'p3', name: '活动场次', enabled: true, days: [6, 0], times: ['10:30', '21:00'] } ] },
+      { id: 'c3', name: '小号', plan: [], policies: [
+        { id: 'p4', name: '每天中午', enabled: true, days: ALL.slice(), times: ['12:00'] } ] },
+      { id: 'c4', name: '配置 4', plan: ['批量领取'], policies: [
+        { id: 'p5', name: '夜间', enabled: false, days: [1, 3, 5], times: ['23:30'] } ] },
+    ],
+  };
+}
+let S = initialState();
+const params = new URLSearchParams(location.search);
+const UI = {
+  variant: VARIANTS[params.get('variant')] ? params.get('variant') : 'D',
+  aOpen: true, aExpanded: 'p1', bScope: 'config', bQuick: '', cMode: 'schedule', cActive: {}, cSel: null,
+  cOthers: true, drawer: false, toast: null, dPage: 'schedule', dFocus: null,
+  scnOpen: true, scnIdx: null, balloon: null, hl: null,
+};
+let offsetMs = 0;
+const now = () => new Date(Date.now() + offsetMs);
+const RT = { phase: 'idle', cfgId: null, policy: '', step: 0, total: 0, text: '' };
+const LOG = [];
+
+const cfg = () => S.configs.find(c => c.id === S.activeId);
+const pad = n => String(n).padStart(2, '0');
+const hm = d => pad(d.getHours()) + ':' + pad(d.getMinutes());
+const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3);
+const fromMin = m => pad(Math.floor(m / 60) % 24) + ':' + pad(m % 60);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const sortDays = days => DAY_ORDER.filter(d => days.includes(d));
+const normTimes = ts => [...new Set(ts)].sort();
+const findPolicy = pid => {
+  for (const c of S.configs) { const p = c.policies.find(x => x.id === pid); if (p) return [c, p]; }
+  return [null, null];
+};
+
+function parseTime(s) {
+  s = String(s).trim().replace(/：/g, ':');
+  let m = s.match(/^(\d{1,2})(?::(\d{1,2}))?$/) || s.match(/^(\d{1,2})(\d{2})$/);
+  let h, mi;
+  if (m) { h = +m[1]; mi = m[2] ? +m[2] : 0; } else if ((m = s.match(/^(\d{1,2})点(?:(半)|(\d{1,2})分?)?$/))) {
+    h = +m[1]; mi = m[2] ? 30 : m[3] ? +m[3] : 0;
+  } else return null;
+  return h < 24 && mi < 60 ? pad(h) + ':' + pad(mi) : null;
+}
+function daysText(days) {
+  const d = sortDays(days), k = d.join();
+  if (!d.length) return '未选星期';
+  if (k === ALL.join()) return '每天';
+  if (k === WEEKDAYS.join()) return '工作日';
+  if (k === '6,0') return '周末';
+  const idx = d.map(x => DAY_ORDER.indexOf(x));
+  if (d.length >= 3 && idx.every((v, i) => !i || v === idx[i - 1] + 1)) return '周' + DAY_CN[d[0]] + '至周' + DAY_CN[d.at(-1)];
+  return '周' + d.map(x => DAY_CN[x]).join('、');
+}
+const summary = p => daysText(p.days) + ' ' + (p.times.length ? p.times.join('、') : '未设时间');
+const enabledPolicies = c => c.policies.filter(p => p.enabled);
+
+// 未来 8 天内的到点机会，按分钟分组；同组内按配置列表顺序，第一份有效配置获准。
+function occurrences(from = now(), span = 8) {
+  const out = [], base = new Date(from); base.setHours(0, 0, 0, 0);
+  for (let i = 0; i < span; i++) {
+    const day = new Date(base); day.setDate(base.getDate() + i);
+    const groups = new Map();
+    S.configs.forEach((c, ci) => c.policies.forEach(p => {
+      if (!p.enabled || !p.days.includes(day.getDay())) return;
+      p.times.forEach(tm => {
+        const t = new Date(day); t.setHours(+tm.slice(0, 2), +tm.slice(3), 0, 0);
+        if (t <= from) return;
+        if (!groups.has(+t)) groups.set(+t, { t, entries: [] });
+        const g = groups.get(+t);
+        let e = g.entries.find(x => x.cfg === c);
+        if (!e) g.entries.push(e = { cfg: c, ci, policies: [] });
+        if (!e.policies.includes(p)) e.policies.push(p);
+      });
+    }));
+    for (const g of groups.values()) {
+      g.entries.sort((a, b) => a.ci - b.ci);
+      const w = g.entries.find(e => e.cfg.plan.length);
+      g.winner = w ? w.cfg : null;
+      out.push(g);
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+function statusOf(g, c) { return g.winner === c ? 'run' : c.plan.length ? 'skip' : 'bad'; }
+function nextFor(c, pol) {
+  const g = occurrences().find(g => g.entries.some(e => e.cfg === c && (!pol || e.policies.includes(pol))));
+  return g ? { g, status: statusOf(g, c) } : null;
+}
+function whenText(t) {
+  const n = now(), a = new Date(n), b = new Date(t); a.setHours(0, 0, 0, 0); b.setHours(0, 0, 0, 0);
+  const d = Math.round((b - a) / 864e5);
+  return (d === 0 ? '今天' : d === 1 ? '明天' : '周' + DAY_CN[t.getDay()]) + ' ' + hm(t);
+}
+function inText(t) {
+  const m = Math.ceil((t - now()) / 6e4);
+  if (m < 60) return m + ' 分钟后';
+  if (m < 1440) return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分后';
+  return Math.floor(m / 1440) + ' 天 ' + Math.floor(m % 1440 / 60) + ' 小时后';
+}
+// 与其他配置同刻到点的冲突（只看启用的策略）。
+function conflicts(c, p) {
+  if (!p.enabled) return [];
+  const res = new Map(), ci = S.configs.indexOf(c);
+  S.configs.forEach((o, oi) => {
+    if (o === c) return;
+    o.policies.forEach(op => {
+      if (!op.enabled) return;
+      const days = p.days.filter(d => op.days.includes(d)), times = p.times.filter(t => op.times.includes(t));
+      if (!days.length || !times.length) return;
+      const key = o.id + times.join();
+      const cur = res.get(key) || { other: o, first: oi < ci ? o : c, days: new Set(), times };
+      days.forEach(d => cur.days.add(d)); res.set(key, cur);
+    });
+  });
+  return [...res.values()].map(r => ({ ...r, days: [...r.days] }));
+}
+function issues(c, p) {
+  const list = [];
+  if (!p.days.length) list.push({ err: false, text: '未选星期，不会运行。' });
+  else if (!p.times.length) list.push({ err: false, text: '未设时间，不会运行。' });
+  if (p.enabled && !c.plan.length) list.push({ err: true, text: '执行计划为空，到点时无法运行。' });
+  for (const k of conflicts(c, p)) {
+    const lose = k.first !== c;
+    list.push({ err: false, text: `${daysText(k.days)} ${k.times.join('、')} 与「${k.other.name}」同时到点，` +
+      (lose ? '本配置将跳过。' : `「${k.other.name}」将跳过。`) });
+  }
+  return list;
+}
+
+// ---------------------------------------------------------------- 修改（对应 PR #85 的 Add/Update/Delete）
+function addPolicy(c, init = {}) {
+  const p = Object.assign({ id: nid('p'), name: '定时 ' + (c.policies.length + 1), enabled: true,
+    days: WEEKDAYS.slice(), times: ['08:00'] }, init);
+  p.days = sortDays(p.days); p.times = normTimes(p.times);
+  c.policies.push(p); return p;
+}
+function delPolicy(pid) {
+  const [c, p] = findPolicy(pid); if (!c) return;
+  c.policies = c.policies.filter(x => x !== p);
+}
+function toggleDay(p, d) { p.days = p.days.includes(d) ? p.days.filter(x => x !== d) : sortDays([...p.days, d]); }
+function addTimes(p, list) {
+  const ok = list.filter(Boolean);
+  p.times = normTimes([...p.times, ...ok]);
+  return ok.length;
+}
+function setDays(p, which) { p.days = { wd: WEEKDAYS, we: [6, 0], all: ALL }[which].slice(); }
+
+function parseQuick(str) {
+  const days = new Set(), times = [], rest = [];
+  const CH = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
+  for (const tok of str.split(/[\s,，、]+/).filter(Boolean)) {
+    const t = parseTime(tok);
+    if (t) { times.push(t); continue; }
+    if (tok === '工作日') { WEEKDAYS.forEach(d => days.add(d)); continue; }
+    if (tok === '周末') { WEEKEND.forEach(d => days.add(d)); continue; }
+    if (/^(每天|每日|天天)$/.test(tok)) { ALL.forEach(d => days.add(d)); continue; }
+    const m = tok.match(/^(?:周|星期|礼拜)([一二三四五六日天至到~\-]+)$/);
+    if (m) {
+      const r = m[1].match(/^([一二三四五六日天])[至到~\-]周?([一二三四五六日天])$/);
+      if (r) {
+        const a = DAY_ORDER.indexOf(CH[r[1]]), b = DAY_ORDER.indexOf(CH[r[2]]);
+        for (let i = a; i <= b; i++) days.add(DAY_ORDER[i]);
+      } else [...m[1]].forEach(ch => CH[ch] !== undefined && days.add(CH[ch]));
+      continue;
+    }
+    rest.push(tok);
+  }
+  return { days: [...days], times, name: rest.join(' ') };
+}
+
+// ---------------------------------------------------------------- 图标
+const P = {
+  home: '<path d="M2.5 7.2 8 2.7l5.5 4.5V13.5h-3.7v-3.3H6.2v3.3H2.5z"/>',
+  gear: '<circle cx="8" cy="8" r="2.1"/><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/>',
+  help: '<circle cx="8" cy="8" r="6"/><path d="M6.3 6.3a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.4M8 11.4v.1"/>',
+  bell: '<path d="M4 11V7.3a4 4 0 0 1 8 0V11l1 1.3H3zM6.6 13.8a1.5 1.5 0 0 0 2.8 0"/>',
+  clock: '<circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.3 1.5"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>', x: '<path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>',
+  trash: '<path d="M2.8 4.3h10.4M6.3 4.3V2.8h3.4v1.5M4.3 4.3l.6 9h6.2l.6-9"/>',
+  chev: '<path d="M4 6l4 4 4-4"/>', left: '<path d="M10 3.5 5.5 8l4.5 4.5"/>', right: '<path d="M6 3.5l4.5 4.5L6 12.5"/>',
+  more: '<circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/>',
+  warn: '<path d="M8 2.4 14.3 13.3H1.7z"/><path d="M8 6.5v3M8 11.4v.1"/>',
+  grip: '<circle cx="6" cy="4" r=".8" fill="currentColor"/><circle cx="10" cy="4" r=".8" fill="currentColor"/><circle cx="6" cy="8" r=".8" fill="currentColor"/><circle cx="10" cy="8" r=".8" fill="currentColor"/><circle cx="6" cy="12" r=".8" fill="currentColor"/><circle cx="10" cy="12" r=".8" fill="currentColor"/>',
+  info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.3v3.6M8 5v.1"/>',
+  bolt: '<path d="M9 1.8 3.8 9h3.6L7 14.2 12.2 7H8.6z"/>', list: '<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.1M2.5 8h.1M2.5 12h.1"/>',
+  min: '<path d="M3 8h10"/>', max: '<rect x="3.5" y="3.5" width="9" height="9" rx="1"/>',
+};
+const ic = (n, s = 16, extra = '') =>
+  `<svg class="ic" ${extra} width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" ` +
+  `stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
+
+// ---------------------------------------------------------------- 宿主页面
+function tabBadge(c) {
+  const on = enabledPolicies(c);
+  if (!c.policies.length) return '';
+  if (UI.variant === 'A') return `<span class="badge ${on.length ? 'on' : 'off'}" title="${on.length} 条定时启用">${ic('clock', 13)}</span>`;
+  if (UI.variant === 'B') return `<span class="badge ${on.length ? 'on' : 'off'}">${ic('clock', 12)}${on.length}/${c.policies.length}</span>`;
+  const n = nextFor(c);
+  if (!n) return '';
+  const w = whenText(n.g.t), short = w.startsWith('今天') ? hm(n.g.t) : w.split(' ')[0];
+  return `<span class="badge ${n.status === 'run' ? 'on' : 'off'}"><span class="dot"></span>${short}</span>`;
+}
+function renderPlan(c, compact) {
+  const items = c.plan.map(t => `<div class="planitem">${ic('grip', 14, 'class="ic grip"')}<b>${t}</b>` +
+    `<span class="muted" style="flex:1;font-size:12px">${compact ? '' : '默认参数'}</span>${ic('info', 15, 'class="ic muted"')}` +
+    `${ic('x', 15, 'class="ic muted"')}</div>`).join('');
+  return `<div class="${compact ? 'b-plan' : ''}">
+    <div class="plan-head"><h2>执行计划</h2><span class="count">${c.plan.length}</span>
+      ${c.pretask ? `<span class="pre" style="margin-left:10px;font-size:11px;padding:1px 6px;border-radius:4px;background:var(--disabled);color:var(--secondary)">启动阶段：${c.pretask}</span>` : ''}
+      <span class="grow"></span><button class="btn">${ic('plus', 15)}添加任务</button></div>
+    <div style="margin-top:10px">${items || '<div class="plan-empty"><b>执行计划为空</b><span class="muted">添加任务后才能运行此配置。</span></div>'}</div></div>`;
+}
+function renderConsole() {
+  const rc = RT.cfgId && S.configs.find(c => c.id === RT.cfgId);
+  const st = { idle: ['', '未启动'], prep: ['prep', '定时 · 准备新分身'], run: ['run', `定时运行中 · ${rc?.name}`],
+    done: ['', '已结束'], fail: ['err', RT.label || '运行失败 · 保留现场'] }[RT.phase];
+  let body = `<div class="rc-actions"><button class="btn primary" ${RT.phase === 'run' || RT.phase === 'prep' ? 'disabled' : ''}>` +
+    `${ic('bolt', 15)}启动并运行</button><button class="btn" title="显示窗口">显示窗口</button></div>`;
+  if (RT.phase === 'run' || RT.phase === 'prep') {
+    body = `<div style="font-size:12px;color:var(--secondary)">${esc(RT.text)}</div>
+      <div class="progress"><i style="width:${RT.total ? Math.round(RT.step / RT.total * 100) : 8}%"></i></div>
+      <div class="rc-actions"><button class="btn">停止任务</button><button class="btn">显示窗口</button></div>`;
+  }
+  let next = '';
+  if (UI.variant !== 'B') {
+    const g = occurrences().find(g => g.winner);
+    next = g ? `<div class="nextline">${ic('clock', 14)}<span>下次定时</span><b>${whenText(g.t)}</b><span>·</span>` +
+      `<a data-act="goto" data-cfg="${g.winner.id}">${esc(g.winner.name)}</a><span class="grow"></span>` +
+      `<span class="muted">${inText(g.t)}</span></div>` :
+      `<div class="nextline">${ic('clock', 14)}<span>没有启用的定时</span></div>`;
+  }
+  const feed = LOG.length ? LOG.map(l => `<div class="row ${l.kind || ''}"><time>${l.time}</time><span>` +
+    `${l.tag ? `<span class="tag">${l.tag}</span>` : ''}${esc(l.text)}</span></div>`).join('') :
+    `<div class="feed-empty"><b>暂无运行动态</b>任务开始后，将在此处显示关键状态更新<br><br>` +
+    `<span style="font-size:12px">可点底部「模拟到点」体验定时触发</span></div>`;
+  return `<aside class="console">
+    <div class="rc"><div class="rc-head"><b>桌面分身</b><span class="status ${st[0]}"><i></i>${st[1]}</span>
+      <span class="grow"></span><button class="iconbtn">${ic('more', 16)}</button></div>
+      <div class="rc-body">${body}${next}</div></div>
+    ${UI.variant === 'B' ? renderQueue() : ''}
+    <div class="csec fill"><div class="csec-head"><b>运行动态</b><span class="grow"></span>
+      <button class="btn subtle sm" data-act="clearlog">清空</button></div><div class="feed">${feed}</div></div>
+  </aside>`;
+}
+function render() {
+  const a = document.activeElement, key = a?.dataset?.key, sel = a && 'selectionStart' in a ? a.selectionStart : null;
+  const c = cfg();
+  const tabs = S.configs.map(x => `<button class="tab ${x.id === S.activeId ? 'sel' : ''}" data-act="tab" data-cfg="${x.id}">` +
+    `${esc(x.name)}${tabBadge(x)}</button>`).join('');
+  const ws = { A: renderA, B: renderB, C: renderC, D: renderPlan }[UI.variant](c);
+  const dSched = UI.variant === 'D' && UI.dPage === 'schedule';
+  document.getElementById('app').innerHTML = `<div class="win">
+    <div class="titlebar"><span class="logo">分</span><span class="name">Bunshin</span>
+      <span class="winbtns"><span>${ic('min', 14)}</span><span>${ic('max', 13)}</span><span>${ic('x', 14)}</span></span></div>
+    <div class="body">
+      <nav class="rail"><div class="item ${dSched ? '' : 'active'}" data-act="dpage" data-p="home">${ic('home', 20)}首页</div>
+        ${UI.variant === 'D' ? `<div class="item ${dSched ? 'active' : ''}" data-act="dpage" data-p="schedule">${ic('clock', 20)}定时</div>` : ''}
+        <div class="spacer"></div>
+        <div class="item">${ic('bell', 20)}更新</div><div class="item">${ic('help', 20)}帮助</div>
+        <div class="item">${ic('gear', 20)}设置</div></nav>
+      ${dSched ? `<main class="dmain">${renderD()}</main>` : `<main class="home">
+        <section class="tasks"><div class="tasks-head"><h1>任务</h1><div class="cfgbar">${tabs}` +
+          `<button class="addtab" title="新建空配置">${ic('plus', 15)}</button></div></div>
+          <div class="ws" id="ws">${ws}</div></section>
+        ${renderConsole()}`}
+      </main>
+    </div></div>
+    <div class="proto">
+      <button data-act="prev" title="上一个方案 (←)">${ic('left', 15)}</button>
+      <span class="lbl">${UI.variant}<small>${VARIANTS[UI.variant]}</small></span>
+      <button data-act="next" title="下一个方案 (→)">${ic('right', 15)}</button><span class="sep"></span>
+      <span class="clock" title="模拟时钟">${'周' + DAY_CN[now().getDay()]} ${hm(now())}</span>
+      <button data-act="simulate">⏩ 模拟到点</button><button data-act="drawer">${UI.drawer ? '隐藏' : '查看'}状态</button>
+      <button data-act="reset">重置</button><span class="sep"></span>
+      <button class="${UI.scnOpen ? 'on' : ''}" data-act="scnpanel">提示场景</button>
+    </div>
+    ${UI.scnOpen ? renderScenarios() : ''}
+    ${UI.balloon ? `<div class="balloon"><span class="cap">Windows 通知（模拟）</span><div class="card">
+      <div class="bh"><span class="logo">分</span>Bunshin<span class="grow"></span><button data-act="balloonx">✕</button></div>
+      <div class="bb"><span class="bi ${UI.balloon.failed ? 'err' : ''}">${UI.balloon.failed ? '✕' : 'i'}</span>` +
+      `<div><b>${esc(UI.balloon.title)}</b><div>${esc(UI.balloon.msg)}</div></div></div></div></div>` : ''}
+    ${UI.toast ? `<div class="toast">${esc(UI.toast)}</div>` : ''}`;
+  document.body.classList.toggle('scn-open', UI.scnOpen);
+  renderDrawer();
+  if (key) {
+    const el = document.querySelector(`[data-key="${key}"]`);
+    if (el) { el.focus(); if (sel !== null && 'setSelectionRange' in el) try { el.setSelectionRange(sel, sel); } catch {} }
+  }
+  if ((UI.variant === 'C' && UI.cMode === 'schedule') || dSched) bindTimeline();
+  if (UI.hl) document.querySelectorAll(UI.hl).forEach(x => x.classList.add('spot'));
+}
+function renderDrawer() {
+  const d = document.getElementById('drawer');
+  d.classList.toggle('show', UI.drawer);
+  if (!UI.drawer) return;
+  const view = {
+    variant: UI.variant, page: UI.variant === 'D' ? UI.dPage : undefined, simulatedNow: now().toLocaleString('zh-CN'), activeConfigurationId: S.activeId,
+    configurations: S.configs.map(c => ({ id: c.id, name: c.name, planItems: c.plan.length,
+      schedulePolicies: c.policies.map(p => ({ id: p.id, name: p.name, enabled: p.enabled,
+        days: p.days.map(d => DAY_EN[d]), times: p.times })) })),
+    run: RT.phase === 'idle' ? null : { phase: RT.phase, configurationId: RT.cfgId, policy: RT.policy },
+  };
+  d.textContent = '// 每次渲染刷新；字段对应 PR #85 的 SchedulePolicy\n' + JSON.stringify(view, null, 2);
+}
+
+// ---------------------------------------------------------------- 方案 A
+function policyEditor(p, keyp) {
+  const dayBtns = DAY_ORDER.map(d => `<button class="day ${p.days.includes(d) ? 'on' : ''}" data-act="day" ` +
+    `data-pid="${p.id}" data-d="${d}">${DAY_CN[d]}</button>`).join('');
+  const chips = p.times.map(t => `<span class="chip">${t}<button data-act="deltime" data-pid="${p.id}" data-t="${t}" ` +
+    `title="移除">${ic('x', 11)}</button></span>`).join('');
+  return `<label>名称</label><div class="line"><input class="field-input" style="width:220px" data-key="${keyp}name-${p.id}" ` +
+      `data-change="name" data-pid="${p.id}" value="${esc(p.name)}" maxlength="40"></div>
+    <label>星期</label><div class="line"><div class="days">${dayBtns}</div>
+      <span class="muted" style="font-size:12px;margin-left:4px">快速：</span><button class="link" data-act="setdays" data-pid="${p.id}" ` +
+      `data-w="wd">工作日</button><button class="link" data-act="setdays" data-pid="${p.id}" data-w="we">周末</button>` +
+      `<button class="link" data-act="setdays" data-pid="${p.id}" data-w="all">每天</button></div>
+    <label>时间</label><div class="line">${chips}<input type="time" class="field-input" style="width:118px" ` +
+      `data-key="${keyp}addtime-${p.id}" data-enter="addtime" data-pid="${p.id}"><button class="btn sm" data-act="addtime" ` +
+      `data-pid="${p.id}">${ic('plus', 13)}添加时间</button></div>`;
+}
+function renderA(c) {
+  const on = enabledPolicies(c);
+  const n = nextFor(c);
+  const sum = on.length ? on.map(summary).join('；') : c.policies.length ? '全部已停用' : '未设置';
+  const nextTxt = n ? (n.status === 'run' ? `下次 ${whenText(n.g.t)}` : n.status === 'skip' ?
+    `${whenText(n.g.t)} 将跳过` : `${whenText(n.g.t)} 校验会失败`) : '';
+  const rows = c.policies.map(p => {
+    const open = UI.aExpanded === p.id, iss = issues(c, p);
+    return `<div class="a-pol ${open ? 'open' : ''} ${p.enabled ? '' : 'off'}">
+      <div class="a-row"><label class="sw" title="${p.enabled ? '停用' : '启用'}"><input type="checkbox" data-change="enabled" ` +
+        `data-pid="${p.id}" ${p.enabled ? 'checked' : ''}><span></span></label>
+        <button class="a-main" data-act="a-expand" data-pid="${p.id}"><b>${esc(p.name)}</b><span>${summary(p)}</span></button>
+        ${iss.length && !open ? `<span title="${esc(iss.map(i => i.text).join('\n'))}" style="color:var(--warning)">${ic('warn', 15)}</span>` : ''}
+        <button class="iconbtn" data-act="a-expand" data-pid="${p.id}" title="${open ? '收起' : '编辑'}">` +
+        `<span style="display:block;transform:rotate(${open ? 180 : 0}deg)">${ic('chev', 15)}</span></button>
+        <button class="iconbtn danger" data-act="delpolicy" data-pid="${p.id}" title="删除">${ic('trash', 15)}</button></div>
+      ${open ? `<div class="a-editor">${policyEditor(p, 'a')}</div>` : ''}
+      ${open ? iss.map(i => `<div class="warnbox ${i.err ? 'err' : ''}">${ic(i.err ? 'warn' : 'info', 14)}<span>${esc(i.text)}</span></div>`).join('') : ''}
+    </div>`;
+  }).join('');
+  const body = `<div class="a-body">
+    ${rows || `<div class="a-empty"><b>此配置还没有定时</b>新建后默认工作日 08:00 自动运行「${esc(c.name)}」。</div>`}
+    <div class="a-foot"><button class="btn" data-act="a-new">${ic('plus', 15)}新建定时</button>
+      <span class="muted">到点后切到此标签并在新分身中运行；Bunshin 需保持运行（可缩到托盘）。</span></div></div>`;
+  return `<section class="a-card ${UI.aOpen ? 'open' : ''}">
+      <button class="a-head" data-act="a-toggle">${ic('clock', 16, 'style="color:var(--primary)"')}<span class="t">定时</span>
+        <span class="muted">${on.length}/${c.policies.length}</span><span class="summary">${esc(sum)}</span>
+        <span class="next ${n && n.status !== 'run' ? 'skip' : ''}">${nextTxt}</span>${ic('chev', 15, 'class="ic chev"')}</button>
+      ${UI.aOpen ? body : ''}</section>
+    ${renderPlan(c)}`;
+}
+
+// ---------------------------------------------------------------- 方案 B
+function bRow(c, p) {
+  const iss = issues(c, p), n = nextFor(c, p);
+  const next = !p.enabled ? '<span class="next-cell never">已停用</span>' : !n ? '<span class="next-cell never">不会触发</span>' :
+    `<span class="next-cell ${n.status !== 'run' ? 'skip' : ''}" title="${esc(iss.map(i => i.text).join('\n'))}">` +
+    `${n.status === 'skip' ? '⚠ 跳过 ' : n.status === 'bad' ? '⚠ 无效 ' : ''}${whenText(n.g.t)}</span>`;
+  const days = DAY_ORDER.map(d => `<td style="padding:0 1px"><button class="dc ${p.days.includes(d) ? 'on' : ''}" ` +
+    `data-act="day" data-pid="${p.id}" data-d="${d}" title="周${DAY_CN[d]}"><i></i></button></td>`).join('');
+  const toks = p.times.map(t => `<span class="tok" data-act="deltime" data-pid="${p.id}" data-t="${t}" title="点击移除">${t}</span>`).join('');
+  return `<tr class="${p.enabled ? '' : 'off'} ${iss.length && p.enabled ? 'warn' : ''}">
+    <td style="text-align:center"><label class="sw" style="transform:scale(.85)"><input type="checkbox" data-change="enabled" ` +
+      `data-pid="${p.id}" ${p.enabled ? 'checked' : ''}><span></span></label></td>
+    <td><input class="cell-name" data-key="bname-${p.id}" data-change="name" data-pid="${p.id}" value="${esc(p.name)}"></td>
+    ${days}
+    <td><div class="times-cell" data-act="focustimes" data-pid="${p.id}">${toks}<input data-key="bt-${p.id}" data-enter="btimes" ` +
+      `data-pid="${p.id}" placeholder="${p.times.length ? '' : '如 8:00 20:30'}"></div></td>
+    <td>${next}</td>
+    <td style="padding:0"><button class="iconbtn danger" data-act="delpolicy" data-pid="${p.id}" title="删除">${ic('trash', 14)}</button></td></tr>`;
+}
+function renderB(c) {
+  const all = UI.bScope === 'all';
+  let rows = '';
+  if (all) {
+    S.configs.forEach(x => {
+      rows += `<tr class="group ${x === c ? 'cur' : ''}"><td class="nohover" colspan="12"><button data-act="tab" data-cfg="${x.id}">` +
+        `${esc(x.name)}</button><span class="muted" style="font-weight:400;margin-left:8px">${x.plan.length} 项任务` +
+        `${x === c ? ' · 当前标签' : ''}</span></td></tr>`;
+      rows += x.policies.map(p => bRow(x, p)).join('') ||
+        `<tr><td class="nohover" colspan="12" style="color:var(--muted);font-size:12px;padding-left:44px">无定时</td></tr>`;
+    });
+  } else rows = c.policies.map(p => bRow(c, p)).join('') ||
+    `<tr><td class="nohover" colspan="12" style="color:var(--muted);text-align:center;height:56px">此配置还没有定时，在下方输入一行即可创建</td></tr>`;
+  const q = parseQuick(UI.bQuick);
+  const preview = UI.bQuick.trim() ? (q.times.length || q.days.length ?
+    `<div class="b-preview">↵ 将为「${esc(c.name)}」新建：${esc(q.name || '定时')} · ${daysText(q.days.length ? q.days : WEEKDAYS)} ` +
+    `${(q.times.length ? normTimes(q.times) : ['08:00']).join('、')}</div>` :
+    `<div class="b-preview bad">未识别星期或时间，例如「工作日 8:00 20:00」「周六日 10点半」「周一至周三 2130」</div>`) : '';
+  return `<section class="b-card">
+      <div class="b-head">${ic('clock', 16, 'style="color:var(--primary)"')}<b>定时</b>
+        <div class="seg"><button class="${all ? '' : 'on'}" data-act="bscope" data-s="config">本配置</button>` +
+        `<button class="${all ? 'on' : ''}" data-act="bscope" data-s="all">全部配置</button></div><span class="grow"></span>
+        <span class="kbd">时间格内 <kbd>Enter</kbd> 添加 · <kbd>⌫</kbd> 删最后一个 · 点时间移除</span></div>
+      <table class="grid"><colgroup><col style="width:48px"><col style="width:22%">${'<col style="width:30px">'.repeat(7)}` +
+        `<col><col style="width:108px"><col style="width:34px"></colgroup>
+        <thead><tr><th style="text-align:center">启用</th><th>名称</th>${DAY_ORDER.map(d => `<th class="d">${DAY_CN[d]}</th>`).join('')}` +
+        `<th>时间</th><th>下次</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="b-quick">${ic('plus', 15, 'style="color:var(--muted)"')}<input class="field-input" data-key="bquick" data-input="bquick" ` +
+        `data-enter="bquick" value="${esc(UI.bQuick)}" placeholder="快速新建：工作日 8:00 20:00 · 周六日 10点半 · 每天 12:00 午间">
+        <button class="btn sm" data-act="bpreset" data-v="工作日 08:00">工作日 08:00</button>
+        <button class="btn sm" data-act="bpreset" data-v="周末 10:30">周末 10:30</button></div>${preview}
+    </section>
+    ${renderPlan(c, true)}`;
+}
+function renderQueue() {
+  const gs = occurrences().slice(0, 14);
+  let last = '', html = '';
+  for (const g of gs) {
+    const day = whenText(g.t).split(' ')[0];
+    if (day !== last) { html += `<div class="qday">${day}</div>`; last = day; }
+    for (const e of g.entries) {
+      const s = statusOf(g, e.cfg);
+      html += `<div class="qrow ${e.cfg.id === S.activeId ? 'cur' : ''}" data-act="goto" data-cfg="${e.cfg.id}">` +
+        `<time>${hm(g.t)}</time><span class="who"><b>${esc(e.cfg.name)}</b><span>${esc(e.policies.map(p => p.name).join('、'))}</span></span>` +
+        `<span class="pill ${s}">${s === 'run' ? (g === gs[0] ? inText(g.t) : '将运行') : s === 'skip' ? `跳过·${esc(g.winner?.name || '')}优先` : '配置无效'}</span></div>`;
+    }
+  }
+  return `<div class="csec" style="max-height:44%"><div class="csec-head"><b>定时队列</b><span class="muted" style="font-size:12px">未来 7 天 · 全部配置</span></div>
+    <div class="queue">${html || '<div class="feed-empty" style="padding:16px">没有启用的定时</div>'}</div></div>`;
+}
+
+// ---------------------------------------------------------------- 方案 C
+// C 按定时区分颜色；D 把所有配置画在一起，所以按配置区分颜色。
+const colorOf = (c, p) => COLORS[(UI.variant === 'D' ? S.configs.indexOf(c) : c.policies.indexOf(p)) % COLORS.length];
+const tlCfg = () => UI.variant === 'D' ? S.configs.find(x => x.id === UI.dFocus) || cfg() : cfg();
+function activeC(c) {
+  let p = c.policies.find(x => x.id === UI.cActive[c.id]);
+  if (!p) { p = c.policies[0]; if (p) UI.cActive[c.id] = p.id; }
+  return p;
+}
+function renderC(c) {
+  const seg = `<div class="c-top"><div class="seg"><button class="${UI.cMode === 'schedule' ? 'on' : ''}" data-act="cmode" data-m="schedule">` +
+    `定时</button><button class="${UI.cMode === 'plan' ? 'on' : ''}" data-act="cmode" data-m="plan">执行计划 ${c.plan.length}</button></div>` +
+    `<span class="grow"></span>${UI.cMode === 'schedule' ? `<label><input type="checkbox" data-change="cothers" ${UI.cOthers ? 'checked' : ''}>` +
+    `显示其他配置的时间点</label>` : ''}</div>`;
+  if (UI.cMode === 'plan') return seg + renderPlan(c);
+  const ap = activeC(c), n = nextFor(c);
+  let hero;
+  if (!n) hero = `<div class="c-hero none">${ic('clock', 28)}<div><div class="big">「${esc(c.name)}」还没有会触发的定时</div>` +
+    `<div class="sub">在下方时间轴任意位置点击即可放下第一个时间点</div></div></div>`;
+  else {
+    const total = 7 * 1440, left = Math.max(0, (n.g.t - now()) / 6e4), frac = 1 - Math.min(1, left / total);
+    const r = 23, circ = 2 * Math.PI * r;
+    const ps = n.g.entries.find(e => e.cfg === c).policies.map(p => p.name).join('、');
+    hero = `<div class="c-hero ${n.status !== 'run' ? 'skip' : ''}">
+      <svg class="ring" viewBox="0 0 54 54"><circle cx="27" cy="27" r="${r}" fill="none" stroke="#ffffff33" stroke-width="4"/>` +
+      `<circle cx="27" cy="27" r="${r}" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" ` +
+      `stroke-dasharray="${circ * frac} ${circ}" transform="rotate(-90 27 27)"/></svg>
+      <div><div class="lbl">${n.status === 'run' ? '下一次自动运行' : n.status === 'skip' ? '下一次到点（将跳过）' : '下一次到点（校验会失败）'}</div>` +
+      `<div class="big">${whenText(n.g.t)}</div><div class="sub">${inText(n.g.t)} · ${esc(ps)}` +
+      `${n.status === 'skip' ? ` · 同刻「${esc(n.g.winner.name)}」排在前面` : n.status === 'bad' ? ' · 执行计划为空' : ''}</div></div>
+      <span class="grow"></span><div class="sub" style="text-align:right;max-width:200px;opacity:.8">在新桌面分身中运行<br>成功后自动结束分身</div></div>`;
+  }
+  const legend = c.policies.map(p => `<button class="lg ${p.enabled ? '' : 'off'} ${p === ap ? 'act' : ''}" style="--c:${colorOf(c, p)}" ` +
+    `data-act="cactive" data-pid="${p.id}"><i></i>${esc(p.name)}<span class="n">${p.times.length}</span></button>`).join('');
+  // 时间轴
+  const today = now().getDay(), nowPct = (now().getHours() * 60 + now().getMinutes()) / 1440 * 100;
+  const ticks = [0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => `<span style="left:${h / 24 * 100}%">${pad(h)}</span>`).join('');
+  const others = UI.cOthers ? S.configs.filter(o => o !== c) : [];
+  const rows = DAY_ORDER.map(d => {
+    let inner = '';
+    if (d === today) inner += `<div class="past" style="width:${nowPct}%"></div><div class="nowline" style="left:${nowPct}%"><span class="nowtag">现在 ${hm(now())}</span></div>`;
+    for (const o of others) for (const op of o.policies) {
+      if (!op.enabled || !op.days.includes(d)) continue;
+      for (const t of op.times) {
+        const hit = c.policies.some(p => p.enabled && p.days.includes(d) && p.times.includes(t));
+        const oFirst = S.configs.indexOf(o) < S.configs.indexOf(c);
+        inner += `<div class="ghost" style="left:${toMin(t) / 1440 * 100}%" data-tip="${esc(`其他配置「${o.name}」· ${op.name} ${t}` +
+          (hit ? (oFirst ? `\n同刻到点：「${o.name}」排在前面，本配置跳过` : `\n同刻到点：本配置排在前面，「${o.name}」跳过`) : '') +
+          '\n只读，切到该配置的标签才能修改')}"></div>`;
+      }
+    }
+    c.policies.forEach((p, pi) => {
+      if (!p.days.includes(d)) return;
+      const off = (pi - (c.policies.length - 1) / 2) * 6;
+      for (const t of p.times) {
+        const lose = p.enabled && S.configs.some((o, oi) => oi < S.configs.indexOf(c) &&
+          o.policies.some(op => op.enabled && op.days.includes(d) && op.times.includes(t)));
+        const sel = UI.cSel && UI.cSel.pid === p.id && UI.cSel.t === t;
+        inner += `<div class="pin ${p.enabled ? '' : 'off'} ${p === ap ? '' : 'inact'} ${sel ? 'sel' : ''} ${lose ? 'lose' : ''}" ` +
+          `style="--c:${colorOf(c, p)};left:${toMin(t) / 1440 * 100}%;top:calc(50% + ${off}px)" data-pid="${p.id}" data-t="${t}" ` +
+          `data-tip="${esc(`${p.name} · ${t}${p.enabled ? '' : '（已停用）'}\n${daysText(p.days)}共用这个时间` +
+            (lose ? '\n⚠ 同刻有排在前面的配置，这一天会跳过' : '') +
+            (p === ap ? '\n拖动改时间 · 单击精确调整 · 双击删除' : '\n单击切换到这条定时'))}">` +
+          `${p === ap ? `<span class="pl">${t}</span>` : ''}</div>`;
+      }
+    });
+    const inAp = ap && ap.days.includes(d);
+    return `<div class="tl-row ${d === today ? 'today' : ''}"><button class="tl-day ${inAp ? 'in' : ''} ${d === today ? 'today' : ''}" ` +
+      `style="--c:${ap ? colorOf(c, ap) : 'var(--primary)'}" data-act="cday" data-d="${d}" ` +
+      `title="${ap ? `${inAp ? '从' : '把'}周${DAY_CN[d]}${inAp ? '移出' : '加入'}「${esc(ap.name)}」` : ''}">周${DAY_CN[d]}</button>` +
+      `<div class="track" data-d="${d}">${inner}<div class="hovermark"><span></span></div></div></div>`;
+  }).join('');
+  const insp = ap ? inspector(c, ap) : '';
+  return seg + hero + `<div class="legend">${legend}<button class="btn sm subtle" data-act="cnew">${ic('plus', 13)}新策略</button>${c.policies.length > 1 ?
+      '<span class="muted" style="font-size:12px;margin-left:4px">点选一条定时进行编辑，其余淡化显示</span>' : ''}</div>
+    <div class="tl"><div class="tl-axis"><span></span><div class="ticks">${ticks}</div></div>${rows}
+      <div class="tl-key"><span><i class="k dot"></i>本配置的时间点</span><span><i class="k hollow"></i>已停用</span>
+        <span><i class="k bang">!</i>同刻被排在前面的配置抢先</span>${UI.cOthers ? '<span><i class="k dia"></i>其他配置的时间点</span>' : ''}
+        <span><i class="k now"></i>现在</span><span><i class="k hatch"></i>今天已过去（不补跑）</span></div></div>${insp}`;
+}
+function renderD() {
+  const fc = tlCfg(), ap = activeC(fc), N = S.configs.length;
+  const g = occurrences().find(g => g.winner);
+  const fail = RT.phase === 'fail', busy = RT.phase === 'prep' || RT.phase === 'run' || fail;
+  const rc = RT.cfgId && S.configs.find(x => x.id === RT.cfgId);
+  const st = busy ? `${{ prep: '准备中', run: '运行中', fail: '失败' }[RT.phase]} · ${esc(rc.name)}` : '空闲';
+  const strip = `<button class="d-strip" data-act="dpage" data-p="home" title="回到首页查看运行控制">` +
+    `<span class="status ${{ run: 'run', prep: 'prep', fail: 'err' }[RT.phase] || ''}"><i></i>${st}</span>` +
+    `${busy ? '<span class="link">查看 ›</span>' : ''}</button>`;
+  const hero = g ? (() => {
+    const e = g.entries.find(x => x.cfg === g.winner), skipped = g.entries.filter(x => x.cfg !== g.winner);
+    return `<div class="c-hero compact">${ic('clock', 22)}<div><div class="lbl">下次运行</div><div class="big">${whenText(g.t)}</div></div>
+      <div class="sub" style="margin-left:8px">${esc(g.winner.name)} · ${esc(e.policies.map(p => p.name).join('、'))}<br>${inText(g.t)}` +
+      `${skipped.length ? ` · 跳过 ${skipped.map(x => esc(x.cfg.name)).join('、')}` : ''}</div></div>`;
+  })() : `<div class="c-hero compact none">${ic('clock', 22)}<div class="big">没有启用的定时</div></div>`;
+  const list = S.configs.map((x, xi) => {
+    const n = nextFor(x), on = enabledPolicies(x).length;
+    const stt = !n ? ['none', '未安排'] : n.status === 'run' ? ['', whenText(n.g.t)] :
+      n.status === 'skip' ? ['skip', `${whenText(n.g.t)} · 跳过`] : ['bad', `${whenText(n.g.t)} · 无法运行`];
+    return `<button class="d-cfg ${x === fc ? 'sel' : ''}" style="--c:${COLORS[xi % COLORS.length]}" data-act="dfocus" data-cfg="${x.id}">` +
+      `<i></i><b>${esc(x.name)}</b><span class="n">${on}/${x.policies.length}</span><span class="st ${stt[0]}">${stt[1]}</span></button>`;
+  }).join('');
+  const today = now().getDay(), nowPct = (now().getHours() * 60 + now().getMinutes()) / 1440 * 100;
+  const ticks = [0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => `<span style="left:${h / 24 * 100}%">${pad(h)}</span>`).join('');
+  const rows = DAY_ORDER.map(d => {
+    let inner = d === today ? `<div class="past" style="width:${nowPct}%"></div>` +
+      `<div class="nowline" style="left:${nowPct}%"><span class="nowtag">现在 ${hm(now())}</span></div>` : '';
+    S.configs.forEach((x, xi) => x.policies.forEach(p => {
+      if (!p.days.includes(d)) return;
+      const off = (xi - (N - 1) / 2) * 7, focus = x === fc;
+      for (const t of p.times) {
+        const winner = p.enabled && S.configs.find((o, oi) => oi < xi &&
+          o.policies.some(op => op.enabled && op.days.includes(d) && op.times.includes(t)));
+        const lose = !!winner;
+        const sel = focus && UI.cSel && UI.cSel.pid === p.id && UI.cSel.t === t;
+        const cls = !focus ? 'other' : p === ap ? '' : 'inact';
+        inner += `<div class="pin ${cls} ${p.enabled ? '' : 'off'} ${sel ? 'sel' : ''} ${lose ? 'lose' : ''}" ` +
+          `style="--c:${COLORS[xi % COLORS.length]};left:${toMin(t) / 1440 * 100}%;top:calc(50% + ${off}px)" ` +
+          `data-cfg="${x.id}" data-pid="${p.id}" data-t="${t}" data-tip="${esc(`${focus ? '' : x.name + ' · '}${p.name} ${t}` +
+            `${p.enabled ? '' : '（已停用）'}` + (lose ? `\n与「${winner.name}」同时到点，将跳过` : ''))}">` +
+          `${focus && p === ap ? `<span class="pl">${t}</span>` : ''}</div>`;
+      }
+    }));
+    const inAp = ap && ap.days.includes(d);
+    return `<div class="tl-row ${d === today ? 'today' : ''}"><button class="tl-day ${inAp ? 'in' : ''} ${d === today ? 'today' : ''}" ` +
+      `style="--c:${COLORS[S.configs.indexOf(fc) % COLORS.length]}" data-act="cday" data-d="${d}">周${DAY_CN[d]}</button>` +
+      `<div class="track" data-d="${d}">${inner}<div class="hovermark"><span></span></div></div></div>`;
+  }).join('');
+  const chips = fc.policies.map(p => `<button class="lg ${p.enabled ? '' : 'off'} ${p === ap ? 'act' : ''}" style="--c:${colorOf(fc, p)}" ` +
+    `data-act="cactive" data-pid="${p.id}"><i></i>${esc(p.name)}<span class="n">${p.times.length}</span></button>`).join('');
+  return `<div class="d-head"><h1>定时</h1>${strip}</div>
+    ${hero}
+    <div class="d-body">
+      <div class="d-list"><div class="d-cap">配置</div>${list}
+        <div class="note">同时到点时，靠前的先运行</div></div>
+      <div class="d-main">
+        <div class="tl"><div class="tl-axis"><span></span><div class="ticks">${ticks}</div></div>${rows}
+          <div class="tl-key"><span><i class="k dot" style="background:${COLORS[S.configs.indexOf(fc) % COLORS.length]}"></i>当前配置</span>
+            <span><i class="k dot small" style="background:conic-gradient(${S.configs.filter(x => x !== fc).map((x, i, a) => `${COLORS[S.configs.indexOf(x) % COLORS.length]} ${i / a.length * 100}% ${(i + 1) / a.length * 100}%`).join(', ')})"></i>其他配置</span><span><i class="k hollow"></i>已停用</span>
+            <span><i class="k bang">!</i>将跳过</span><span><i class="k now"></i>现在</span></div></div>
+        <div class="legend"><b style="color:var(--text);margin-right:4px">${esc(fc.name)}</b>${chips}` +
+          `<button class="btn sm subtle" data-act="cnew">${ic('plus', 13)}新建</button></div>
+        ${ap ? inspector(fc, ap) : `<div class="c-insp" style="--c:var(--border)"><div class="hint">点击时间轴创建第一条定时</div></div>`}
+      </div>
+    </div>`;
+}
+function inspector(c, ap) {
+  let insp = '';
+  {
+    const iss = issues(c, ap), col = colorOf(c, ap);
+    const sel = UI.cSel && UI.cSel.pid === ap.id && ap.times.includes(UI.cSel.t) ? UI.cSel.t : null;
+    insp = `<div class="c-insp" style="--c:${col}">
+      <div class="line"><label class="sw"><input type="checkbox" data-change="enabled" data-pid="${ap.id}" ${ap.enabled ? 'checked' : ''}><span></span></label>
+        <input class="field-input" style="width:180px;height:30px" data-key="cname-${ap.id}" data-change="name" data-pid="${ap.id}" value="${esc(ap.name)}">
+        <span class="sec">${summary(ap)}</span><span class="grow"></span>
+        <button class="btn subtle sm" data-act="setdays" data-pid="${ap.id}" data-w="wd">工作日</button>
+        <button class="btn subtle sm" data-act="setdays" data-pid="${ap.id}" data-w="we">周末</button>
+        <button class="btn subtle sm" data-act="setdays" data-pid="${ap.id}" data-w="all">每天</button>
+        <button class="iconbtn danger" data-act="delpolicy" data-pid="${ap.id}" title="删除这条定时">${ic('trash', 15)}</button></div>
+      ${sel ? `<div class="line"><span class="bigtime" style="color:${col}">● ${sel}</span>
+        <input type="time" class="field-input" style="width:118px;height:30px" data-key="ctime" data-change="ctime" data-pid="${ap.id}" data-t="${sel}" value="${sel}">
+        <button class="btn sm" data-act="deltime" data-pid="${ap.id}" data-t="${sel}">${ic('trash', 13)}删除</button>
+        <span class="hint">${daysText(ap.days)}共用</span></div>` :
+        `<div class="hint">点击空白处添加 · 拖动调整 · 双击删除</div>`}
+      ${iss.map(i => `<div class="warnbox ${i.err ? 'err' : ''}">${ic(i.err ? 'warn' : 'info', 14)}<span>${esc(i.text)}</span></div>`).join('')}
+    </div>`;
+  }
+  return insp;
+}
+function bindTimeline() {
+  const c = tlCfg();
+  let tip = document.querySelector('.tip');
+  if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; document.body.append(tip); }
+  tip.style.display = 'none';
+  document.querySelectorAll('.tl [data-tip]').forEach(el => {
+    el.addEventListener('mouseenter', () => {
+      tip.textContent = el.dataset.tip; tip.style.display = 'block';
+      const r = el.getBoundingClientRect(), w = tip.offsetWidth;
+      tip.style.left = Math.min(innerWidth - w - 8, Math.max(8, r.left + r.width / 2 - w / 2)) + 'px';
+      tip.style.top = (r.top - tip.offsetHeight - 10) + 'px';
+    });
+    el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    el.addEventListener('pointerdown', () => { tip.style.display = 'none'; });
+  });
+  document.querySelectorAll('.track').forEach(tr => {
+    const mark = tr.querySelector('.hovermark');
+    tr.addEventListener('mousemove', e => {
+      if (e.target.closest('.pin, .ghost')) { mark.style.display = 'none'; return; }
+      mark.style.display = '';
+      const m = snapAt(tr, e.clientX, 15);
+      mark.style.left = (m / 1440 * 100) + '%'; mark.firstChild.textContent = '+ ' + fromMin(m);
+    });
+    tr.addEventListener('click', e => {
+      if (e.target !== tr && !e.target.classList.contains('past') && !e.target.classList.contains('hovermark')) return;
+      const d = +tr.dataset.d, t = fromMin(snapAt(tr, e.clientX, 15));
+      let ap = activeC(c);
+      if (ap && ap.days.includes(d)) {
+        addTimes(ap, [t]); UI.cSel = { pid: ap.id, t };
+      } else {
+        const p = addPolicy(c, { name: `周${DAY_CN[d]} ${t}`, days: [d], times: [t] });
+        UI.cActive[c.id] = p.id; UI.cSel = { pid: p.id, t };
+      }
+      render();
+    });
+  });
+  document.querySelectorAll('.pin').forEach(pin => {
+    pin.addEventListener('mouseenter', () => document.querySelectorAll(
+      `.pin[data-pid="${pin.dataset.pid}"][data-t="${pin.dataset.t}"]`).forEach(x => x.classList.add('hl')));
+    pin.addEventListener('mouseleave', () => document.querySelectorAll('.pin.hl').forEach(x => x.classList.remove('hl')));
+    pin.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      if (pin.classList.contains('other')) {
+        UI.dFocus = pin.dataset.cfg; UI.cActive[pin.dataset.cfg] = pin.dataset.pid; UI.cSel = null;
+        return setTimeout(render);
+      }
+      const tr = pin.parentElement, orig = pin.dataset.t, pid = pin.dataset.pid;
+      const sibs = [...document.querySelectorAll(`.pin[data-pid="${pid}"][data-t="${orig}"]`)];
+      let cur = toMin(orig), moved = false;
+      pin.setPointerCapture(e.pointerId); pin.classList.add('drag');
+      const move = ev => {
+        const m = snapAt(tr, ev.clientX, 5);
+        if (m !== cur) moved = true;
+        cur = m;
+        sibs.forEach(s => { s.style.left = (m / 1440 * 100) + '%'; const l = s.querySelector('.pl'); if (l) l.textContent = fromMin(m); });
+      };
+      const up = () => {
+        pin.removeEventListener('pointermove', move); pin.removeEventListener('pointerup', up);
+        const [, p] = findPolicy(pid);
+        UI.cActive[c.id] = pid;
+        const tap = !moved && lastTap.pid === pid && lastTap.t === orig && Date.now() - lastTap.at < 400;
+        lastTap = { pid, t: orig, at: moved ? 0 : Date.now() };
+        if (tap) {
+          p.times = p.times.filter(x => x !== orig); UI.cSel = null;
+        } else if (moved && fromMin(cur) !== orig) {
+          p.times = normTimes(p.times.filter(x => x !== orig).concat(fromMin(cur)));
+          UI.cSel = { pid, t: fromMin(cur) };
+        } else UI.cSel = { pid, t: orig };
+        setTimeout(render);
+      };
+      pin.addEventListener('pointermove', move); pin.addEventListener('pointerup', up);
+    });
+  });
+}
+let lastTap = {};
+function snapAt(tr, x, step) {
+  const r = tr.getBoundingClientRect();
+  const m = Math.round(Math.min(1, Math.max(0, (x - r.left) / r.width)) * 1440 / step) * step;
+  return Math.min(m, 1440 - step);
+}
+
+// ---------------------------------------------------------------- 模拟到点（共用宿主行为，参照 Spec #80）
+const stamp = () => { const d = now(); return hm(d) + ':' + pad(d.getSeconds()); };
+function log(text, kind, tag = '定时') { LOG.unshift({ time: stamp(), text, kind, tag }); }
+let timers = [];
+function simulate() {
+  if (RT.phase === 'prep' || RT.phase === 'run') {
+    const g = occurrences()[0];
+    if (g) { offsetMs += g.t - now() + 42e3; g.entries.forEach(e => log(`跳过「${e.cfg.name}」：正在运行其他任务`, 'skip')); }
+    render(); return;
+  }
+  const g = occurrences()[0];
+  if (!g) { toast('没有启用且会触发的定时'); return; }
+  offsetMs += g.t - now() + 42e3;
+  let winner = null;
+  for (const e of g.entries) {
+    const pn = e.policies.map(p => p.name).join('、');
+    if (winner) { log(`跳过「${e.cfg.name}」：与「${winner.name}」同时到点`, 'skip'); continue; }
+    if (!e.cfg.plan.length) {
+      log(`「${e.cfg.name}」未能启动：执行计划为空`, 'err');
+      UI.balloon = { title: '定时任务未能启动', msg: `「${e.cfg.name}」：执行计划为空`, failed: true }; continue;
+    }
+    winner = e.cfg; log(`启动「${e.cfg.name}」（${pn} ${hm(g.t)}）`);
+    RT.policy = pn;
+  }
+  if (!winner) { render(); return; }
+  const prevTab = S.activeId;
+  S.activeId = winner.id;
+  Object.assign(RT, { phase: 'prep', cfgId: winner.id, step: 0, total: winner.plan.length, text: '正在关闭旧的桌面分身…' });
+  render();
+  timers.forEach(clearTimeout); timers = [];
+  const at = (ms, fn) => timers.push(setTimeout(() => { fn(); render(); }, ms));
+  at(1100, () => { RT.text = '正在启动桌面分身…'; log('已关闭旧的桌面分身'); });
+  at(2200, () => { RT.phase = 'run'; RT.text = `${winner.pretask || '启动阶段'} → ${winner.plan[0]}`; });
+  winner.plan.forEach((t, i) => at(3200 + i * 1100, () => { RT.step = i + 1; RT.text = winner.plan[i + 1] || '收尾中'; log(`完成「${t}」`, 'ok', ''); }));
+  at(3400 + winner.plan.length * 1100, () => {
+    RT.phase = 'done'; RT.text = ''; log('全部完成，已关闭桌面分身', 'ok');
+    UI.balloon = { title: `「${winner.name}」已完成`, msg: '所有任务已执行完成。' };
+  });
+}
+
+// ---------------------------------------------------------------- 提示场景：一键把界面摆到某个提示出现的状态
+const C = id => S.configs.find(c => c.id === id);
+const PO = id => findPolicy(id)[1];
+function addLog(time, text, kind, tag = '定时') { LOG.unshift({ time, text, kind, tag }); }
+function atNext(dow, h, m, s = 0) {
+  const t = new Date(); t.setDate(t.getDate() + ((dow - t.getDay() + 7) % 7)); t.setHours(h, m, s, 0);
+  offsetMs = t - Date.now();
+}
+const ranOk = (time, c, pn) => { addLog(time + ':42', `启动「${c.name}」（${pn} ${time}）`); addLog(time + ':43', '已关闭旧的桌面分身'); };
+const SCENARIOS = [
+  { g: '编辑时 · 定时页', name: '未选星期', where: '编辑区黄条', hl: '.c-insp .warnbox',
+    apply() { PO('p1').days = []; UI.cActive.c1 = 'p1'; } },
+  { g: '编辑时 · 定时页', name: '未设时间', where: '编辑区黄条', hl: '.c-insp .warnbox',
+    apply() { PO('p1').times = []; UI.cActive.c1 = 'p1'; } },
+  { g: '编辑时 · 定时页', name: '配置无法运行', where: '编辑区红条 + 列表状态', hl: '.c-insp .warnbox, .d-cfg.sel .st',
+    apply() { UI.dFocus = 'c3'; } },
+  { g: '编辑时 · 定时页', name: '同时到点 · 本配置在后', where: '编辑区黄条 + 时间点「!」+ 列表', hl: '.c-insp .warnbox, .pin.lose:not(.other), .d-cfg.sel .st',
+    apply() { UI.dFocus = 'c2'; } },
+  { g: '编辑时 · 定时页', name: '同时到点 · 本配置在前', where: '编辑区黄条', hl: '.c-insp .warnbox',
+    apply() { UI.cActive.c1 = 'p2'; } },
+  { g: '编辑时 · 定时页', name: '列表状态一览', where: '左侧配置列表', hl: '.d-cfg .st',
+    note: '只有三种：时间 / 时间 · 跳过或无法运行 / 未安排。具体原因点开配置看。',
+    apply() {
+      S.configs.push({ id: 'c5', name: '活动备用', plan: ['批量领取'], policies: [] },
+        { id: 'c6', name: '测试', plan: ['批量领取'], policies: [{ id: 'p6', name: '草稿', enabled: true, days: [], times: ['09:00'] }] });
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '全部完成', where: '运行动态 + 通知', page: 'home', hl: '.feed .row',
+    apply() {
+      ranOk('20:00', C('c1'), '工作日早晚');
+      C('c1').plan.forEach((t, i) => addLog(`20:0${i + 1}:10`, `完成「${t}」`, 'ok', ''));
+      addLog('20:04:02', '全部完成，已关闭桌面分身', 'ok');
+      UI.balloon = { title: '「日常」已完成', msg: '所有任务已执行完成。' };
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '同时到点被跳过', where: '运行动态（不通知）', page: 'home', hl: '.feed .row:nth-child(-n+2)',
+    apply() {
+      atNext(6, 10, 30, 50); ranOk('10:30', C('c1'), '周末上午');
+      addLog('10:30:42', '跳过「周末活动」：与「日常」同时到点', 'skip');
+      Object.assign(RT, { phase: 'run', cfgId: 'c1', step: 1, total: 3, text: '忍术特训' });
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '正在运行其他任务', where: '运行动态（不通知）', page: 'home', hl: '.feed .row:first-child',
+    apply() {
+      atNext(6, 10, 30, 50); addLog('10:12:05', '开始任务', '', '');
+      addLog('10:30:42', '跳过「日常」：正在运行其他任务', 'skip');
+      addLog('10:30:42', '跳过「周末活动」：正在运行其他任务', 'skip');
+      Object.assign(RT, { phase: 'run', cfgId: 'c4', step: 0, total: 1, text: '批量领取（手动启动）' });
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '运行环境状态未知', where: '运行动态（不通知）', page: 'home', hl: '.feed .row:first-child',
+    note: 'Worker 失联或刚重连、还没核对完状态时，旧分身里可能仍有任务，所以跳过。首页另有恢复提示。',
+    apply() { addLog('20:00:42', '跳过「日常」：运行环境状态未知', 'skip'); } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '配置无法运行', where: '运行动态 + 通知', page: 'home', hl: '.feed .row:first-child',
+    apply() {
+      addLog('12:00:42', '「小号」未能启动：执行计划为空', 'err');
+      UI.balloon = { title: '定时任务未能启动', msg: '「小号」：执行计划为空', failed: true };
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '无法运行 → 同刻下一份接上', where: '运行动态 + 通知', page: 'home', hl: '.feed .row:nth-child(-n+3)',
+    note: 'Spec：同一时刻按配置顺序尝试，前一份无法运行时继续尝试下一份。',
+    apply() {
+      C('c1').policies.push({ id: 'p9', name: '中午', enabled: true, days: ALL.slice(), times: ['12:00'] });
+      S.configs.unshift(S.configs.splice(2, 1)[0]);
+      addLog('12:00:42', '「小号」未能启动：执行计划为空', 'err'); ranOk('12:00', C('c1'), '中午');
+      Object.assign(RT, { phase: 'prep', cfgId: 'c1', step: 0, total: 3, text: '正在启动桌面分身…' });
+      UI.balloon = { title: '定时任务未能启动', msg: '「小号」：执行计划为空', failed: true };
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '旧分身未能关闭', where: '运行动态 + 通知 + 胶囊', page: 'home', hl: '.feed .row:first-child, .status',
+    note: '本轮直接结束：即使同一时刻还有其他配置，也不再尝试。',
+    apply() {
+      addLog('20:00:42', '启动「日常」（工作日早晚 20:00）');
+      addLog('20:01:12', '「日常」未能启动：旧的桌面分身未能关闭', 'err');
+      Object.assign(RT, { phase: 'fail', cfgId: 'c1', label: '旧分身未能关闭' });
+      UI.balloon = { title: '定时任务未能启动', msg: '「日常」：旧的桌面分身未能关闭', failed: true };
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '新分身启动失败', where: '运行动态 + 通知', page: 'home', hl: '.feed .row:first-child',
+    apply() {
+      ranOk('20:00', C('c1'), '工作日早晚');
+      addLog('20:01:45', '「日常」未能启动：桌面分身启动失败（连接超时）', 'err');
+      Object.assign(RT, { phase: 'fail', cfgId: 'c1', label: '桌面分身启动失败' });
+      UI.balloon = { title: '定时任务未能启动', msg: '「日常」：桌面分身启动失败（连接超时）', failed: true };
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '任务执行失败', where: '运行动态 + 通知 + 胶囊', page: 'home', hl: '.feed .row:nth-child(-n+2)',
+    note: '成功和失败通知的标题都带配置名，手动运行也一样。',
+    apply() {
+      ranOk('20:00', C('c1'), '工作日早晚'); addLog('20:01:10', '完成「批量领取」', 'ok', '');
+      addLog('20:03:31', '「忍术特训」失败：未找到目标界面', 'err', '');
+      addLog('20:03:31', '已保留桌面分身，可打开查看现场', 'err');
+      Object.assign(RT, { phase: 'fail', cfgId: 'c1' });
+      UI.balloon = { title: '「日常」运行失败', msg: '失败任务：忍术特训。打开 Bunshin 查看运行动态。', failed: true };
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '手动停止', where: '运行动态（不通知）', page: 'home', hl: '.feed .row:first-child',
+    apply() {
+      ranOk('20:00', C('c1'), '工作日早晚'); addLog('20:02:03', '已停止，保留桌面分身', '', '');
+    } },
+  { g: '到点后 · 首页运行动态 + 通知', name: '运行未能确认结束', where: '通知（现有）', page: 'home', hl: '.status',
+    apply() {
+      ranOk('20:00', C('c1'), '工作日早晚');
+      Object.assign(RT, { phase: 'fail', cfgId: 'c1', label: '任务未能确认结束' });
+      UI.balloon = { title: '任务未能确认结束', msg: '任务可能仍在运行。打开 Bunshin 结束桌面分身以恢复。', failed: true };
+    } },
+  { g: '状态 · 定时页', name: '胶囊：空闲', where: '右上角', hl: '.d-strip',
+    apply() {} },
+  { g: '状态 · 定时页', name: '胶囊：准备中', where: '右上角', hl: '.d-strip',
+    apply() { Object.assign(RT, { phase: 'prep', cfgId: 'c1', text: '正在关闭旧的桌面分身…' }); } },
+  { g: '状态 · 定时页', name: '胶囊：运行中', where: '右上角', hl: '.d-strip',
+    apply() { Object.assign(RT, { phase: 'run', cfgId: 'c1', step: 1, total: 3, text: '忍术特训' }); } },
+  { g: '状态 · 定时页', name: '胶囊：失败', where: '右上角', hl: '.d-strip',
+    note: '跟随首页「桌面分身」状态，下次开始运行时恢复。',
+    apply() { Object.assign(RT, { phase: 'fail', cfgId: 'c1' }); } },
+  { g: '状态 · 定时页', name: '横条：下次运行有跳过', where: '顶部横条', hl: '.c-hero',
+    apply() { atNext(6, 9, 0); } },
+  { g: '状态 · 定时页', name: '横条：没有启用的定时', where: '顶部横条 + 列表', hl: '.c-hero, .d-cfg .st',
+    apply() { S.configs.forEach(c => c.policies.forEach(p => { p.enabled = false; })); } },
+];
+function renderScenarios() {
+  let html = '', last = '';
+  SCENARIOS.forEach((sc, i) => {
+    if (sc.g !== last) { html += `<h4>${sc.g}</h4>`; last = sc.g; }
+    html += `<button class="it ${UI.scnIdx === i ? 'on' : ''}" data-act="scn" data-i="${i}">${sc.name}` +
+      `${sc.q ? `<span class="q">问题${sc.q}</span>` : ''}<small>${sc.where}</small></button>`;
+    if (UI.scnIdx === i && sc.note) html += `<div class="note">${esc(sc.note)}</div>`;
+  });
+  return `<div class="scn"><div class="hd"><span>提示场景</span><small>↑ ↓ 切换</small></div>${html}</div>`;
+}
+function applyScenario(i) {
+  const sc = SCENARIOS[i];
+  S = initialState(); LOG.length = 0; timers.forEach(clearTimeout); timers = []; offsetMs = 0;
+  Object.assign(RT, { phase: 'idle', cfgId: null, label: '', text: '', step: 0, total: 0 });
+  Object.assign(UI, { variant: 'D', dPage: sc.page || 'schedule', dFocus: 'c1', cActive: {}, cSel: null, balloon: null,
+    hl: sc.hl, scnIdx: i, toast: null });
+  sc.apply();
+  if (sc.page === 'home') S.activeId = RT.cfgId || 'c1';
+  const u = new URL(location.href); u.searchParams.set('variant', 'D'); history.replaceState(null, '', u);
+  render();
+}
+
+// ---------------------------------------------------------------- 事件
+let toastTimer;
+function toast(msg) { UI.toast = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => { UI.toast = null; render(); }, 3200); }
+function setVariant(v) {
+  UI.variant = v; UI.cSel = null;
+  const u = new URL(location.href); u.searchParams.set('variant', v); history.replaceState(null, '', u);
+  render();
+}
+function cycle(step) { const k = Object.keys(VARIANTS); setVariant(k[(k.indexOf(UI.variant) + step + k.length) % k.length]); }
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const { act, pid, cfg: cid, d, t, w } = el.dataset;
+  const [pc, p] = pid ? findPolicy(pid) : [null, null];
+  if (act !== 'scn' && act !== 'scnpanel') UI.hl = null;
+  switch (act) {
+    case 'scn': return applyScenario(+el.dataset.i);
+    case 'scnpanel': UI.scnOpen = !UI.scnOpen; break;
+    case 'balloonx': UI.balloon = null; break;
+    case 'prev': return cycle(-1);
+    case 'next': return cycle(1);
+    case 'drawer': UI.drawer = !UI.drawer; break;
+    case 'reset': S = initialState(); offsetMs = 0; LOG.length = 0; timers.forEach(clearTimeout);
+      Object.assign(RT, { phase: 'idle', cfgId: null, label: '' }); UI.cSel = null; UI.balloon = null; UI.scnIdx = null; UI.aExpanded = 'p1'; toast('已重置原型数据'); break;
+    case 'simulate': return simulate();
+    case 'clearlog': LOG.length = 0; break;
+    case 'tab': case 'goto': S.activeId = cid; UI.cSel = null; break;
+    case 'a-toggle': UI.aOpen = !UI.aOpen; break;
+    case 'a-expand': UI.aExpanded = UI.aExpanded === pid ? null : pid; break;
+    case 'a-new': { const np = addPolicy(cfg()); UI.aExpanded = np.id; toast('已新建：工作日 08:00，启用'); break; }
+    case 'delpolicy': delPolicy(pid); UI.cSel = null; break;
+    case 'day': toggleDay(p, +d); break;
+    case 'setdays': setDays(p, w); break;
+    case 'deltime': p.times = p.times.filter(x => x !== t); if (UI.cSel?.t === t) UI.cSel = null; break;
+    case 'addtime': {
+      const inp = document.querySelector(`[data-enter="addtime"][data-pid="${pid}"]`);
+      if (!addTimes(p, [parseTime(inp.value)])) { toast('先选择一个时间'); return render(); }
+      break;
+    }
+    case 'focustimes': if (e.target === el) el.querySelector('input').focus(); return;
+    case 'bscope': UI.bScope = el.dataset.s; break;
+    case 'bpreset': UI.bQuick = el.dataset.v; break;
+    case 'cmode': UI.cMode = el.dataset.m; break;
+    case 'cactive': UI.cActive[tlCfg().id] = pid; UI.cSel = null; break;
+    case 'dpage': UI.dPage = el.dataset.p; UI.cSel = null; break;
+    case 'dfocus': UI.dFocus = cid; UI.cSel = null; break;
+    case 'cnew': { const np = addPolicy(tlCfg()); UI.cActive[tlCfg().id] = np.id; UI.cSel = { pid: np.id, t: '08:00' }; break; }
+    case 'cday': {
+      const ap = activeC(tlCfg());
+      if (!ap) { toast('先点击时间轴创建一条定时'); return render(); }
+      toggleDay(ap, +d); break;
+    }
+    default: return;
+  }
+  render();
+});
+document.addEventListener('change', e => {
+  const el = e.target, k = el.dataset.change;
+  if (!k) return;
+  if (k === 'cothers') { UI.cOthers = el.checked; return render(); }
+  const [, p] = findPolicy(el.dataset.pid);
+  if (k === 'enabled') p.enabled = el.checked;
+  if (k === 'name') { const v = el.value.trim(); if (v) p.name = v; }
+  if (k === 'ctime') {
+    const nt = parseTime(el.value);
+    if (nt) { p.times = normTimes(p.times.filter(x => x !== el.dataset.t).concat(nt)); UI.cSel = { pid: p.id, t: nt }; }
+  }
+  render();
+});
+const onQuick = e => {
+  if (e.target.dataset.input !== 'bquick' || e.isComposing) return;
+  UI.bQuick = e.target.value; render();
+};
+document.addEventListener('input', onQuick);
+document.addEventListener('compositionend', onQuick);
+document.addEventListener('keydown', e => {
+  const el = e.target, k = el.dataset?.enter;
+  if (k && e.key === 'Enter') {
+    e.preventDefault();
+    const [, p] = el.dataset.pid ? findPolicy(el.dataset.pid) : [null, null];
+    if (k === 'addtime') { if (addTimes(p, [parseTime(el.value)])) { el.value = ''; render(); } return; }
+    if (k === 'btimes') {
+      const parts = el.value.split(/[\s,，、]+/).filter(Boolean), ok = parts.map(parseTime);
+      if (ok.some(x => !x)) toast('无法识别：' + parts.filter((_, i) => !ok[i]).join(' '));
+      addTimes(p, ok); el.value = ''; return render();
+    }
+    if (k === 'bquick') {
+      const q = parseQuick(UI.bQuick);
+      if (!q.days.length && !q.times.length) return toast('未识别星期或时间'), render();
+      const c = cfg(), np = addPolicy(c, { days: q.days.length ? q.days : WEEKDAYS, times: q.times.length ? q.times : ['08:00'] });
+      np.name = q.name || daysText(np.days);
+      UI.bQuick = ''; toast(`已新建「${np.name}」：${summary(np)}`); return render();
+    }
+  }
+  if (k === 'btimes' && e.key === 'Backspace' && !el.value) {
+    const [, p] = findPolicy(el.dataset.pid); p.times = p.times.slice(0, -1); return render();
+  }
+  if (el.matches('input, textarea, [contenteditable]')) {
+    if (e.key === 'Enter' && el.dataset.change === 'name') el.blur();
+    return;
+  }
+  if (UI.scnOpen && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+    const n = SCENARIOS.length, cur = UI.scnIdx ?? -1;
+    return applyScenario(((e.key === 'ArrowDown' ? cur + 1 : cur - 1) + n) % n);
+  }
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+setInterval(() => { if (!document.activeElement || document.activeElement === document.body) render(); }, 30000);
+render();
+</script>
+</body>
+</html>
