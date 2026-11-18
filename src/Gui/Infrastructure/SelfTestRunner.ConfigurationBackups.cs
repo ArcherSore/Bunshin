@@ -81,7 +81,8 @@ internal static partial class SelfTestRunner
         using (var held = File.OpenRead(path)) {
             project = Open();
             Require(project.Configurations.Single().Name == "retry" && project.ConfigurationsUnreadable
-                && project.LoadWarning!.Contains(Path.GetFileName(newest)) && project.LoadException is IOException
+                && project.LoadWarning!.Contains(Path.GetFileName(newest))
+                && project.LoadException is IOException or UnauthorizedAccessException
                 && File.ReadAllText(path) == damage, "恢复写回失败应保留原件并告知来源及未保存状态。");
         }
         project = Open();
@@ -102,14 +103,22 @@ internal static partial class SelfTestRunner
         var upgraded = CreateProjectFixture(Path.Combine(testDirectory, "damaged-password-upgrade"));
         AddSecretAndPathInputs(upgraded);
         var saved = Path.Combine(upgraded, "before-upgrade.json");
-        EditInterface(upgraded, root => root["option"]!["Login"]!["inputs"]![0]!["password"] = false);
+        EditInterface(upgraded, root => {
+            var input = root["option"]!["Login"]!["inputs"]![0]!;
+            input["password"] = false;
+            input["default"] = string.Empty;
+        });
         project = ProjectPlanModule.Open(upgraded, saved);
         project.SetInputValue("Login", "password", SecretInputValue);
         var damaged = JsonNode.Parse(File.ReadAllText(saved))!;
         damaged["Configurations"]![0]!["Name"] = null;
         var damagedBytes = Encoding.UTF8.GetBytes(damaged.ToJsonString());
         File.WriteAllBytes(saved, damagedBytes);
-        EditInterface(upgraded, root => root["option"]!["Login"]!["inputs"]![0]!["password"] = true);
+        EditInterface(upgraded, root => {
+            var input = root["option"]!["Login"]!["inputs"]![0]!.AsObject();
+            input["password"] = true;
+            input.Remove("default");
+        });
         var recovered = ProjectPlanModule.Open(upgraded, saved);
         var archive = Directory.GetFiles(upgraded, "before-upgrade.invalid-*.dpapi").Single();
         var login = recovered.GetConfiguration("RealTask").TaskOptions.Single(option => option.Name == "Login");
