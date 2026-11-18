@@ -36,12 +36,16 @@ public sealed record ProjectOptionEditor(
     public int MinCount { get; init; }
     public int? MaxCount { get; init; }
 
-    // A checkbox below min_count may be saved, but a Run cannot start with it.
     public bool IsBelowMinimum => SelectedCases.Count < MinCount;
+    public string? SelectionCountError => IsBelowMinimum
+        ? $"至少选 {MinCount} 项，当前选了 {SelectedCases.Count} 项。请再选 {MinCount - SelectedCases.Count} 项。"
+        : MaxCount is { } max && SelectedCases.Count > max
+            ? $"最多选 {max} 项，当前选了 {SelectedCases.Count} 项。请取消 {SelectedCases.Count - max} 项。"
+            : null;
 
     // Why a Run cannot start with this option yet, or null when it can.
-    public string? StartBlocker => IsBelowMinimum ? $"至少选择 {MinCount} 项"
-        : Inputs.Select(input => input.Error).FirstOrDefault(error => error is not null);
+    public string? StartBlocker => SelectionCountError
+        ?? Inputs.Select(input => input.Error).FirstOrDefault(error => error is not null);
 }
 
 public sealed record ProjectConfigurationView(
@@ -85,15 +89,26 @@ internal static class ExplicitOptionIntent
     }
 
     // The cases a select, switch or checkbox uses, in declaration order; without an explicit choice, its defaults.
-    internal static IReadOnlyList<CaseDefinition> ReadActiveCases(OptionDefinition option, TaskConfiguration config)
+    internal static IReadOnlyList<CaseDefinition> ReadActiveCases(OptionDefinition option, TaskConfiguration config,
+        Action<string>? reportRecovery = null)
     {
         IReadOnlyList<string> names = option.Kind == OptionDefinitionKind.Checkbox
             ? ReadSelectedCases(option, config) ?? option.DefaultCases
             : [ReadSelectedCase(option, config) ?? option.DefaultCase!];
-        if (names.FirstOrDefault(name => option.Cases.All(item => item.Name != name)) is { } unknown) {
-            throw new InvalidDataException($"option {option.Name} 的 case {unknown} 不存在。 ");
+        var active = option.Cases.Where(item => names.Contains(item.Name)).ToArray();
+        var retired = names.Except(active.Select(item => item.Name), StringComparer.Ordinal).ToArray();
+        if (retired.Length == 0) {
+            return active;
         }
-        return option.Cases.Where(item => names.Contains(item.Name)).ToArray();
+        if (active.Length == 0) {
+            var defaults = option.Kind == OptionDefinitionKind.Checkbox ? option.DefaultCases : [option.DefaultCase!];
+            active = option.Cases.Where(item => defaults.Contains(item.Name)).ToArray();
+        }
+        if (reportRecovery is not null) {
+            var selected = active.Length == 0 ? "无" : string.Join("、", active.Select(item => item.Name));
+            reportRecovery($"选项 {option.Name} 的旧选择 {string.Join("、", retired)} 已移除，采用 {selected}。");
+        }
+        return active;
     }
 
     private static IReadOnlyList<string>? ReadSelectedCases(OptionDefinition option, TaskConfiguration config)

@@ -1,6 +1,8 @@
 using System.Text.Json.Nodes;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using Protocol;
+using ButtonBase = System.Windows.Controls.Primitives.ButtonBase;
 using CheckBox = System.Windows.Controls.CheckBox;
 using ListBox = System.Windows.Controls.ListBox;
 using ProjectModel;
@@ -10,6 +12,153 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static void VerifyCaseRecovery(string testDirectory)
+    {
+        var directory = CreateProjectFixture(Path.Combine(testDirectory, "case-recovery"));
+        var path = Path.Combine(directory, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        pi["task"]![0]!["option"] = new JsonArray("EscortContinueS");
+        var option = JsonNode.Parse("""
+            {"type":"select","label":"护送操作","default_case":"Yes","cases":[
+              {"name":"Yes","label":"继续"},{"name":"Stop","label":"停止"}]}
+            """)!;
+        pi["option"]!["EscortContinueS"] = option;
+        File.WriteAllText(path, pi.ToJsonString());
+        var configPath = Path.Combine(directory, "config.json");
+        var messages = new List<string>();
+        var project = ProjectPlanModule.Open(directory, configPath, log: messages.Add);
+        project.SetSelectedCase("EscortContinueS", "Yes");
+        option["default_case"] = "Stop";
+        File.WriteAllText(path, pi.ToJsonString());
+
+        void Check(string name, string label)
+        {
+            project = ProjectPlanModule.Open(directory, configPath, project, messages.Add);
+            var editor = project.GetConfiguration("RealTask").TaskOptions.Single();
+            Require(editor.Cases.Single(item => item.Name == editor.SelectedCase).Label == label
+                && project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions
+                    .GetProperty("EscortContinueS").GetString() == name, "编辑器与计划必须采用同一有效选择。");
+        }
+
+        Check("Yes", "继续");
+        option["cases"]!.AsArray().RemoveAt(0);
+        File.WriteAllText(path, pi.ToJsonString());
+        Check("Stop", "停止");
+        Check("Stop", "停止");
+        Require(messages.Count(message => message.Contains("EscortContinueS") && message.Contains("Yes")
+            && message.Contains("Stop")) == 1, "重载、重绘和重新创建计划只应记录一次具体的回退。");
+    }
+
+    private static void VerifyCheckboxRecovery(string testDirectory)
+    {
+        var directory = CreateProjectFixture(Path.Combine(testDirectory, "checkbox-recovery"));
+        AddCheckboxOptions(directory);
+        var configPath = Path.Combine(directory, "config.json");
+        var project = ProjectPlanModule.Open(directory, configPath);
+        var partial = project.ActiveConfigurationId;
+        project.SetSelectedCases("Features", ["Normal", "Combo"]);
+        Guid AddConfig()
+        {
+            var id = project.CreateConfiguration();
+            project.ActivateConfiguration(id);
+            project.AddTask("RealTask");
+            return id;
+        }
+        var retired = AddConfig();
+        project.SetSelectedCases("Features", ["Combo"]);
+        var empty = AddConfig();
+        project.SetSelectedCases("Features", []);
+        var missing = AddConfig();
+
+        var path = Path.Combine(directory, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        var option = pi["option"]!["Features"]!;
+        option["min_count"] = 0;
+        option["default_case"] = new JsonArray("Charged");
+        option["cases"]!.AsArray().RemoveAt(2);
+        File.WriteAllText(path, pi.ToJsonString());
+        var messages = new List<string>();
+        project = ProjectPlanModule.Open(directory, configPath, log: messages.Add);
+        void Check(Guid configuration, params string[] expected)
+        {
+            project.ActivateConfiguration(configuration);
+            var editor = project.GetConfiguration("RealTask").TaskOptions.Single(item => item.Name == "Features");
+            var values = project.CreateRunStartAttempt().Plan.Items.Single().ResolvedOptions.GetProperty("Features");
+            Require(editor.SelectedCases.SequenceEqual(expected)
+                && values.EnumerateArray().Select(item => item.GetString()).SequenceEqual(expected),
+                "多选编辑器和计划必须保留有效勾选、显式空列表，在旧选择全部失效或缺键时采用新默认。");
+        }
+        Check(partial, "Normal");
+        Check(retired, "Charged");
+        Check(empty);
+        Check(missing, "Charged");
+        Require(messages.Count(message => message.Contains("Features") && message.Contains("Combo")) == 2,
+            "部分或全部失效各应记录一次变化。");
+
+        option["min_count"] = 2;
+        File.WriteAllText(path, pi.ToJsonString());
+        project = ProjectPlanModule.Open(directory, configPath, project, messages.Add);
+        project.ActivateConfiguration(partial);
+        var group = project.GetConfiguration("RealTask").TaskOptions.Single(item => item.Name == "Features");
+        Require(group.SelectedCases.SequenceEqual(["Normal"]) && group.StartBlocker is { } countError
+            && countError.Contains("2") && countError.Contains("1")
+            && Throws<InvalidOperationException>(() => project.CreateRunStartAttempt()),
+            "过滤后不足下限时应说明所需数量和当前数量，保留有效选择供用户补选。");
+    }
+
+    private static void VerifyChangedCheckboxLimit(AppLogger logger, string testDirectory)
+    {
+        var directory = CreateProjectFixture(Path.Combine(testDirectory, "checkbox-limit"));
+        AddCheckboxOptions(directory);
+        var path = Path.Combine(directory, "interface.json");
+        var pi = JsonNode.Parse(File.ReadAllText(path))!;
+        pi["pretask"] = JsonNode.Parse("""[{"name":"Boot","exec":"boot-fixture","option":["Features"]}]""");
+        var option = pi["option"]!["Features"]!;
+        option["max_count"] = 3;
+        option["label"] = "奖励类型";
+        File.WriteAllText(path, pi.ToJsonString());
+        var configPath = Path.Combine(directory, "config", "configurations.json");
+        var project = ProjectPlanModule.Open(directory, configPath);
+        project.AddPretask("Boot");
+        project.SetSelectedCases("Features", ["Normal", "Charged", "Combo"]);
+        option["default_case"] = new JsonArray("Normal");
+        option["max_count"] = 1;
+        File.WriteAllText(path, pi.ToJsonString());
+        project = ProjectPlanModule.Open(directory, configPath);
+        Require(Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(startupOnly: true)),
+            "上限降低后，计划必须等到用户决定取消哪些有效选择。");
+        var preparations = 0;
+        WithRuntimeControlWindow(logger, testDirectory, window => {
+            var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            SetFocus(new System.Windows.Interop.WindowInteropHelper(window).Handle);
+            var startup = ConfigurationDescendants(items).OfType<System.Windows.Controls.Button>()
+                .Single(button => AutomationProperties.GetName(button) == "仅执行启动");
+            startup.RaiseEvent(new System.Windows.RoutedEventArgs(ButtonBase.ClickEvent));
+            ListBox? Group() => ConfigurationDescendants(items).OfType<ListBox>()
+                .SingleOrDefault(list => AutomationProperties.GetName(list) == "奖励类型");
+            PumpUntil(() => preparations > 0 || Group()?.IsKeyboardFocusWithin == true, "应在启动项内聚焦奖励类型。");
+            var boot = ConfigurationDescendants(items).OfType<Border>().Single(card =>
+                card.Tag is ProjectTaskChoice { Kind: PlanItemKind.Pretask, Name: "Boot" });
+            Require(preparations == 0 && Group()?.SelectedItems.Count == 3 && ConfigurationDescendants(boot)
+                .OfType<TextBlock>().Any(text => text.Text.Contains("1") && text.Text.Contains("3")
+                    && text.Text.Contains("2")), "保留所有有效选择并说明上限、当前数量和应取消的数量。");
+            Group()!.SelectedItems.RemoveAt(0);
+            var saved = ProjectOf(window).GetConfiguration("Boot", PlanItemKind.Pretask);
+            Require(saved.TaskOptions.Single().SelectedCases.Count == 2,
+                "应能逐项取消过多的选择。");
+            var group = Group()!;
+            group.SelectedItems.Add(group.Items.Cast<ProjectCaseEditor>().Single(item => item.Name == "Normal"));
+            Require(Group()!.SelectedItems.Count == 2 && !Group()!.SelectedItems.Cast<ProjectCaseEditor>()
+                .Any(item => item.Name == "Normal"), "仍然超限时，新的勾选不能替用户取消已有选择。");
+            Group()!.SelectedItems.RemoveAt(0);
+            Require(ProjectOf(window).CreateRunStartAttempt(true).Plan.Items.Single().ResolvedOptions
+                .GetProperty("Features").GetArrayLength() == 1, "修正数量后应能生成启动计划。");
+        }, projectDirectory: directory, prepareEnvironment: (_, _, _) => {
+            preparations++;
+            return Task.FromCanceled(new CancellationToken(canceled: true));
+        });
+    }
+
     private static void VerifyCheckboxOptions(string testDirectory)
     {
         var directory = CreateProjectFixture(Path.Combine(testDirectory, "checkbox"));
@@ -97,7 +246,7 @@ internal static partial class SelfTestRunner
                 .Single(panel => ConfigurationDescendants(panel).Contains(Segments("Features")));
             Require(Option("Features").SelectedCases.Count == 0 && row.IsInvalid
                 && ConfigurationDescendants(row).OfType<TextBlock>()
-                    .Any(text => text.Text == "至少选择 1 项，否则不能开始任务")
+                    .Any(text => text.Text.Contains("0") && text.Text.Contains("1"))
                 && ParameterInspector.ShowCases(Option("Features")) == "无"
                 && (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, [false])!,
                 "少于 min_count 时必须保存、标红并阻止开始。");

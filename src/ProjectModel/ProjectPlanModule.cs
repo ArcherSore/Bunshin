@@ -21,12 +21,15 @@ public sealed partial class ProjectPlanModule
 {
     private readonly ProjectDefinition _project;
     private readonly ConfigurationSetStore _configStore;
+    private readonly HashSet<(Guid Configuration, string Message)> _reportedCaseRecoveries = [];
+    private readonly Action<string>? _log;
     private ConfigurationSet _config;
     private string? _initializationWarning;
     private readonly HashSet<(Guid Configuration, PlanItemKind Kind, string Name)> _disabledItems = [];
 
-    private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore)
+    private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore, Action<string>? log)
     {
+        _log = log;
         _project = project;
         _configStore = configStore;
         Tasks = project.Tasks
@@ -163,8 +166,9 @@ public sealed partial class ProjectPlanModule
         Action<string>? log = null)
     {
         var project = ProjectInterfaceLoader.Load(projectDirectory);
-        var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log));
+        var module = new ProjectPlanModule(project, new ConfigurationSetStore(configPath, log), log);
         if (previous is not null) {
+            module._reportedCaseRecoveries.UnionWith(previous._reportedCaseRecoveries);
             module._disabledItems.UnionWith(previous._disabledItems.Where(item => module.Configurations.Any(config =>
                 config.Id == item.Configuration && (item.Kind == PlanItemKind.Pretask
                     ? config.SelectedPretasks : config.SelectedTasks).Contains(item.Name, StringComparer.Ordinal))));
@@ -339,12 +343,21 @@ public sealed partial class ProjectPlanModule
             throw new ArgumentException($"option {optionName} 不是 checkbox。", nameof(optionName));
         }
         var ordered = option.Cases.Select(item => item.Name).Where(selectedCases.Contains).ToArray();
-        if (ordered.Length != selectedCases.Count || ordered.Length > option.MaxCount) {
-            throw new ArgumentException(
-                $"option {optionName} 的勾选项不存在、重复或超过上限。", nameof(selectedCases));
+        if (ordered.Length != selectedCases.Count) {
+            throw new ArgumentException($"option {optionName} 的勾选项不存在或重复。", nameof(selectedCases));
+        }
+        var config = FindConfiguration(configurationId);
+        // A lower PI limit can leave several excess choices. Let the user remove them one at a time.
+        if (ordered.Length > option.MaxCount) {
+            var previous = ExplicitOptionIntent.ReadActiveCases(option, config).Select(item => item.Name).ToHashSet();
+            if (previous.SetEquals(ordered)) {
+                return BuildConfiguration(config);
+            }
+            if (!previous.IsSupersetOf(ordered)) {
+                throw new ArgumentException($"option {optionName} 的勾选项超过上限。", nameof(selectedCases));
+            }
         }
 
-        var config = FindConfiguration(configurationId);
         var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateSelectedCases(ordered));
         ValidateActiveConfiguration(updated);
         SaveConfiguration(updated);
@@ -530,7 +543,11 @@ public sealed partial class ProjectPlanModule
                 explicitInputs.Count != 0, null, null, [], inputs, []);
         }
 
-        var active = ExplicitOptionIntent.ReadActiveCases(option, config);
+        var active = ExplicitOptionIntent.ReadActiveCases(option, config, message => {
+            if (_log is not null && _reportedCaseRecoveries.Add((config.Id, message))) {
+                _log($"配置“{config.Name}”：{message}");
+            }
+        });
         var checkbox = option.Kind == OptionDefinitionKind.Checkbox;
         var children = BuildEditors(active.SelectMany(item => item.Options).ToArray(), config);
         return new ProjectOptionEditor(

@@ -817,8 +817,14 @@ public partial class MainWindow : FluentWindow
         }
         var option = match.Row.Option.Name;
         var field = match.Row.Inputs.FirstOrDefault(input => input.Error is not null);
-        FrameworkElement? Target() => field is null ? _inspectorRows.GetValueOrDefault(option)?.Row
-            : _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
+        FrameworkElement? Target()
+        {
+            if (field is not null) {
+                return _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
+            }
+            return _inspectorRows.TryGetValue(option, out var view)
+                ? FindVisualChild<System.Windows.Controls.ListBox>(view.Row) : null;
+        }
         if (!IsExpanded(match.Task) || Target() is null) {
             _expandedTaskName = match.Task.Name;
             _expandedTaskKind = match.Task.Kind;
@@ -1702,11 +1708,11 @@ public partial class MainWindow : FluentWindow
             }
             segments.SelectionChanged += (_, e) => {
                 var selected = segments.SelectedItems.Cast<ProjectCaseEditor>().ToArray();
-                if (selected.Length > option.MaxCount) {
-                    // At max_count 1 a new pick replaces the old one; a wider limit refuses the extra pick. Either
-                    // removal raises SelectionChanged again, which saves.
-                    var extra = option.MaxCount == 1 ? selected.Except(e.AddedItems.Cast<ProjectCaseEditor>())
-                        : e.AddedItems.Cast<ProjectCaseEditor>();
+                if (selected.Length > option.MaxCount && e.AddedItems.Count > 0) {
+                    // Allow one-for-one replacement. If already over the new limit, undo only the new picks.
+                    var added = e.AddedItems.Cast<ProjectCaseEditor>();
+                    var extra = option.MaxCount == 1 && selected.Length == 2 && e.AddedItems.Count == 1
+                        ? selected.Except(added) : added;
                     extra.ToList().ForEach(segments.SelectedItems.Remove);
                     return;
                 }
@@ -1761,9 +1767,8 @@ public partial class MainWindow : FluentWindow
         if (row.CaseDescription is { } caseDescription) {
             view.CaseNotes.Children.Add(CreateInspectorNote(caseDescription, "Inspector.Note"));
         }
-        if (row.Option.IsBelowMinimum) {
-            view.CaseNotes.Children.Add(CreateInspectorNote(
-                $"至少选择 {row.Option.MinCount} 项，否则不能开始任务", "Inspector.Error"));
+        if (row.Option.SelectionCountError is { } countError) {
+            view.CaseNotes.Children.Add(CreateInspectorNote(countError, "Inspector.Error"));
         } else if (row.Option.Cases.Count > 1 && ParameterInspector.DescribeLimits(row.Option) is { } limits) {
             view.CaseNotes.Children.Add(CreateInspectorNote(limits, "Inspector.Note"));
         }
