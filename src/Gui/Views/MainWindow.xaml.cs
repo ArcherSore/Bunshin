@@ -105,7 +105,7 @@ public partial class MainWindow : FluentWindow
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
-    private readonly Dictionary<(Guid, string, string), InputDraft> _invalidInputDrafts = new();
+    private readonly Dictionary<(Guid, string, string), string> _inputDrafts = new();
     private readonly Dictionary<(Guid, string, string), WpfTextBox> _optionInputEditors = new();
     private readonly Dictionary<string, InspectorRowView> _inspectorRows = new(StringComparer.Ordinal);
     private System.Windows.Data.Binding? _configurationEditableBinding;
@@ -116,7 +116,7 @@ public partial class MainWindow : FluentWindow
         "ConfigurationEditable", typeof(bool), typeof(MainWindow), new PropertyMetadata(true));
 
     private sealed record OptionInputTag(Guid ConfigurationId, string OptionName, string InputName, string Value,
-        string? PatternMessage, bool Submitted, bool Edited = false)
+        PlanItemKind Kind, bool Submitted, bool Edited = false, bool Rejected = false)
     {
         internal (Guid, string, string) Key => (ConfigurationId, OptionName, InputName);
     }
@@ -1005,12 +1005,12 @@ public partial class MainWindow : FluentWindow
             return;
         }
         if (e.Key != Key.Escape || sender is not WpfTextBox { Tag: OptionInputTag tag } editor
-            || GetInputText(editor) == tag.Value && !_invalidInputDrafts.ContainsKey(tag.Key)) {
+            || GetInputText(editor) == tag.Value && !_inputDrafts.ContainsKey(tag.Key)) {
             return;
         }
-        _invalidInputDrafts.Remove(tag.Key);
+        _inputDrafts.Remove(tag.Key);
         SetInputText(editor, tag.Value);
-        editor.Tag = tag with { Edited = false };
+        editor.Tag = tag with { Edited = false, Rejected = false };
         editor.SelectAll();
         ShowOptionInputError(editor, null);
         RefreshParameterDisplays();
@@ -1523,7 +1523,7 @@ public partial class MainWindow : FluentWindow
         string taskName, ProjectConfigurationView configuration, bool shared, PlanItemKind kind)
     {
         var project = RequireProject();
-        var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == project.ActiveConfigurationId)
+        var drafts = _inputDrafts.Where(pair => pair.Key.Item1 == project.ActiveConfigurationId)
             .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value);
         (string, ProjectConfigurationView)[] others = !shared ? [] : project.SelectedItems
             .Where(task => task.Name != taskName || task.Kind != kind)
@@ -1683,7 +1683,7 @@ public partial class MainWindow : FluentWindow
             try {
                 RequireProject().RestoreOptionDefault(id, row.Option.Name, input?.Input.Name);
                 if (input is not null) {
-                    _invalidInputDrafts.Remove((id, row.Option.Name, input.Input.Name));
+                    _inputDrafts.Remove((id, row.Option.Name, input.Input.Name));
                 }
                 _pendingStartAttempt = null;
                 RefreshAfterOptionSaved(rebuildCards: true);
@@ -1702,7 +1702,7 @@ public partial class MainWindow : FluentWindow
     private FrameworkElement CreateInputEditor(InspectorRow row, InspectorInput input)
     {
         var tag = new OptionInputTag(_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name,
-            input.SavedValue, input.Input.PatternMessage, input.Input.IsExplicit);
+            input.SavedValue, _expandedTaskKind, input.Input.IsExplicit);
         var editor = input.Input.IsPassword
             ? new Wpf.Ui.Controls.PasswordBox { PasswordChar = '●', RevealButtonEnabled = false }
             : new Wpf.Ui.Controls.TextBox();
@@ -1714,11 +1714,31 @@ public partial class MainWindow : FluentWindow
         if (!string.IsNullOrWhiteSpace(input.HelpText)) {
             AutomationProperties.SetHelpText(editor, input.HelpText);
         }
-        editor.TextChanged += (_, _) => {
-            if (editor.Tag is OptionInputTag { Edited: false } current) {
-                editor.Tag = current with { Edited = true };
+        void OnInputChanged()
+        {
+            if (_updatingOptionEditors || _committingConfigurationInput || editor.Tag is not OptionInputTag current
+                || !_inspectorRows.TryGetValue(row.Option.Name, out var view)) {
+                return;
             }
-        };
+            var text = GetInputText(editor);
+            if (text == current.Value) {
+                _inputDrafts.Remove(current.Key);
+            } else {
+                _inputDrafts[current.Key] = text;
+            }
+            editor.Tag = current with { Edited = true, Rejected = false };
+            var message = input.Input.CheckValue(text);
+            ShowInputNotes(view.InputNotes[input.Input.Name], editor, message,
+                text != current.Value && message is not null ? input.Show(current.Value) : null);
+            view.Row.IsInvalid = row.Inputs.Any(field => _optionInputEditors.TryGetValue(
+                (tag.ConfigurationId, row.Option.Name, field.Input.Name), out var box)
+                && AutomationProperties.GetItemStatus(box).Length > 0);
+        }
+        if (editor is Wpf.Ui.Controls.PasswordBox password) {
+            password.PasswordChanged += (_, _) => OnInputChanged();
+        } else {
+            editor.TextChanged += (_, _) => OnInputChanged();
+        }
         editor.LostKeyboardFocus += OptionInputTextBox_LostKeyboardFocus;
         editor.PreviewKeyDown += OptionInputTextBox_PreviewKeyDown;
         BindConfigurationEditable(editor);
@@ -1852,18 +1872,24 @@ public partial class MainWindow : FluentWindow
             if (!view.InputNotes.TryGetValue(input.Input.Name, out var notes)) {
                 continue;
             }
-            notes.Children.Clear();
             if (_optionInputEditors.TryGetValue(
                 (_projectPlan!.ActiveConfigurationId, row.Option.Name, input.Input.Name), out var editor)) {
-                ShowOptionInputError(editor, input.Error);
+                ShowInputNotes(notes, editor, input.Error,
+                    input.Draft is not null && input.Error is not null ? input.Show(input.SavedValue) : null);
             }
-            if (input.Error is { } error) {
-                notes.Children.Add(CreateInspectorNote(error, "Inspector.Error"));
-            }
-            if (input.Draft is not null) {
-                var saved = ParameterInspector.ShowValue(input.Show(input.SavedValue));
-                notes.Children.Add(CreateInspectorNote($"未保存，仍使用「{saved}」· Esc 还原", "Inspector.DraftNote"));
-            }
+        }
+    }
+
+    private void ShowInputNotes(StackPanel notes, WpfTextBox editor, string? message, string? saved)
+    {
+        notes.Children.Clear();
+        ShowOptionInputError(editor, message);
+        if (message is not null) {
+            notes.Children.Add(CreateInspectorNote(message, "Inspector.Error"));
+        }
+        if (saved is not null) {
+            var previous = ParameterInspector.ShowValue(saved);
+            notes.Children.Add(CreateInspectorNote($"未保存，仍使用「{previous}」· Esc 还原", "Inspector.DraftNote"));
         }
     }
 

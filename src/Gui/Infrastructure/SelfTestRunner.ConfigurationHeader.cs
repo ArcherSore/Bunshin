@@ -116,9 +116,9 @@ internal static partial class SelfTestRunner
             tabs.SelectedIndex = 1;
             Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[1].Id,
                 "任务配置校验失败时标签条保持显示，并能切换配置。");
-            var drafts = (System.Collections.IDictionary)typeof(MainWindow).GetField("_invalidInputDrafts", flags)!
+            var drafts = (System.Collections.IDictionary)typeof(MainWindow).GetField("_inputDrafts", flags)!
                 .GetValue(window)!;
-            drafts[(project.ActiveConfigurationId, "ServerRange", "server_range")] = new InputDraft("978-,", "格式错误");
+            drafts[(project.ActiveConfigurationId, "ServerRange", "server_range")] = "978-,";
             InvokeOnboarding(window, "RenderTaskPlan");
             tabs.SelectedIndex = 0;
             Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[0].Id,

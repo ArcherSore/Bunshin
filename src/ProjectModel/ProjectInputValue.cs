@@ -11,27 +11,49 @@ internal static class ProjectInputValue
     internal static JsonNode Parse(InputDefinition input, string value, string context, bool typed,
         bool isDefault = false)
     {
+        var result = TryParse(input, value, context, typed, isDefault, out var problem);
+        return result ?? throw new InvalidDataException($"{context} {problem}");
+    }
+
+    internal static string? CheckValue(InputDefinition input, string value, bool typed)
+    {
+        try {
+            _ = TryParse(input, value, input.Label, typed, isDefault: false, out var problem);
+            return problem;
+        } catch (InvalidDataException) {
+            // A regex validated on load can still time out on particular text.
+            return "校验未能完成，请缩短输入后重试。";
+        }
+    }
+
+    private static JsonNode? TryParse(InputDefinition input, string value, string context, bool typed,
+        bool isDefault, out string? problem)
+    {
+        problem = null;
         if (!Matches(input, value, context)) {
-            return isDefault ? JsonValue.Create(value)! : throw new InvalidDataException(input.PatternMessage is null
-                ? $"{context} 未通过 verify。 " : $"{context}: {input.PatternMessage}");
+            if (isDefault) {
+                return JsonValue.Create(value);
+            }
+            problem = input.PatternMessage ?? "输入格式不符合要求，请修改后重试。";
+            return null;
         }
-        if (!typed) {
-            return JsonValue.Create(value)!;
+        if (!typed || input.PipelineKind == PipelineValueKind.String) {
+            return JsonValue.Create(value);
         }
-        return input.PipelineKind switch {
-            PipelineValueKind.String => JsonValue.Create(value)!,
-            PipelineValueKind.Int when int.TryParse(
-                value, NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var intValue) => JsonValue.Create(intValue)!,
-            PipelineValueKind.Bool when bool.TryParse(value, out var boolValue) =>
-                JsonValue.Create(boolValue)!,
-            PipelineValueKind.Int => throw new InvalidDataException(
-                $"{context} 不是合法 int。 "),
-            PipelineValueKind.Bool => throw new InvalidDataException(
-                $"{context} 不是合法 bool。 "),
-            _ => throw new InvalidOperationException(
-                $"Loader 产生了不支持的 pipeline kind：{input.PipelineKind}。 ")
-        };
+        if (input.PipelineKind == PipelineValueKind.Int) {
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)) {
+                return JsonValue.Create(number);
+            }
+            problem = "不是合法 int，请输入整数。";
+        } else if (input.PipelineKind == PipelineValueKind.Bool) {
+            if (bool.TryParse(value, out var boolean)) {
+                return JsonValue.Create(boolean);
+            }
+            problem = "请输入 true 或 false。";
+        } else {
+            throw new InvalidOperationException($"Loader 产生了不支持的 pipeline kind：{input.PipelineKind}。");
+        }
+        return null;
     }
 
     internal static bool Matches(InputDefinition input, string value, string context)

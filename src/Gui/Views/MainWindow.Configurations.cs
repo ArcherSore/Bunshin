@@ -438,7 +438,7 @@ public partial class MainWindow
     private bool CommitChangedInput(WpfTextBox editor, bool deferDraftCheck = false)
     {
         if (editor.Tag is OptionInputTag { Edited: false } tag && GetInputText(editor) == tag.Value
-            && !_invalidInputDrafts.ContainsKey(tag.Key)) {
+            && !_inputDrafts.ContainsKey(tag.Key)) {
             return true;
         }
         return CommitOptionInput(editor, deferDraftCheck);
@@ -449,34 +449,35 @@ public partial class MainWindow
         var text = GetInputText(textBox);
         if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
             || textBox.Tag is not OptionInputTag tag
-            || tag.Submitted && text == tag.Value && !_invalidInputDrafts.ContainsKey(tag.Key)) {
+            || tag.Submitted && text == tag.Value && !_inputDrafts.ContainsKey(tag.Key)) {
             return true;
         }
-        if (_invalidInputDrafts.TryGetValue(tag.Key, out var draft) && draft.Text == text) {
+        if (tag.Rejected) {
             return deferDraftCheck;
         }
         _committingConfigurationInput = true;
         try {
-            if (_projectPlan!.CheckInputValue(tag.OptionName, tag.InputName, text) is { } problem) {
+            if (_projectPlan!.CheckInputValue(tag.OptionName, tag.InputName, text, tag.Kind) is not null) {
                 // A rejected value is a typo, not a failure: keep the text and explain it under the field.
                 // The saved value is unchanged; the draft survives re-rendering until it is fixed or Esc restores it.
-                var message = tag.PatternMessage ?? problem;
-                _invalidInputDrafts[tag.Key] = new InputDraft(text, message);
-                ShowOptionInputError(textBox, message);
+                _inputDrafts[tag.Key] = text;
+                textBox.Tag = tag with { Rejected = true };
                 RefreshParameterDisplays();
                 _logger.Info($"input 未通过校验，未保存：option={tag.OptionName}，input={tag.InputName}。 ");
                 return deferDraftCheck;
             }
-            _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text);
-            _invalidInputDrafts.Remove(tag.Key);
+            _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text, tag.Kind);
+            _inputDrafts.Remove(tag.Key);
             textBox.Tag = tag with { Value = text, Submitted = true, Edited = false };
             _pendingStartAttempt = null;
             ShowOptionInputError(textBox, null);
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;
         } catch (Exception exception) {
+            _inputDrafts.Remove(tag.Key);
             SetInputText(textBox, tag.Value);
-            textBox.Tag = tag with { Edited = false };
+            textBox.Tag = tag with { Edited = false, Rejected = false };
+            RefreshParameterDisplays();
             HandleOperationError("保存 input option 失败", exception);
             ShowProjectValidationError(exception);
             return false;

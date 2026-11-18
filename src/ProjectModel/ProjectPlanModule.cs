@@ -275,43 +275,34 @@ public sealed partial class ProjectPlanModule
     }
 
     // Checks only the edited value, so a typo can be shown at its field instead of as a whole-config failure.
-    public string? CheckInputValue(string optionName, string inputName, string value)
+    public string? CheckInputValue(string optionName, string inputName, string value, PlanItemKind? kind = null) =>
+        CheckInputValue(LoadConfig(), FindOption(optionName), inputName, value, kind);
+
+    private string? CheckInputValue(TaskConfiguration config, OptionDefinition option, string inputName,
+        string value, PlanItemKind? kind)
     {
-        var input = FindOption(optionName).Inputs.SingleOrDefault(item => item.Name == inputName)
-            ?? throw new ArgumentException($"option {optionName} 不包含 input {inputName}。", nameof(inputName));
-        var typed = IsTypedOption(LoadConfig(), optionName);
-        try {
-            _ = ProjectInputValue.Parse(input, value, $"option {optionName} input {inputName} 的值", typed);
-            return null;
-        } catch (InvalidDataException exception) {
-            return exception.Message;
-        }
+        var input = option.Inputs.SingleOrDefault(item => item.Name == inputName)
+            ?? throw new ArgumentException($"option {option.Name} 不包含 input {inputName}。", nameof(inputName));
+        var typed = kind is null ? IsTypedOption(config, option.Name) : kind == PlanItemKind.MaaTask;
+        return ProjectInputValue.CheckValue(input, value, typed);
     }
 
     public ProjectConfigurationView SetInputValue(string optionName, string inputName, string value)
         => SetInputValue(ActiveConfigurationId, optionName, inputName, value);
 
     public ProjectConfigurationView SetInputValue(
-        Guid configurationId, string optionName, string inputName, string value)
+        Guid configurationId, string optionName, string inputName, string value, PlanItemKind? kind = null)
     {
         var option = FindOption(optionName);
-        if (option.Kind != OptionDefinitionKind.Input) {
-            throw new ArgumentException($"option {optionName} 不是 input。", nameof(optionName));
-        }
-        if (!option.Inputs.Any(input => input.Name == inputName)) {
-            throw new ArgumentException(
-                $"option {optionName} 不包含 input {inputName}。",
-                nameof(inputName));
-        }
-
         var config = FindConfiguration(configurationId);
-        var values = ExplicitOptionIntent.ReadInputs(option, config)
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        values[inputName] = value;
-        var updated = ReplaceExplicit(config, optionName, ExplicitOptionIntent.CreateInputs(option, values));
-        ValidateActiveConfiguration(updated);
+        if (CheckInputValue(config, option, inputName, value, kind) is { } error) {
+            throw new InvalidDataException(error);
+        }
+        var intent = ExplicitOptionIntent.SetInput(option, config, inputName, value);
+        var updated = ReplaceExplicit(config, optionName, intent);
+        var view = BuildConfiguration(updated);
         SaveConfiguration(updated);
-        return BuildConfiguration(updated);
+        return view;
     }
 
     public void RestoreOptionDefault(Guid configurationId, string optionName, string? inputName = null)
@@ -535,14 +526,14 @@ public sealed partial class ProjectPlanModule
     }
 
     private ProjectConfigurationView BuildPretaskConfiguration(TaskConfiguration config, PretaskDefinition pretask) =>
-        new([], BuildEditors(pretask.Options, config));
+        new([], BuildEditors(pretask.Options, config, typed: false));
 
     private ProjectConfigurationView BuildConfiguration(TaskConfiguration config, string? taskName)
     {
-        var global = BuildEditors(_project.GlobalOptions, config);
+        var global = BuildEditors(_project.GlobalOptions, config, typed: true);
         var task = taskName is null
             ? []
-            : BuildEditors(FindTask(taskName).Options, config);
+            : BuildEditors(FindTask(taskName).Options, config, typed: true);
         return new ProjectConfigurationView(global, task);
     }
 
@@ -555,23 +546,17 @@ public sealed partial class ProjectPlanModule
         }
     }
 
-    private IReadOnlyList<ProjectOptionEditor> BuildEditors(IReadOnlyList<string> names, TaskConfiguration config) =>
-        names.Select(name => BuildEditor(name, config)).ToArray();
+    private IReadOnlyList<ProjectOptionEditor> BuildEditors(IReadOnlyList<string> names, TaskConfiguration config,
+        bool typed) => names.Select(name => BuildEditor(name, config, typed)).ToArray();
 
-    private ProjectOptionEditor BuildEditor(string optionName, TaskConfiguration config)
+    private ProjectOptionEditor BuildEditor(string optionName, TaskConfiguration config, bool typed)
     {
         var option = FindOption(optionName);
         if (option.Kind == OptionDefinitionKind.Input) {
             var explicitInputs = ExplicitOptionIntent.ReadInputs(option, config);
-            var inputs = option.Inputs.Select(input => new ProjectInputEditor(
-                input.Name, input.Label, input.Description, input.Default,
-                explicitInputs.TryGetValue(input.Name, out var value) ? value : input.Default,
-                explicitInputs.ContainsKey(input.Name), input.Verify, input.PatternMessage) {
-                // Saved values passed verify when they were set; only an untouched default can still fail it.
-                Error = explicitInputs.ContainsKey(input.Name) || ProjectInputValue.Matches(input, input.Default,
-                    $"option {optionName} input {input.Name}") ? null : input.PatternMessage ?? "未通过校验",
-                InputType = input.InputType
-            }).ToArray();
+            var inputs = option.Inputs.Select(input => explicitInputs.TryGetValue(input.Name, out var value)
+                ? new ProjectInputEditor(input, value, true, typed)
+                : new ProjectInputEditor(input, input.Default, false, typed)).ToArray();
             return new ProjectOptionEditor(
                 option.Name, option.Label, option.Description, ProjectOptionKind.Input,
                 explicitInputs.Count != 0, null, null, [], inputs, []);
@@ -583,7 +568,7 @@ public sealed partial class ProjectPlanModule
             }
         });
         var checkbox = option.Kind == OptionDefinitionKind.Checkbox;
-        var children = BuildEditors(active.SelectMany(item => item.Options).ToArray(), config);
+        var children = BuildEditors(active.SelectMany(item => item.Options).ToArray(), config, typed);
         return new ProjectOptionEditor(
             option.Name, option.Label, option.Description,
             option.Kind switch {
@@ -604,11 +589,10 @@ public sealed partial class ProjectPlanModule
     // A checkbox below min_count or an input whose default still fails verify may be saved, but cannot start a Run.
     private void RequireRunnableOptions(TaskConfiguration config)
     {
-        IEnumerable<string> roots = config.SelectedTasks.Count == 0 ? [] : _project.GlobalOptions;
-        roots = roots.Concat(config.SelectedTasks.SelectMany(name => FindTask(name).Options))
-            .Concat(SelectedPretaskDefinitions(config).SelectMany(item => item.Options));
-        if (Flatten(BuildEditors(roots.ToArray(), config)).FirstOrDefault(option => option.StartBlocker is not null)
-            is { } blocked) {
+        var views = SelectedPretaskDefinitions(config).Select(item => BuildPretaskConfiguration(config, item))
+            .Concat(config.SelectedTasks.Select(name => BuildConfiguration(config, name)));
+        var options = views.SelectMany(view => Flatten(view.GlobalOptions.Concat(view.TaskOptions)));
+        if (options.FirstOrDefault(option => option.StartBlocker is not null) is { } blocked) {
             throw new InvalidOperationException($"参数“{blocked.Label}”：{blocked.StartBlocker}。");
         }
     }

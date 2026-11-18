@@ -95,6 +95,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyExplicitDefaults), c => VerifyExplicitDefaults(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyCheckboxOptions), c => VerifyCheckboxOptions(c.Directory)),
         new(Group.Project, nameof(VerifyCheckboxEditor), c => VerifyCheckboxEditor(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyUpgradedInputEditors), c => VerifyUpgradedInputEditors(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyRequiredInputDefault), c => VerifyRequiredInputDefault(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyStartupWithRetiredTaskCase),
             c => VerifyStartupWithRetiredTaskCase(c.Logger, c.Directory)),
