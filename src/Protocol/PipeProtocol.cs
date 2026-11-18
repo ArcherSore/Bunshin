@@ -52,7 +52,10 @@ public sealed class ProtocolConnection : IAsyncDisposable
         }
     }
 
-    public async Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken)
+    public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken) =>
+        WriteAsync(envelope, cancellationToken, null);
+
+    public async Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending)
     {
         ThrowIfDisposed();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
@@ -66,6 +69,11 @@ public sealed class ProtocolConnection : IAsyncDisposable
         await _writeGate.WaitAsync(cancellationToken);
         try {
             await _stream.WriteAsync(prefix, cancellationToken);
+            // A length prefix alone cannot deliver a request. Once the payload write starts, delivery is uncertain
+            // even if the write or flush subsequently fails.
+            ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
+            onSending?.Invoke();
             await _stream.WriteAsync(payload, cancellationToken);
             await _stream.FlushAsync(cancellationToken);
         } finally {

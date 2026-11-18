@@ -231,13 +231,13 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitFocusedConfigurationInput()
+    private bool CommitFocusedConfigurationInput(bool unattended = false)
     {
         if (Keyboard.FocusedElement is not WpfTextBox editor) {
             return true;
         }
-        return editor.Tag is OptionInputTag ? CommitOptionInput(editor)
-            : editor == _configurationNameEditor ? CommitConfigurationName() : true;
+        return editor.Tag is OptionInputTag ? CommitOptionInput(editor, unattended)
+            : editor != _configurationNameEditor || CommitConfigurationName(unattended);
     }
 
     private void NewConfigurationButton_Click(object sender, RoutedEventArgs e)
@@ -302,6 +302,20 @@ public partial class MainWindow
         }
     }
 
+    private void RenderConfigurationChange(bool switched)
+    {
+        if (switched) {
+            _addedSinceShelfOpened.Clear();
+            UpdateAddedTasks();
+        }
+        _pendingStartAttempt = null;
+        _expandedTaskName = null;
+        _dragTaskName = null;
+        EndConfigurationRename();
+        CloseTaskDescriptionDrawer();
+        RenderTaskPlan();
+    }
+
     // Returns whether the change was made. An unattended change (started by the launch itself) reports a refusal or
     // failure without a dialog nobody can answer.
     private bool ChangeConfiguration(Action change, bool unattended = false)
@@ -319,17 +333,7 @@ public partial class MainWindow
         try {
             var previous = _projectPlan?.ActiveConfigurationId;
             change();
-            if (_projectPlan?.ActiveConfigurationId != previous) {
-                // The added-tasks badge counts additions to the shown list, so another list starts afresh.
-                _addedSinceShelfOpened.Clear();
-                UpdateAddedTasks();
-            }
-            _pendingStartAttempt = null;
-            _expandedTaskName = null;
-            _dragTaskName = null;
-            EndConfigurationRename();
-            CloseTaskDescriptionDrawer();
-            RenderTaskPlan();
+            RenderConfigurationChange(_projectPlan?.ActiveConfigurationId != previous);
             return true;
         } catch (Exception exception) {
             RestoreConfigurationSelection();
@@ -406,7 +410,7 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitConfigurationName()
+    private bool CommitConfigurationName(bool unattended = false)
     {
         if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not { Tag: Guid id } editor
             || _committingConfigurationInput) {
@@ -425,7 +429,7 @@ public partial class MainWindow
             EndConfigurationRename();
             RestoreConfigurationSelection();
             return true;
-        } catch (Exception exception) {
+        } catch (Exception exception) when (!unattended) {
             editor.Text = _projectPlan!.Configurations.Single(item => item.Id == id).Name;
             EndConfigurationRename();
             HandleOperationError("保存配置名称失败", exception);
@@ -435,7 +439,7 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitOptionInput(WpfTextBox textBox)
+    private bool CommitOptionInput(WpfTextBox textBox, bool unattended = false)
     {
         var text = GetInputText(textBox);
         if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
@@ -464,7 +468,7 @@ public partial class MainWindow
             ShowOptionInputError(textBox, null);
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;
-        } catch (Exception exception) {
+        } catch (Exception exception) when (!unattended) {
             SetInputText(textBox, tag.Value);
             textBox.Tag = tag with { Submitted = true };
             HandleOperationError("保存 input option 失败", exception);

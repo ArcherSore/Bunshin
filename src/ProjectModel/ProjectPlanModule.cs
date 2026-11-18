@@ -100,13 +100,14 @@ public sealed partial class ProjectPlanModule
         }
     }
 
-    private TaskConfiguration ExecutionConfiguration()
+    private TaskConfiguration ExecutionConfiguration(Guid id)
     {
-        var config = LoadConfig();
+        var config = FindConfiguration(id);
         return config with {
-            SelectedTasks = config.SelectedTasks.Where(name => IsItemEnabled(PlanItemKind.MaaTask, name)).ToArray(),
+            SelectedTasks = config.SelectedTasks
+                .Where(name => !_disabledItems.Contains((id, PlanItemKind.MaaTask, name))).ToArray(),
             SelectedPretasks = config.SelectedPretasks
-                .Where(name => IsItemEnabled(PlanItemKind.Pretask, name)).ToArray()
+                .Where(name => !_disabledItems.Contains((id, PlanItemKind.Pretask, name))).ToArray()
         };
     }
     public IReadOnlyList<string> SelectedTaskNames => LoadConfig().SelectedTasks;
@@ -156,7 +157,7 @@ public sealed partial class ProjectPlanModule
         return true;
     }
 
-    public void ValidateConfiguration() => ValidateActiveConfiguration(ExecutionConfiguration());
+    public void ValidateConfiguration() => ValidateActiveConfiguration(ExecutionConfiguration(ActiveConfigurationId));
 
     public static ProjectPlanModule Open(string projectDirectory, string configPath, ProjectPlanModule? previous = null,
         Action<string>? log = null)
@@ -355,17 +356,21 @@ public sealed partial class ProjectPlanModule
         _project.RuntimeProfileDigest, _project.ProjectRoot, _project.Provenance,
         _project.Controller, _project.Resources, _project.Agent);
 
-    public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false)
+    public RunStartAttempt CreateRunStartAttempt(bool startupOnly = false) =>
+        CreateRunStartAttempt(ActiveConfigurationId, startupOnly);
+
+    public RunStartAttempt CreateRunStartAttempt(Guid configurationId, bool startupOnly = false,
+        IReadOnlyDictionary<(string Option, string Input), string>? inputErrors = null)
     {
-        var config = ExecutionConfiguration();
+        var config = ExecutionConfiguration(configurationId);
         if (startupOnly) {
             config = config with { SelectedTasks = [] };
         }
         ValidateActiveConfiguration(config);
-        if (config.SelectedTasks.Count + config.SelectedPretasks.Count == 0) {
+        if (config.SelectedTasks.Count == 0 && !SelectedPretaskDefinitions(config).Any()) {
             throw new InvalidOperationException("请先勾选要执行的任务或前置任务。");
         }
-        RequireRunnableOptions(config);
+        RequireRunnableOptions(config, inputErrors);
 
         var passwords = new HashSet<string>(StringComparer.Ordinal);
         var resolvedItems = config.SelectedTasks.Select(taskName => {
@@ -553,14 +558,23 @@ public sealed partial class ProjectPlanModule
     }
 
     // A checkbox below min_count or an input whose default still fails verify may be saved, but cannot start a Run.
-    private void RequireRunnableOptions(TaskConfiguration config)
+    private void RequireRunnableOptions(TaskConfiguration config,
+        IReadOnlyDictionary<(string Option, string Input), string>? inputErrors)
     {
         IEnumerable<string> roots = config.SelectedTasks.Count == 0 ? [] : _project.GlobalOptions;
         roots = roots.Concat(config.SelectedTasks.SelectMany(name => FindTask(name).Options))
             .Concat(SelectedPretaskDefinitions(config).SelectMany(item => item.Options));
-        if (Flatten(BuildEditors(roots.ToArray(), config)).FirstOrDefault(option => option.StartBlocker is not null)
-            is { } blocked) {
-            throw new InvalidOperationException($"参数“{blocked.Label}”：{blocked.StartBlocker}。");
+        foreach (var option in Flatten(BuildEditors(roots.ToArray(), config))) {
+            if (option.StartBlocker is { } blocker) {
+                throw new InvalidOperationException($"参数“{option.Label}”：{blocker}。");
+            }
+            if (inputErrors is { Count: > 0 }) {
+                foreach (var input in option.Inputs) {
+                    if (inputErrors.TryGetValue((option.Name, input.Name), out var error)) {
+                        throw new InvalidOperationException($"参数“{option.Label}”：{error}");
+                    }
+                }
+            }
         }
     }
 

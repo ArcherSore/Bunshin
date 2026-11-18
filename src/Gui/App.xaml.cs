@@ -14,7 +14,6 @@ namespace Gui;
 
 public partial class App : System.Windows.Application
 {
-    private readonly RunTerminalNotificationTracker _terminalNotifications = new();
     private AppLogger? _logger;
     private ChildSessionManager? _sessionManager;
     private WorkerCoordinator? _workerCoordinator;
@@ -70,19 +69,13 @@ public partial class App : System.Windows.Application
             Path.Combine(AppContext.BaseDirectory, "worker", AppIdentity.WorkerFileName));
         _workerCoordinator.StateChanged += WorkerCoordinator_StateChanged;
         _environment = new RuntimeEnvironment(_logger, _sessionManager, _workerCoordinator);
+        _quitAfterRun = command.QuitAfterRun ? new QuitAfterRunTracker() : null;
         _mainWindow = new MainWindow(
             _logger, _sessionManager, _workerCoordinator, _environment, RequestExitAsync, EndEnvironmentAsync,
-            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command);
+            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: _quitAfterRun);
         _mainWindow.HiddenToTray += MainWindow_HiddenToTray;
         _mainWindow.ProjectIdentityChanged += MainWindow_ProjectIdentityChanged;
-        _mainWindow.AutoRunStarted += (_, _) =>
-            _quitAfterRun = command.QuitAfterRun ? new QuitAfterRunTracker(DateTime.UtcNow) : null;
-        _mainWindow.AutoRunFailed += (_, message) => ShowBalloon("自动启动未能完成", message, failed: true);
-        // The Run this launch meant to start never began, so --quit-after-run has nothing to wait for; a Run the
-        // user starts later in this session must not end the program.
-        _mainWindow.AutoRunAbandoned += (_, _) => _quitAfterRun = null;
-        // The start request got no answer. The Worker may have started that Run, so wait for exactly that one.
-        _mainWindow.AutoRunUnconfirmed += (_, runId) => _quitAfterRun?.Await(runId);
+        _mainWindow.NotificationRequested += (_, n) => ShowBalloon(n.Title, n.Message, n.Failed);
         MainWindow = _mainWindow;
         CreateTrayIcon();
         // A launch by the system (logon) has no one to look at the window; it waits in the tray.
@@ -215,14 +208,11 @@ public partial class App : System.Windows.Application
         Dispatcher.BeginInvoke(() => {
             // --quit-after-run: the Run this launch started has ended, so nothing is left to confirm or announce.
             if (_quitAfterRun?.Observe(snapshot) == true) {
-                _quitAfterRun = null;
                 _logger?.Info("--quit-after-run：任务已结束，正在退出程序。");
                 _ = ExitAsync(confirm: false);
                 return;
             }
-            if (_terminalNotifications.Observe(snapshot) is { } notification) {
-                ShowBalloon(notification.Title, notification.Message, notification.Failed);
-            }
+            _mainWindow?.ObserveRunNotification(snapshot);
         });
     }
 

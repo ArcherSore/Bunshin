@@ -50,7 +50,15 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyLaunchHelp), _ => VerifyLaunchHelp()),
         new(Group.Support, nameof(VerifyHelpOutput), _ => VerifyHelpOutput()),
         new(Group.Support, nameof(VerifyQuitAfterRunTracker), _ => VerifyQuitAfterRunTracker()),
+        new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
+            c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyStartupSettings), c => VerifyStartupSettings(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduledEdits), c => VerifyScheduledEdits(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduledRun), c => VerifyScheduledRun(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduleClock), c => VerifyScheduleClock(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduleClockSelection),
+            c => VerifyScheduleClockSelection(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduleClockAtLogon), c => VerifyScheduleClockAtLogon(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyAutoRunOnLaunch), c => VerifyAutoRunOnLaunch(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyUnattendedStartupDialogs),
             c => VerifyUnattendedStartupDialogs(c.Logger, c.Directory)),
@@ -62,6 +70,10 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyPretaskGuiWiring), c => VerifyPretaskGuiWiring(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyPresets), c => VerifyPresets(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyFirstConfiguration), c => VerifyFirstConfiguration(c.Directory, c.Project)),
+        new(Group.Project, nameof(VerifySchedulePolicies), c => VerifySchedulePolicies(c.Directory, c.Project)),
+        new(Group.Project, nameof(VerifySchedulePage), c => VerifySchedulePage(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyInvalidSchedulePolicies),
+            c => VerifyInvalidSchedulePolicies(c.Directory, c.Project)),
         new(Group.Project, nameof(VerifyLegacyConfigFile), c => VerifyLegacyConfigFile(c.Directory)),
         new(Group.Project, nameof(VerifyConfigurationMigration),
             c => VerifyConfigurationMigration(c.Directory, c.Project)),
@@ -855,6 +867,11 @@ internal static partial class SelfTestRunner
             && items[0] is RunLogGroup { Label: RunLogFeed.EnvironmentLabel }
             && items[^1] is LogEntry { PlanItemId: var oldest } && oldest == second,
             "超过上限时必须移除最旧的日志及其空分组，没有 PlanItemId 的日志归入运行环境。");
+        feed.Add(environment with { TaskLabel = "定时" });
+        feed.Add(environment);
+        Require(items.OfType<RunLogGroup>().Select(group => group.Label)
+            .SequenceEqual([RunLogFeed.EnvironmentLabel, "定时", RunLogFeed.EnvironmentLabel]),
+            "运行环境和定时条目应各自显示正确的分组标签。");
         feed.Clear();
         Require(items.Count == 0 && feed.EntryCount == 0, "清空后所有分组都必须消失。");
         feed.Add(firstLog with { TaskLabel = "Daily" });

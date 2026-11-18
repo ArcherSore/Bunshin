@@ -53,6 +53,10 @@ _Avoid_: Application Settings、Run Plan
 一份独立的用户选择，包含要执行的任务、顺序和显式设置的选项。
 _Avoid_: task 实例、Run Plan
 
+**Schedule Policy（定时策略）**:
+属于一份任务配置的重复启动规则，指定每周哪些日子、哪些本地时间点自动启动该配置。
+_Avoid_: Windows 计划任务、Run Plan
+
 **Active Configuration（激活配置）**:
 当前任务工作区中显示、供下一次运行使用的任务配置。
 _Avoid_: Active Run

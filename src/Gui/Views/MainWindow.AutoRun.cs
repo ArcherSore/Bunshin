@@ -1,25 +1,23 @@
 using Gui.Infrastructure;
+using ProjectModel;
+using Gui.Worker;
 
 namespace Gui.Views;
 
 public partial class MainWindow
 {
     private readonly LaunchCommand _launchCommand;
+    private readonly QuitAfterRunTracker? _quitAfterRun;
 
-    // Raised just before the launch starts a configuration by itself, so --quit-after-run can start watching.
-    internal event EventHandler? AutoRunStarted;
+    private readonly RunTerminalNotificationTracker _terminalNotifications = new();
+    internal event EventHandler<RunTerminalNotification>? NotificationRequested;
 
-    // Raised when something the launch started on its own failed. The text is for a notification.
-    internal event EventHandler<string>? AutoRunFailed;
-
-    // Raised when an auto-run ended without any Run having begun, so --quit-after-run has nothing to wait for.
-    internal event EventHandler? AutoRunAbandoned;
-
-    // Raised when the start request got no answer, so the Worker may have started this Run anyway.
-    internal event EventHandler<Guid>? AutoRunUnconfirmed;
-
-    private bool _runAccepted;
-    private Guid? _unconfirmedRunId;
+    internal void ObserveRunNotification(WorkerCoordinatorSnapshot snapshot)
+    {
+        if (_terminalNotifications.Observe(snapshot, ActiveConfigurationName) is { } notification) {
+            NotificationRequested?.Invoke(this, notification);
+        }
+    }
 
     // Starts the configuration this launch asks for, if any: activates it, prepares the Runtime Environment and
     // starts the Run, as the Start button does. Returns whether it did.
@@ -47,37 +45,36 @@ public partial class MainWindow
             }
             return false;
         }
+        var entered = await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
+        if (!entered) {
+            _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
+        }
+        await ObserveScheduledRunAsync();
+        return entered;
+    }
+
+    private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)
+    {
         // A refusal is reported by the change itself: the other configuration must never be run instead.
         if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
-            return true;
+            return;
         }
         if (project.EnabledItems.Count == 0) {
             ReportAutoRunFailure("所选配置没有可执行的任务。");
-            return true;
+            return;
         }
         if (!_projectConfigurationValid) {
             ReportAutoRunFailure("所选配置未通过校验，请打开程序检查参数。");
-            return true;
+            return;
         }
         _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
-        _runAccepted = false;
-        _unconfirmedRunId = null;
-        AutoRunStarted?.Invoke(this, EventArgs.Empty);
         if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
-            await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(), unattended: true);
+            await RunWindowOperationAsync(PendingOperation.StartingRun,
+                () => StartCurrentPlanAsync(quitAfterRun: _quitAfterRun), unattended: true);
         } else {
-            await PrepareFromPanelAsync(startRun: true, unattended: true);
+            await RunWindowOperationAsync(PendingOperation.PreparingEnvironment,
+                () => PrepareCurrentEnvironmentAsync(startRun: true, quitAfterRun: _quitAfterRun), unattended: true);
         }
-        if (_runAccepted) {
-            return true;
-        }
-        // Otherwise no Run is known to have begun, whatever the reason, unless the Worker never answered.
-        if (_unconfirmedRunId is { } runId) {
-            AutoRunUnconfirmed?.Invoke(this, runId);
-        } else {
-            AutoRunAbandoned?.Invoke(this, EventArgs.Empty);
-        }
-        return true;
     }
 
     // Loaded starts everything and needs a shown window, so the window is shown and hidden before it is ever drawn,
@@ -98,6 +95,7 @@ public partial class MainWindow
     private void ReportUnattendedFailure(string operation, Exception exception)
     {
         _logger.Error($"{operation}。", exception);
-        AutoRunFailed?.Invoke(this, $"{operation}：{exception.GetBaseException().Message}");
+        var message = $"{operation}：{exception.GetBaseException().Message}";
+        NotificationRequested?.Invoke(this, new("自动执行未能完成", message, true));
     }
 }
