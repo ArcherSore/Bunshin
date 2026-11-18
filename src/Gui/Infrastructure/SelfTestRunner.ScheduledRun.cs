@@ -19,10 +19,10 @@ internal static partial class SelfTestRunner
             var before = project.ActiveConfigurationId;
             var weekly = project.Configurations.Single(item => item.Name == "周常");
             var failures = new List<string>();
-            window.AutoRunFailed += (_, message) => failures.Add(message);
+            window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
             var result = window.TryStartScheduledRunAsync(weekly.Id).GetAwaiter().GetResult();
             Require(result.Disposition == ScheduledRunDisposition.Invalid && project.ActiveConfigurationId == before
-                && failures.Single().Contains(weekly.Name), "无效定时配置应通知原因并保留原配置。");
+                && failures.Single() == $"定时任务未能启动 / 「{weekly.Name}」：执行计划为空", "无效定时配置应通知原因并保留原配置。");
         }, beforeLoad: TwoConfigurations(weeklyHasTask: false));
 
         var wts = new SimulatedWts { Sessions = [0, 1, 7], LogoffError = 5 };
@@ -37,12 +37,17 @@ internal static partial class SelfTestRunner
             project.AddTask(task);
             project.ActivateConfiguration(original);
             var failures = new List<string>();
-            window.AutoRunFailed += (_, message) => failures.Add(message);
+            window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
+            window.Hide();
+            var targetName = project.Configurations.Single(c => c.Id == target).Name;
             var run = window.TryStartScheduledRunAsync(target);
             PumpUntil(() => run.IsCompleted, "旧分身清理未确认时应结束本轮。");
             Require(run.Result.Disposition == ScheduledRunDisposition.Admitted
                 && project.ActiveConfigurationId == target && !prepared
-                && wts.LogoffAttempts.SequenceEqual([7u]) && failures.Count == 1,
+                && wts.LogoffAttempts.SequenceEqual([7u])
+                && !window.IsVisible && window.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
+                    { Tag: Guid selected } && selected == target
+                && failures.Single() == $"定时任务未能启动 / 「{targetName}」：旧的桌面分身未能关闭",
                 "获准后激活目标，旧分身未结束必须报告失败并保留现场。");
         }, session: session, prepareEnvironment: (_, _, _) => {
             prepared = true;
@@ -113,13 +118,18 @@ internal static partial class SelfTestRunner
                 var target = project.ActiveConfigurationId;
                 var name = project.Configurations.Single(c => c.Id == target).Name;
                 var failures = new List<string>();
-                window.AutoRunFailed += (_, message) => failures.Add(message);
+                window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                 if (failPreparation) {
                     var failed = window.TryStartScheduledRunAsync(target);
                     PumpUntil(() => failed.IsCompleted, "模拟准备失败应结束。");
                     Require(failures.Count == 1 && ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
                         "定时准备失败时控制栏应允许重试准备。");
                     failures.Clear();
+                }
+                if (terminal == RunState.Succeeded && !lostReply) {
+                    ClickOnboarding(window, "NewConfigurationButton");
+                    Require(window.EmptyPlanPanel.IsVisible, "启动前应显示另一份空配置。");
+                    window.Hide();
                 }
                 if (terminal == RunState.Succeeded) {
                     wts.ReportedId = 77;
@@ -137,20 +147,22 @@ internal static partial class SelfTestRunner
                 var snapshot = WorkerCoordinatorSelfTest.CreateSnapshot(record!, 0);
                 var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
                 void Record(object? _, LogEntry entry) => logs.Enqueue(entry.Message);
-                void ExpectBusy()
+                void ExpectBusy(string? expected = null)
                 {
                     logger.EntryWritten += Record;
                     try {
                         var skipped = window.TryStartScheduledRunAsync(target);
                         Require(skipped.IsCompletedSuccessfully
                             && skipped.Result.Disposition == ScheduledRunDisposition.Busy
+                            && (expected is null || window.LogLines.OfType<LogEntry>().First().Message
+                                == $"跳过「{name}」：{expected}")
                             && logs.Any(line => line.Contains(name) && line.Contains(skipped.Result.Reason!)),
                             "遇忙或 Worker 状态不确定应立即跳过并记明原因。");
                     } finally {
                         logger.EntryWritten -= Record;
                     }
                 }
-                ExpectBusy();
+                ExpectBusy("正在运行其他任务");
                 void Publish(RunSnapshot last, long revision)
                 {
                     Task.Run(() => pipe.WriteAsync(StateEvent(snapshot with { StateRevision = revision,
@@ -160,6 +172,8 @@ internal static partial class SelfTestRunner
                     PumpOnboarding();
                 }
                 var done = own with { State = terminal, EndedAtUtc = DateTime.UtcNow,
+                    Items = terminal == RunState.Failed ? [own.Items.Single() with { State = PlanItemState.Failed }]
+                        : own.Items,
                     Error = terminal == RunState.Failed ? new("fixture", "计划项模拟失败") : null };
                 Publish(done with { RunId = Guid.NewGuid(), State = RunState.Succeeded }, 2);
                 Require(wts.ReportedId == sessionId, "另一 Run 的成功不得关闭分身。");
@@ -193,6 +207,12 @@ internal static partial class SelfTestRunner
                             new GetSnapshotResponse(running)), token);
                     });
                     PumpUntil(() => start.IsCompleted && refresh.IsCompletedSuccessfully, "丢失回包后应按快照确认。");
+                    Require(!window.IsVisible, "定时启动和进度更新应保持窗口隐藏。");
+                    window.Show();
+                    PumpUntil(() => window.RunProgressPanel.IsVisible, "打开窗口后应显示当前运行的进度。");
+                    Require(window.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
+                        { Tag: Guid selected } && selected == target && !window.EmptyPlanPanel.IsVisible,
+                        "恢复可见时目标标签、执行计划与正在运行的任务应一致。");
                     Require(failures.Count == 0 && start.Result.Reason is null, "Worker 已运行时回复超时不得报告启动失败。");
                 } else {
                     var accepted = WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
@@ -226,7 +246,8 @@ internal static partial class SelfTestRunner
                     var next = window.TryStartScheduledRunAsync(target);
                     PumpUntil(() => next.IsCompleted, "下一次机会应消化上次终态，再在新环境中启动。");
                     Require(next.Result.Disposition == ScheduledRunDisposition.Admitted
-                        && completed.SequenceEqual([own.RunId]) && failures.Count(line => line.Contains("计划项模拟失败")) == 1
+                        && completed.SequenceEqual([own.RunId])
+                        && failures.Count(line => line.StartsWith($"「{name}」运行失败 / ")) == 1
                         && wts.LogoffAttempts.SequenceEqual([sessionId]), "下次清理不得吞掉上一 Run 的失败提醒。");
                     return;
                 } else {
@@ -256,15 +277,20 @@ internal static partial class SelfTestRunner
                 quit.Await(Guid.NewGuid());
                 var observed = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true,
                     snapshot with { LastRun = done }, "已结束");
+                window.ObserveRunNotification(observed);
                 Require(!quit.Observe(observed),
                     "定时 Run 的终态不得触发开机自动执行的退出。");
                 if (terminal == RunState.Succeeded) {
                     PumpUntil(() => !session.HasChildSession, "仅本次成功后应结束分身。");
+                    Require(window.LogLines.OfType<LogEntry>().Any(e => e.Message == "已关闭旧的桌面分身")
+                        && window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
+                        "成功收尾和旧分身关闭应分别出现在运行动态。");
                     Require(wts.LogoffAttempts.SequenceEqual([77u, sessionId]), "应先清理旧分身，成功后只关闭新分身。");
                 } else {
                     Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession, "失败或手停应保留现场。");
+                    var label = own.Plan.Items.Single().TaskLabel;
                     Require(terminal == RunState.Cancelled ? failures.Count == 0
-                        : failures.Single().Contains(name) && failures[0].Contains("计划项模拟失败"),
+                        : failures.Single() == $"「{name}」运行失败 / 失败任务：{label}。打开 Bunshin 查看运行动态。",
                         "任务失败通知必须包含配置与失败原因。");
                     if (terminal == RunState.Cancelled) {
                         Require(!ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
@@ -272,7 +298,7 @@ internal static partial class SelfTestRunner
                     }
                     wts.ReportedId = sessionId + 97;
                     wts.Sessions.Add(wts.ReportedId.Value);
-                    ExpectBusy();
+                    ExpectBusy("运行环境状态未知");
                     Require(wts.LogoffAttempts.Count == 0, "已知空闲的 Worker 不属于当前 WTS 分身时不得注销。");
                     wts.ReportedId = sessionId;
                     var retry = coordinator.StartRunAsync(new(own.RunId, payload.Plan, payload.PlanDigest));

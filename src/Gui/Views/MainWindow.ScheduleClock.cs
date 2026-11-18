@@ -39,9 +39,9 @@ public partial class MainWindow
             _lastCheckedMinute = minute;
             _checkedConfigurations.Clear();
         }
-        var due = project.Configurations.Where(c => c.SchedulePolicies.Any(p => p.Enabled
-            && p.Days.Contains(minute.DayOfWeek) && p.Times.Contains(time)))
-            .Where(c => _checkedConfigurations.Add(c.Id)).ToArray();
+        var due = project.Configurations.Select(c => (c.Id, c.Name, Policy: c.SchedulePolicies.FirstOrDefault(
+            p => p.Enabled && p.Days.Contains(minute.DayOfWeek) && p.Times.Contains(time))))
+            .Where(c => c.Policy is not null && _checkedConfigurations.Add(c.Id)).ToArray();
         if (due.Length == 0) {
             return;
         }
@@ -51,17 +51,17 @@ public partial class MainWindow
             claimed = ClaimScheduleOpportunities(minute, due.Select(c => c.Id));
         } catch (IOException exception) when ((exception.HResult & 0xffff) == 32) { // ERROR_SHARING_VIOLATION
             foreach (var configuration in due) {
-                _logger.Info($"定时执行“{configuration.Name}”已跳过：定时执行记录正被占用。");
+                ReportScheduledSkip(configuration.Name, "定时执行记录正被占用");
             }
             return;
         } catch (Exception exception) {
             var names = string.Join("、", due.Select(c => c.Name));
-            ReportUnattendedFailure($"定时执行“{names}”记录本次机会失败", exception);
+            ReportScheduledStartFailure(names, "无法保存定时执行记录", exception);
             return;
         }
         var ownsSelection = !_selectingSchedule;
         _selectingSchedule = true;
-        string? skip = ownsSelection ? null : "另一次定时检查正在启动任务";
+        string? skip = ownsSelection ? null : "正在运行其他任务";
         try {
             foreach (var configuration in due.Where(c => claimed.Contains(c.Id))) {
                 if (!_scheduleTimer.IsEnabled) {
@@ -71,19 +71,20 @@ public partial class MainWindow
                     skip = "当前时间已离开本次定时的分钟";
                 }
                 if (skip is not null) {
-                    _logger.Info($"定时执行“{configuration.Name}”已跳过：{skip}。");
+                    ReportScheduledSkip(configuration.Name, skip);
                     continue;
                 }
                 try {
-                    var result = await TryStartScheduledRunAsync(configuration.Id);
+                    var policyTime = $"{configuration.Policy!.Name} {minute:HH:mm}";
+                    var result = await TryStartScheduledRunAsync(configuration.Id, policyTime);
                     skip = result.Disposition switch {
-                        ScheduledRunDisposition.Admitted => $"同刻的配置“{configuration.Name}”已获准启动",
+                        ScheduledRunDisposition.Admitted => $"与「{configuration.Name}」同时到点",
                         ScheduledRunDisposition.Failed => result.Reason,
                         ScheduledRunDisposition.Busy => result.Reason ?? "运行环境已被占用",
                         _ => null
                     };
                 } catch (Exception exception) {
-                    ReportUnattendedFailure($"定时执行“{configuration.Name}”失败", exception);
+                    ReportScheduledStartFailure(configuration.Name, "运行环境状态未知", exception);
                     skip = $"配置“{configuration.Name}”的启动结果未确认";
                 }
             }

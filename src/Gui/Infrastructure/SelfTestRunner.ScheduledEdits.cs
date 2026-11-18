@@ -98,7 +98,7 @@ internal static partial class SelfTestRunner
                 Require(ReferenceEquals(Keyboard.Focus(editor), editor), "模拟定时触发时用户应仍在编辑相关字段。");
                 editor.Text = "changed";
                 var failures = new List<string>();
-                window.AutoRunFailed += (_, message) => failures.Add(message);
+                window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                 using (File.Open(Path.Combine(projectDirectory, "config", "configurations.json"),
                     FileMode.Open, FileAccess.Read, FileShare.Read)) {
                     clock.Advance(TimeSpan.FromMinutes(1));

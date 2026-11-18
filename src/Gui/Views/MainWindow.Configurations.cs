@@ -302,6 +302,20 @@ public partial class MainWindow
         }
     }
 
+    private void RenderConfigurationChange(bool switched)
+    {
+        if (switched) {
+            _addedSinceShelfOpened.Clear();
+            UpdateAddedTasks();
+        }
+        _pendingStartAttempt = null;
+        _expandedTaskName = null;
+        _dragTaskName = null;
+        EndConfigurationRename();
+        CloseTaskDescriptionDrawer();
+        RenderTaskPlan();
+    }
+
     // Returns whether the change was made. An unattended change (started by the launch itself) reports a refusal or
     // failure without a dialog nobody can answer.
     private bool ChangeConfiguration(Action change, bool unattended = false)
@@ -319,17 +333,7 @@ public partial class MainWindow
         try {
             var previous = _projectPlan?.ActiveConfigurationId;
             change();
-            if (_projectPlan?.ActiveConfigurationId != previous) {
-                // The added-tasks badge counts additions to the shown list, so another list starts afresh.
-                _addedSinceShelfOpened.Clear();
-                UpdateAddedTasks();
-            }
-            _pendingStartAttempt = null;
-            _expandedTaskName = null;
-            _dragTaskName = null;
-            EndConfigurationRename();
-            CloseTaskDescriptionDrawer();
-            RenderTaskPlan();
+            RenderConfigurationChange(_projectPlan?.ActiveConfigurationId != previous);
             return true;
         } catch (Exception exception) {
             RestoreConfigurationSelection();

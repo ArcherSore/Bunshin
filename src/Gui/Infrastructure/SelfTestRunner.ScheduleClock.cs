@@ -45,7 +45,9 @@ internal static partial class SelfTestRunner
         Open(window => {
             Require(!window.IsVisible && starts.SequenceEqual([daily]),
                 "托盘启动到 08:00:42 时，应立即按本地星期和分钟执行一次。");
-            window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
+            window.ShowActivated = false;
+            window.Show();
+            window.Hide();
             Require(starts.Count == 1, "恢复焦点不能重复执行同一分钟的配置。");
         });
         MainWindow? closed = null;
@@ -63,8 +65,23 @@ internal static partial class SelfTestRunner
         closed!.CheckScheduledRunsAsync().GetAwaiter().GetResult();
         closed.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
         Require(starts.Count == 2, "完全退出后旧宿主的时钟和恢复信号均应失效。");
-        clock.Advance(TimeSpan.FromDays(5));
-        Open(_ => Require(starts.Count == 2, "周六的 08:04 不应执行工作日策略。"));
+        // Use a long timer so only the window events can start these runs.
+        clock.Advance(TimeSpan.FromDays(1) - TimeSpan.FromMinutes(5));
+        Open(window => {
+            clock.Advance(TimeSpan.FromMinutes(1));
+            window.ShowActivated = false;
+            window.Show();
+            PumpUntil(() => starts.Count == 3, "重新可见应立即检查当前分钟。");
+            clock.Advance(TimeSpan.FromMinutes(1));
+            window.Activate();
+            PumpUntil(() => starts.Count == 4, "可见窗口获得焦点应立即检查当前分钟。");
+            window.Hide();
+            window.Show();
+            window.Activate();
+            Require(starts.Count == 4, "同一分钟的可见和激活事件不应重复启动。");
+        }, new DispatcherTimer { Interval = TimeSpan.FromHours(1) });
+        clock.Advance(TimeSpan.FromDays(4));
+        Open(_ => Require(starts.Count == 4, "周六不应执行工作日策略。"));
     }
 
     private static void VerifyScheduleClockSelection(AppLogger logger, string directory)
@@ -92,6 +109,7 @@ internal static partial class SelfTestRunner
             project.RenameConfiguration(d, "新启用");
             project.AddTask(task);
             project.ActivateConfiguration(c);
+            ClickOnboarding(window, "ScheduleNavigationItem");
             var failures = new List<string>();
             var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
             void Record(object? _, LogEntry entry)
@@ -100,7 +118,7 @@ internal static partial class SelfTestRunner
                     logs.Enqueue(entry.Message);
                 }
             }
-            window.AutoRunFailed += (_, message) => failures.Add(message);
+            window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
             logger.EntryWritten += Record;
             try {
                 clock.Advance(TimeSpan.FromMinutes(1));
@@ -108,6 +126,9 @@ internal static partial class SelfTestRunner
                 PumpUntil(() => preparations.Count == 1, "首份无效配置之后应开始准备下一份。");
                 Require(preparations.SequenceEqual([b]) && failures is [{ } failure] && failure.Contains("无任务")
                     && project.ActiveConfigurationId == b, "同刻应先报告 A 无效，再按配置列表顺序接纳 B。");
+                Require(window.ScheduleView.IsVisible && window.ConfigurationTabs.SelectedItem
+                    is System.Windows.Controls.TabItem { Tag: Guid selected } && selected == b,
+                    "定时页应保持可见，首页选中的配置应随获准启动更新。");
                 project.AddSchedulePolicy(d, "刚刚启用");
                 Require(window.CheckScheduledRunsAsync().IsCompletedSuccessfully
                     && logs.Any(line => line.Contains("新启用")),
@@ -119,6 +140,11 @@ internal static partial class SelfTestRunner
                 PumpUntil(() => failures.Any(message => message.Contains("准备失败")), "获准后准备失败应报告原因。");
                 PumpUntil(() => logs.Count(line => line.Contains("第二班")) >= 2, "获准启动后应记明同刻余项的跳过原因。");
                 window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
+                var activity = window.LogLines.OfType<LogEntry>().Where(e => e.TaskLabel == "定时")
+                    .Select(e => e.Message).ToArray();
+                Require(activity.Contains("启动「第一班」（早班 08:00）") && activity.Contains("跳过「第二班」：与「第一班」同时到点")
+                    && activity.Contains("跳过「第二班」：正在运行其他任务") && activity.Contains("「无任务」未能启动：执行计划为空")
+                    && activity.Contains("「第一班」未能启动：桌面分身启动失败（准备失败）"), "运行动态应区分启动、跳过和启动失败。");
                 Require(preparations.SequenceEqual([b]) && failures.Count == 2
                     && logs.Count(line => line.Contains("第二班")) == 2,
                     "B 准备失败不让位给 C，两分钟分别记录 C 的跳过原因，保持无重试、无额外通知。");
@@ -165,7 +191,7 @@ internal static partial class SelfTestRunner
             try {
                 WithRuntimeControlWindow(logger, host, window => {
                     var failures = new List<string>();
-                    window.AutoRunFailed += (_, message) => failures.Add(message);
+                    window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                     if (!clockFirst) {
                         clock.Advance(TimeSpan.FromMinutes(1));
                         _ = window.CheckScheduledRunsAsync();

@@ -189,6 +189,13 @@ public partial class MainWindow : FluentWindow
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         KeyDown += MainWindow_KeyDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
+        Activated += (_, _) => _ = CheckScheduledRunsAsync();
+        ScheduledConfigurationActivated += (_, id) => {
+            RenderConfigurationChange(ConfigurationTabs.SelectedItem is not TabItem { Tag: Guid shown } || shown != id);
+            if (ScheduleView.IsVisible) {
+                ScheduleView.Refresh();
+            }
+        };
         StateChanged += MainWindow_StateChanged;
         SizeChanged += (_, _) => UpdateConfigurationLockText();
         RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
@@ -690,6 +697,7 @@ public partial class MainWindow : FluentWindow
 
     private async Task SubmitRunAsync(RunStartAttempt attempt, string name, bool startupOnly, Action? onSending = null)
     {
+        _terminalNotifications.Register(attempt.RunId, name);
         RunResultLog.WritePlan(_logger, attempt, name, startupOnly);
         _telemetry.Register(attempt.RedactionValues);
         var response = await _workerCoordinator.StartRunAsync(attempt, onSending: onSending);
@@ -2157,6 +2165,11 @@ public partial class MainWindow : FluentWindow
         if (entry is null) {
             return;
         }
+        AddActivityEntry(entry);
+    }
+
+    private void AddActivityEntry(LogEntry entry)
+    {
         var shouldFollow = _followLogs && IsLogNearTop();
         var previousOffset = _homeLogScrollViewer?.VerticalOffset ?? 0;
         var inserted = _runLog.Add(entry);
@@ -2188,7 +2201,12 @@ public partial class MainWindow : FluentWindow
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
-        => ReevaluateOnboarding();
+    {
+        ReevaluateOnboarding();
+        if (IsVisible) {
+            _ = CheckScheduledRunsAsync();
+        }
+    }
 
     private void MainWindow_StateChanged(object? sender, EventArgs e) => ReevaluateOnboarding();
 

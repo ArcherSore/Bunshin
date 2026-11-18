@@ -14,7 +14,6 @@ namespace Gui;
 
 public partial class App : System.Windows.Application
 {
-    private readonly RunTerminalNotificationTracker _terminalNotifications = new();
     private AppLogger? _logger;
     private ChildSessionManager? _sessionManager;
     private WorkerCoordinator? _workerCoordinator;
@@ -76,7 +75,7 @@ public partial class App : System.Windows.Application
             InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: _quitAfterRun);
         _mainWindow.HiddenToTray += MainWindow_HiddenToTray;
         _mainWindow.ProjectIdentityChanged += MainWindow_ProjectIdentityChanged;
-        _mainWindow.AutoRunFailed += (_, message) => ShowBalloon("自动执行未能完成", message, failed: true);
+        _mainWindow.NotificationRequested += (_, n) => ShowBalloon(n.Title, n.Message, n.Failed);
         MainWindow = _mainWindow;
         CreateTrayIcon();
         // A launch by the system (logon) has no one to look at the window; it waits in the tray.
@@ -213,9 +212,7 @@ public partial class App : System.Windows.Application
                 _ = ExitAsync(confirm: false);
                 return;
             }
-            if (_terminalNotifications.Observe(snapshot, _mainWindow?.LastScheduledRunId) is { } notification) {
-                ShowBalloon(notification.Title, notification.Message, notification.Failed);
-            }
+            _mainWindow?.ObserveRunNotification(snapshot);
         });
     }
 

@@ -309,12 +309,13 @@ internal static partial class SelfTestRunner
     {
         var tracker = new RunTerminalNotificationTracker();
         var active = CreateNotificationSnapshot(RunState.Running);
-        if (tracker.Observe(active) is not null) {
+        tracker.Register(active.WorkerSnapshot!.ActiveRun!.RunId, "日常");
+        if (tracker.Observe(active, "另一配置") is not null) {
             throw new InvalidOperationException("活动 Run 不应通知。");
         }
         var terminal = FinishNotificationRun(active, RunState.Succeeded);
         var notification = tracker.Observe(terminal);
-        if (notification is not { Title: "任务已完成", Message: "所有任务已执行完成。", Failed: false }
+        if (notification is not { Title: "「日常」已完成", Message: "所有任务已执行完成。", Failed: false }
             || tracker.Observe(terminal) is not null) {
             throw new InvalidOperationException("成功 Run 应恰好通知一次。");
         }
@@ -326,7 +327,7 @@ internal static partial class SelfTestRunner
         foreach (var state in new[] { RunState.Failed, RunState.Cancelled }) {
             tracker = new RunTerminalNotificationTracker();
             active = CreateNotificationSnapshot(RunState.Running);
-            tracker.Observe(active);
+            tracker.Observe(active, "周常");
             if (state == RunState.Cancelled) {
                 tracker.Observe(active with {
                     WorkerSnapshot = active.WorkerSnapshot! with {
@@ -338,7 +339,7 @@ internal static partial class SelfTestRunner
             terminal = FinishNotificationRun(active, state);
             notification = tracker.Observe(terminal);
             if (state == RunState.Failed
-                ? notification is not { Title: "任务运行失败", Failed: true,
+                ? notification is not { Title: "「周常」运行失败", Failed: true,
                     Message: "失败任务：日常任务。打开 Bunshin 查看运行动态。" }
                 : notification is not null) {
                 throw new InvalidOperationException("失败通知必须解析 Plan 标签，取消不通知。");

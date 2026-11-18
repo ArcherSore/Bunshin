@@ -867,6 +867,11 @@ internal static partial class SelfTestRunner
             && items[0] is RunLogGroup { Label: RunLogFeed.EnvironmentLabel }
             && items[^1] is LogEntry { PlanItemId: var oldest } && oldest == second,
             "超过上限时必须移除最旧的日志及其空分组，没有 PlanItemId 的日志归入运行环境。");
+        feed.Add(environment with { TaskLabel = "定时" });
+        feed.Add(environment);
+        Require(items.OfType<RunLogGroup>().Select(group => group.Label)
+            .SequenceEqual([RunLogFeed.EnvironmentLabel, "定时", RunLogFeed.EnvironmentLabel]),
+            "运行环境和定时条目应各自显示正确的分组标签。");
         feed.Clear();
         Require(items.Count == 0 && feed.EntryCount == 0, "清空后所有分组都必须消失。");
         feed.Add(firstLog with { TaskLabel = "Daily" });

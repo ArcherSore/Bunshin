@@ -63,15 +63,17 @@ internal sealed class RuntimeEnvironment
         }
     }
 
-    internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation)
+    internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation, out bool hasSession)
     {
         observation = WorkerCoordinatorSnapshot.Empty;
+        hasSession = false;
         if (Closing || EndUnconfirmed || Ending
             || _session.Snapshot.State is ChildSessionState.Connecting or ChildSessionState.Disconnecting) {
-            return "运行环境正在操作或上次结束未确认";
+            return EndUnconfirmed ? "运行环境状态未知" : "正在运行其他任务";
         }
         try {
             var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
+            hasSession = sessionId.HasValue;
             var (current, awaitingStart) = _coordinator.ReadRunObservation();
             if (sessionId is uint id && NoLiveAdmission(current)) {
                 // With no live Admission a surviving, untracked Worker cannot be known idle.
@@ -82,12 +84,16 @@ internal sealed class RuntimeEnvironment
             if (NoLiveAdmission(current)) {
                 return null;
             }
+            if (current is { SnapshotFresh: true, WorkerSnapshot.ActiveRun: not null }) {
+                return "正在运行其他任务";
+            }
             return !awaitingStart && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
                 WorkerSnapshot: { ActiveRun: null, WorkerState: WorkerState.Ready
                     or WorkerState.NotReady } worker } && worker.ChildSessionId == sessionId
-                ? null : $"Worker 或桌面分身尚未确认空闲（{current.Detail}）";
+                ? null : "运行环境状态未知";
         } catch (Exception exception) {
-            return $"无法确认桌面分身空闲：{exception.Message}";
+            _logger.Warn("无法确认桌面分身空闲。", exception);
+            return "运行环境状态未知";
         }
 
         static bool NoLiveAdmission(WorkerCoordinatorSnapshot snapshot) =>

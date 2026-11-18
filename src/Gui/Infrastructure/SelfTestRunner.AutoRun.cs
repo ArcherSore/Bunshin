@@ -169,7 +169,7 @@ internal static partial class SelfTestRunner
                 page.Single(item => item.Definition.SettingKey == "autorun.onManualLaunch").Toggle!.Value
                     = onManualLaunch;
                 current = window;
-                window.AutoRunFailed += (_, message) => failures.Add(message);
+                window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                 beforeAutoRun?.Invoke(window, directory);
                 var run = window.AutoRunOnLaunchAsync();
                 PumpUntil(() => run.IsCompleted, "自动执行必须结束，失败时不能停在模态框上。");
@@ -183,7 +183,7 @@ internal static partial class SelfTestRunner
         Launch("boot", boot, "周常", false, (window, ran) => {
             Require(ran && prepared.SequenceEqual(["周常"]), "开机自启必须先激活所选配置再准备并开始。");
             Require(desktopShown.SequenceEqual([false]), "自动执行准备运行环境时不得弹出分身窗口。");
-            Require(failures is [{ } failure] && failure.Contains("模拟准备失败"),
+            Require(failures is [{ } failure] && failure.StartsWith("自动执行未能完成 / ") && failure.Contains("模拟准备失败"),
                 "自动执行开始前失败必须报告，而不是弹模态框。");
             Require(ProjectOf(window).ActiveConfigurationId == ProjectOf(window).Configurations
                 .Single(item => item.Name == "周常").Id, "激活的配置必须保存下来。");

@@ -11,13 +11,19 @@ internal sealed class RunTerminalNotificationTracker
     private readonly HashSet<Guid> _completedRuns = [];
     private readonly HashSet<Guid> _faultedRuns = [];
 
-    internal RunTerminalNotification? Observe(
-        WorkerCoordinatorSnapshot observation, Guid? separatelyReportedFailure = null)
+    private readonly Dictionary<Guid, string> _configurationNames = [];
+
+    internal void Register(Guid runId, string name) => _configurationNames.TryAdd(runId, name);
+
+    internal RunTerminalNotification? Observe(WorkerCoordinatorSnapshot observation, string? activeName = null)
     {
         if (!observation.SnapshotFresh || observation.WorkerSnapshot is not { } snapshot) {
             return null;
         }
         if (snapshot.ActiveRun is { } active && !_completedRuns.Contains(active.RunId)) {
+            if (!string.IsNullOrWhiteSpace(activeName)) {
+                Register(active.RunId, activeName);
+            }
             var seenBefore = !_observedRuns.Add(active.RunId);
             // A Faulted Worker never ends its Run, so the fault is announced instead, once, and only when it happened
             // while the Run was observed.
@@ -27,20 +33,23 @@ internal sealed class RunTerminalNotificationTracker
             }
         }
         if (snapshot.LastRun is not { State: RunState.Succeeded or RunState.Failed or RunState.Cancelled } run
-            || !_observedRuns.Remove(run.RunId) || !_completedRuns.Add(run.RunId)) {
+            || (!_observedRuns.Contains(run.RunId) && !_configurationNames.ContainsKey(run.RunId))
+            || !_completedRuns.Add(run.RunId)) {
             return null;
         }
-        if (run.State == RunState.Cancelled || run.State == RunState.Failed && run.RunId == separatelyReportedFailure) {
+        _observedRuns.Remove(run.RunId);
+        var subject = _configurationNames.Remove(run.RunId, out var name) ? $"「{name}」" : "任务";
+        if (run.State == RunState.Cancelled) {
             return null;
         }
         if (run.State == RunState.Succeeded) {
-            return new RunTerminalNotification("任务已完成", "所有任务已执行完成。", false);
+            return new RunTerminalNotification(subject + "已完成", "所有任务已执行完成。", false);
         }
         var failedItem = run.Items.FirstOrDefault(item => item.State == PlanItemState.Failed);
         var label = run.Plan.Items.FirstOrDefault(item => item.PlanItemId == failedItem?.PlanItemId)?.TaskLabel;
         var message = string.IsNullOrWhiteSpace(label)
             ? $"任务运行失败。打开 {AppIdentity.Name} 查看运行动态。"
             : $"失败任务：{label}。打开 {AppIdentity.Name} 查看运行动态。";
-        return new RunTerminalNotification("任务运行失败", message, true);
+        return new RunTerminalNotification(subject + "运行失败", message, true);
     }
 }
