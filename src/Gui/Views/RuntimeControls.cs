@@ -13,17 +13,16 @@ internal static class RuntimeControls
         var commandsAvailable = pending == PendingOperation.None && !exiting && !ending
             && session.State is not (ChildSessionState.Connecting or ChildSessionState.Disconnecting);
         var sessionConnected = session.State is ChildSessionState.ConnectedVisible or ChildSessionState.ConnectedHidden;
-        var fresh = observed is { Observation: WorkerObservation.Connected, SnapshotFresh: true };
         // A confirmed ended runtime keeps its last snapshot for diagnostics, but that snapshot cannot own controls.
         var worker = observed.Observation is WorkerObservation.ChildSessionEnded or WorkerObservation.WorkerExited
             ? null : observed.WorkerSnapshot;
         var active = worker?.ActiveRun;
-        var environmentReady = sessionConnected && project.Loaded && fresh && worker?.WorkerState == WorkerState.Ready
+        var environmentReady = sessionConnected && project.Loaded && observed.Fresh && worker?.WorkerState == WorkerState.Ready
             && worker.RuntimeProfileDigest == project.RuntimeProfileDigest;
         var runStartable = environmentReady && project is { SelectedTaskCount: > 0, ConfigurationValid: true }
-            && worker is { ActiveRun: null, RunState: RunState.Idle };
+            && observed.FreshReadyToStart;
         // Stopping needs only the Run itself, never the project or the Active Configuration.
-        var stopAllowed = commandsAvailable && fresh && active is { } run && IsStoppable(run);
+        var stopAllowed = commandsAvailable && observed.Fresh && active is { } run && IsStoppable(run);
 
         var preparing = pending == PendingOperation.PreparingEnvironment
             || session.State is ChildSessionState.Connecting or ChildSessionState.Existing
@@ -45,8 +44,7 @@ internal static class RuntimeControls
             : StartBlocker.RuntimeNotReady;
         // Retry prepares again when the Runtime Environment failed or is not ready, and starts the Run again once it
         // is ready. A snapshot that is still resynchronising is only waited for.
-        var resynchronising = observed is { Observation: WorkerObservation.Connected, SnapshotFresh: false };
-        var retryTarget = runtimeFaulted || !environmentReady && !resynchronising
+        var retryTarget = runtimeFaulted || !environmentReady && !observed.Resynchronising
             ? RetryTarget.Prepare : RetryTarget.Start;
         var retryEnabled = retryTarget == RetryTarget.Prepare ? commandsAvailable && project.Loaded : startAllowed;
         // Execution termination is unconfirmed while a Worker may still run something the GUI cannot reach. Only
@@ -78,7 +76,7 @@ internal static class RuntimeControls
         // With no Worker, or one proven gone, no Run can be using the configuration; a Worker that may still be
         // alive keeps it locked until a fresh snapshot shows it idle.
         var editable = project.Loaded && commandsAvailable
-            && (observed.NoLiveAdmission || fresh && worker is { ActiveRun: null, RunState: RunState.Idle });
+            && (observed.NoLiveAdmission || observed.FreshIdle);
         LockReason? configurationLock = !project.Loaded || editable ? null
             : active is not null || pending == PendingOperation.StartingRun ? LockReason.RunActive
             : LockReason.RuntimeBusy;

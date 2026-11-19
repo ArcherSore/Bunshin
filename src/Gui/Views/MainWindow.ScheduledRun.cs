@@ -222,8 +222,7 @@ public partial class MainWindow
                 return new(ScheduledRunDisposition.CountdownRequired);
             }
             hadSession = _sessionManager.HasChildSession;
-            // A live Worker can keep running across a GUI restart before it supplies a fresh snapshot.
-            if (!countdownElapsed && hadSession && current is { NoLiveAdmission: false, SnapshotFresh: false }) {
+            if (!countdownElapsed && hadSession && current.LiveAdmissionWithoutFreshSnapshot) {
                 return new(ScheduledRunDisposition.Busy, Reason: "尚未确认当前任务状态");
             }
         }
@@ -319,7 +318,7 @@ public partial class MainWindow
             }
         }
         observed ??= _workerCoordinator.Snapshot;
-        if (observed is not { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+        if (observed is not { Fresh: true,
                 WorkerSnapshot: { LastRun: { } run } worker }
             || worker.WorkerInstanceId != own.WorkerId || run.RunId != own.RunId
             || run.State is not (RunState.Succeeded or RunState.Failed or RunState.Cancelled)) {

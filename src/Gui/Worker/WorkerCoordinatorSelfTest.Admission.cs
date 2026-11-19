@@ -284,7 +284,7 @@ internal static partial class WorkerCoordinatorSelfTest
 
     private static async Task WaitForFreshAsync(WorkerCoordinator coordinator, CancellationToken cancellationToken)
     {
-        while (coordinator.Snapshot is not { Observation: WorkerObservation.Connected, SnapshotFresh: true }) {
+        while (!coordinator.Snapshot.Fresh) {
             await Task.Delay(10, cancellationToken);
         }
     }

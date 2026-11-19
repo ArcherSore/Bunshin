@@ -265,7 +265,7 @@ internal static partial class WorkerCoordinatorSelfTest
     {
         while (true) {
             var snapshot = coordinator.Snapshot;
-            if (snapshot.Observation == WorkerObservation.Connected && snapshot.SnapshotFresh
+            if (snapshot.Fresh
                 && snapshot.WorkerSnapshot?.ActiveRun?.RunId == runId) {
                 return;
             }
