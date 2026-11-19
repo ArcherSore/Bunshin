@@ -92,8 +92,7 @@ public partial class MainWindow : FluentWindow
     private readonly List<string> _addedSinceShelfOpened = [];
     private readonly Dictionary<string, bool> _taskGroupExpanded = new(StringComparer.Ordinal);
     private string _configurationLockText = string.Empty;
-    private string? _expandedTaskName;
-    private PlanItemKind _expandedTaskKind;
+    private (PlanItemKind Kind, string Name)? _expandedTask;
     private ProjectTaskChoice? _dragTask;
     private WpfPoint _dragStartPoint;
     private IInputElement? _descriptionDrawerPreviousFocus;
@@ -848,8 +847,7 @@ public partial class MainWindow : FluentWindow
         FrameworkElement? Target() => field is null ? _inspectorRows.GetValueOrDefault(option)?.Row
             : _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
         if (!IsExpanded(match.Task) || Target() is null) {
-            _expandedTaskName = match.Task.Name;
-            _expandedTaskKind = match.Task.Kind;
+            _expandedTask = (match.Task.Kind, match.Task.Name);
             RenderTaskPlan();
         }
         if (Target() is { } target) {
@@ -869,8 +867,7 @@ public partial class MainWindow : FluentWindow
             || !IsExpanded(task) && !HasParameters(GetConfigurationOrEmpty(task.Name, task.Kind))) {
             return;
         }
-        _expandedTaskName = IsExpanded(task) ? null : task.Name;
-        _expandedTaskKind = task.Kind;
+        _expandedTask = IsExpanded(task) ? null : (task.Kind, task.Name);
         RenderTaskPlan();
     }
 
@@ -886,7 +883,7 @@ public partial class MainWindow : FluentWindow
                 return;
             }
             if (IsExpanded(task)) {
-                _expandedTaskName = null;
+                _expandedTask = null;
             }
             CloseTaskDescriptionDrawer();
             _pendingStartAttempt = null;
@@ -1094,9 +1091,9 @@ public partial class MainWindow : FluentWindow
         RefreshConfigurationValidity(project);
     }
 
-    private string[] GetExpandedOptionNames() => _expandedTaskName is not { } taskName ? []
-        : DeriveInspectorRows(taskName, GetConfigurationOrEmpty(taskName, _expandedTaskKind),
-            shared: false, _expandedTaskKind)
+    private string[] GetExpandedOptionNames() => _expandedTask is not { } expanded ? []
+        : DeriveInspectorRows(expanded.Name, GetConfigurationOrEmpty(expanded.Name, expanded.Kind),
+            shared: false, expanded.Kind)
             .Select(row => row.Option.Name).ToArray();
 
     private void RenderAvailableTaskShelf(ProjectPlanModule project)
@@ -1282,8 +1279,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private bool IsExpanded(ProjectTaskChoice task) =>
-        _expandedTaskName == task.Name && _expandedTaskKind == task.Kind;
+    private bool IsExpanded(ProjectTaskChoice task) => _expandedTask == (task.Kind, task.Name);
 
     private ProjectConfigurationView GetConfigurationOrEmpty(string taskName, PlanItemKind kind)
     {
@@ -1552,11 +1548,11 @@ public partial class MainWindow : FluentWindow
         foreach (var (preview, task) in _planItemPreviews) {
             FillParameterPreview(preview, GetConfigurationOrEmpty(task.Name, task.Kind));
         }
-        if (_expandedTaskName is not { } expanded || _inspectorRows.Count == 0) {
+        if (_expandedTask is not { } expanded || _inspectorRows.Count == 0) {
             return;
         }
-        foreach (var row in DeriveInspectorRows(expanded, GetConfigurationOrEmpty(expanded, _expandedTaskKind),
-            shared: false, _expandedTaskKind)) {
+        foreach (var row in DeriveInspectorRows(expanded.Name, GetConfigurationOrEmpty(expanded.Name, expanded.Kind),
+            shared: false, expanded.Kind)) {
             if (_inspectorRows.TryGetValue(row.Option.Name, out var view)) {
                 ApplyInspectorRow(view, row);
             }
@@ -1897,7 +1893,7 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        _expandedTaskName = null;
+        _expandedTask = null;
         RenderTaskPlan();
         if (_planItemContainers.TryGetValue((task.Kind, task.Name), out var container)) {
             container.Effect = (Effect)FindResource("Effect.Surface.Drag");
@@ -1930,7 +1926,7 @@ public partial class MainWindow : FluentWindow
             return;
         }
         try {
-            _expandedTaskName = null;
+            _expandedTask = null;
             if (RequireProject().MoveTask(task.Name, drop.TargetIndex, task.Kind)) {
                 _pendingStartAttempt = null;
                 _logger.Info($"已调整任务顺序：{task.Name} -> {drop.TargetIndex}。");
@@ -2101,10 +2097,10 @@ public partial class MainWindow : FluentWindow
         // Preparing the environment reloads the project; an unfixed invalid draft must survive it and keep blocking
         // Start. Drafts for inputs the reloaded PI no longer has are never rendered or matched.
         _pendingStartAttempt = null;
-        _expandedTaskKind = PlanItemKind.MaaTask;
-        _expandedTaskName = project.InitializedTaskName
+        _expandedTask = (project.InitializedTaskName
             ?? (_onboardingPreferences.ShouldOfferAutomatically && !_onboardingAutoEnded
-                ? project.SelectedTaskNames.FirstOrDefault() : null);
+                ? project.SelectedTaskNames.FirstOrDefault() : null)) is { } expanded
+            ? (PlanItemKind.MaaTask, expanded) : null;
         CloseTaskDescriptionDrawer();
         ProjectEmptyStatePanel.Visibility = Visibility.Collapsed;
         TaskWorkspacePanel.Visibility = Visibility.Visible;
@@ -2136,7 +2132,7 @@ public partial class MainWindow : FluentWindow
         _invalidInputDrafts.Clear();
         _pendingStartAttempt = null;
         _projectConfigurationValid = false;
-        _expandedTaskName = null;
+        _expandedTask = null;
         AvailableTasksPanel.Children.Clear();
         PlanItemsPanel.Children.Clear();
         CloseTaskDescriptionDrawer();

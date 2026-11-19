@@ -32,7 +32,7 @@ internal static partial class SelfTestRunner
             const System.Reflection.BindingFlags flags =
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
             var editor = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()

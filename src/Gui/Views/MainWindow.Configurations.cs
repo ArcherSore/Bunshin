@@ -309,7 +309,7 @@ public partial class MainWindow
             UpdateAddedTasks();
         }
         _pendingStartAttempt = null;
-        _expandedTaskName = null;
+        _expandedTask = null;
         _dragTask = null;
         EndConfigurationRename();
         CloseTaskDescriptionDrawer();

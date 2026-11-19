@@ -30,8 +30,7 @@ public partial class MainWindow
     private CancellationTokenSource? _onboardingStepCancellation;
     private DispatcherOperation? _onboardingLayoutOperation;
     private IInputElement? _onboardingPreviousFocus;
-    private string? _onboardingPreviousExpandedTask;
-    private PlanItemKind _onboardingPreviousExpandedKind;
+    private (PlanItemKind Kind, string Name)? _onboardingPreviousExpandedTask;
     private bool _onboardingPreviousShelfExpanded;
     private double _onboardingPreviousScroll;
     private readonly RectangleGeometry _onboardingHole = new();
@@ -64,8 +63,7 @@ public partial class MainWindow
         try {
             _onboardingPreviousFocus = Keyboard.FocusedElement;
             _onboardingReplay = replay;
-            _onboardingPreviousExpandedTask = _expandedTaskName;
-            _onboardingPreviousExpandedKind = _expandedTaskKind;
+            _onboardingPreviousExpandedTask = _expandedTask;
             _onboardingPreviousShelfExpanded = _taskShelfExpanded;
             _onboardingPreviousScroll = PlanScroll.VerticalOffset;
             _onboardingActive = true;
@@ -101,8 +99,7 @@ public partial class MainWindow
             }
             if (_onboardingReplay && _onboardingStep == 1 && _projectPlan!.SelectedItemCount > 0) {
                 var first = _projectPlan.SelectedItems[0];
-                _expandedTaskName = first.Name;
-                _expandedTaskKind = first.Kind;
+                _expandedTask = (first.Kind, first.Name);
                 RenderTaskPlan();
             }
             if (_onboardingStep == 1 && _projectPlan?.SelectedItems.FirstOrDefault() is { } firstItem
@@ -472,9 +469,9 @@ public partial class MainWindow
         _onboardingTargetBounds = Rect.Empty;
         try {
             if (restoreReplay) {
-                _expandedTaskKind = _onboardingPreviousExpandedKind;
-                _expandedTaskName = _projectPlan?.SelectedItems.Any(item => item.Kind == _expandedTaskKind
-                    && item.Name == _onboardingPreviousExpandedTask) == true ? _onboardingPreviousExpandedTask : null;
+                _expandedTask = _projectPlan?.SelectedItems
+                    .Any(item => (item.Kind, item.Name) == _onboardingPreviousExpandedTask) == true
+                    ? _onboardingPreviousExpandedTask : null;
                 SetTaskShelfExpanded(_onboardingPreviousShelfExpanded);
                 if (_projectPlan is not null) {
                     RenderTaskPlan();

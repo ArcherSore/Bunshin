@@ -87,7 +87,7 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("Tab 选择必须保存 Active。");
             }
             project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             var retry = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
@@ -208,7 +208,7 @@ internal static partial class SelfTestRunner
         string SavedServer() => project.Configurations[0].ExplicitOptions["ServerRange"].GetProperty("Inputs")
             .GetProperty("server_range").GetString()!;
 
-        SetOnboardingField(window, "_expandedTaskName", "RealTask");
+        SetExpandedTask(window, "RealTask");
         InvokeOnboarding(window, "RenderTaskPlan");
         var input = Server();
         input.Text = "978-,";
@@ -267,7 +267,7 @@ internal static partial class SelfTestRunner
         File.WriteAllText(interfacePath, json.ToJsonString());
         var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             if (!ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                     .Any(item => System.Windows.Automation.AutomationProperties.GetName(item) == "ServerRange")
@@ -275,7 +275,7 @@ internal static partial class SelfTestRunner
                     .Any(item => item.Text == "ServerRange")) {
                 throw new InvalidOperationException("option 与 input label 均为空时，参数字段应显示 option 名称。");
             }
-            SetOnboardingField(window, "_expandedTaskName", null!);
+            SetExpandedTask(window, null);
             InvokeOnboarding(window, "RenderTaskPlan");
             var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
             Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
@@ -307,7 +307,7 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
         project.AddItem(Protocol.PlanItemKind.MaaTask, "OtherTask");
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             System.Windows.Controls.TextBlock? OtherPreview(string text) => ConfigurationDescendants(items)
                 .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => Equals(tag.ToolTip, text));
@@ -350,7 +350,7 @@ internal static partial class SelfTestRunner
         logger.EntryWritten += CountRejection;
         var project = ProjectPlanModule.Open(projectDirectory, configPath);
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)

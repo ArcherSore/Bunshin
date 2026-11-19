@@ -83,7 +83,7 @@ internal static partial class SelfTestRunner
         project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
         project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", null!);
+            SetExpandedTask(window, null);
             InvokeOnboarding(window, "RenderTaskPlan");
             string NameOf(System.Windows.DependencyObject element) =>
                 System.Windows.Automation.AutomationProperties.GetName(element);
@@ -144,7 +144,7 @@ internal static partial class SelfTestRunner
             project.SetInputValue("ServerRange", "server_range", "979");
             project.SetInputValue("ServerRange", "retry_count", "5");
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "StressTask");
+            SetExpandedTask(window, "StressTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
             var notes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();

@@ -71,11 +71,11 @@ internal static partial class SelfTestRunner
             var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
             string[] Previews() => ConfigurationDescendants(items).OfType<TextBlock>()
                 .Select(tag => tag.ToolTip).OfType<string>().ToArray();
-            SetOnboardingField(window, "_expandedTaskName", null!);
+            SetExpandedTask(window, null);
             InvokeOnboarding(window, "RenderTaskPlan");
             Require(Previews().SequenceEqual(["Mode：Default mode", "Features：2/3", "Tier：0/2"]),
                 "折叠预览必须按声明顺序最多显示三个顶层选项，并显示多选计数。");
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             PumpOnboarding();
             SaveWindowScreenshot(window, "checkbox.png");
@@ -118,7 +118,7 @@ internal static partial class SelfTestRunner
             Require(Option("Single").SelectedCases.SequenceEqual(["Enabled"])
                 && !ConfigurationDescendants(items).OfType<CheckBox>().Any(box => AutomationProperties.GetName(box)
                     == "Finish"), "单 case checkbox 也必须显示为分段。");
-            SetOnboardingField(window, "_expandedTaskName", null!);
+            SetExpandedTask(window, null);
             InvokeOnboarding(window, "RenderTaskPlan");
             Require(Previews().SequenceEqual(["Mode：Default mode", "Features：0/3", "Tier：1/2"]),
                 "重新折叠后，多选预览必须反映当前的勾选数。");

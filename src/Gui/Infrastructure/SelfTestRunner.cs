@@ -623,7 +623,7 @@ internal static partial class SelfTestRunner
             System.Windows.Controls.Button Chip(string label) => ConfigurationDescendants(catalog)
                 .OfType<System.Windows.Controls.Button>().Single(button =>
                     System.Windows.Automation.AutomationProperties.GetName(button) == $"添加任务：{label}");
-            var expanded = typeof(MainWindow).GetField("_expandedTaskName",
+            var expanded = typeof(MainWindow).GetField("_expandedTask",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
             var expandedBefore = expanded.GetValue(window);
             foreach (var label in new[] { "日常任务 2", "日常任务 3" }) {

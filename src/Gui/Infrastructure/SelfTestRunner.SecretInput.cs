@@ -116,7 +116,7 @@ internal static partial class SelfTestRunner
             const System.Reflection.BindingFlags flags =
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
+            SetExpandedTask(window, "RealTask");
             InvokeOnboarding(window, "RenderTaskPlan");
             var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
             var boxes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>().ToArray();
@@ -135,7 +135,7 @@ internal static partial class SelfTestRunner
                 "密码框不得显示密码原文。");
             SaveWindowScreenshot(window, "secret-and-path-inputs.png");
 
-            SetOnboardingField(window, "_expandedTaskName", null!);
+            SetExpandedTask(window, null);
             InvokeOnboarding(window, "RenderTaskPlan");
             var tag = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
                 .SingleOrDefault(text => Equals(text.ToolTip, $"Login：{ProjectInputEditor.PasswordMask}"));

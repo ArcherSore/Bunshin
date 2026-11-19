@@ -337,6 +337,11 @@ internal static partial class SelfTestRunner
     private static void SetOnboardingField(MainWindow window, string name, object value) => typeof(MainWindow)
         .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, value);
 
+    // Expands the named task's card on the next render; null folds every card.
+    private static void SetExpandedTask(MainWindow window, string? taskName) => typeof(MainWindow)
+        .GetField("_expandedTask", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .SetValue(window, taskName is null ? null : (Protocol.PlanItemKind.MaaTask, taskName));
+
     private static void AssertOnboardingStep(MainWindow window, int step, string title)
     {
         if (((UIElement)window.FindName("OnboardingOverlay")).Visibility != Visibility.Visible
