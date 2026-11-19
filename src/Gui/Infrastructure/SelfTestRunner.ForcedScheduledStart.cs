@@ -1,3 +1,4 @@
+using System.Windows;
 using Gui.Models;
 using Gui.Views;
 using Gui.Worker;
@@ -68,6 +69,8 @@ internal static partial class SelfTestRunner
                     window.ForcedScheduledStartEnded += (_, _) => ended++;
                     bool Logged(params string[] parts) => window.LogLines.OfType<LogEntry>()
                         .Any(e => e.TaskLabel == "定时" && parts.All(part => e.Message.Contains(part)));
+                    bool DialogShown() =>
+                        Named<UIElement>(window, "ForcedStartOverlay").Visibility == Visibility.Visible;
                     window.Hide();
                     clock.Advance(TimeSpan.FromSeconds(scenario == "timeout" ? 73 : 60));
                     var check = window.CheckScheduledRunsAsync();
@@ -81,19 +84,24 @@ internal static partial class SelfTestRunner
                         Require(hiddenAtWarning && !window.IsVisible && warning.Contains("10 秒")
                             && warning.Contains("第一班") && warning.Contains("点击打开窗口可取消"),
                             "主窗口在托盘时，提示应说明何时顶替、目标配置和取消入口。");
+                        PumpUntil(DialogShown, "倒计时期间主窗口内应已备好倒计时对话框。");
+                        var dialogText = Named<System.Windows.Controls.TextBlock>(window, "ForcedStartText").Text;
+                        Require(dialogText.Contains("第一班"), "倒计时对话框应指明即将启动的配置。");
                         if (scenario == "cancel") {
                             Require(countdowns is [{ ConfigurationName: "第一班" } countdown]
                                 && countdown.Deadline == clock.GetLocalNow().AddSeconds(10),
                                 "同刻只为首份获准的配置倒计时，并向界面提供截止时间。");
-                            countdowns.Single().Cancel();
+                            ClickOnboarding(window, "ForcedStartCancelButton");
                         } else {
                             clock.Advance(TimeSpan.FromSeconds(9));
                             Require(!check.IsCompleted && wts.LogoffAttempts.Count == 0
                                 && coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == old.ActiveRun!.RunId,
                                 "跨分钟后仍应保留完整的十秒取消机会。");
+                            Require(DialogShown(), "到期前倒计时对话框应保持显示。");
                             clock.Advance(TimeSpan.FromSeconds(1));
                         }
                         PumpUntil(() => check.IsCompleted, "取消或到期后应处理完这组机会。");
+                        PumpUntil(() => !DialogShown(), "取消或到期后倒计时对话框应关闭。");
                         Require(ended == 1 && Logged("跳过", "第二班", "第一班", "同时到点"),
                             "一次倒计时只结束一次，同时命中的其余配置应说明胜出者。");
                     }
