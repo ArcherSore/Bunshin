@@ -5,7 +5,8 @@
 - .NET 10 SDK：GUI 与 Worker 的日常构建和自检
 - Rust 1.98.1 MSVC 与 Visual Studio C++ Build Tools：Update Engine 和完整验证
 
-开发入口：[领域术语](GLOSSARY.md)、[当前架构](docs/ARCHITECTURE.md)、[架构决策](docs/adr/)。
+开发入口：[领域术语](GLOSSARY.md)、[当前架构](docs/ARCHITECTURE.md)、[架构决策](docs/adr/)、
+[GUI 行为说明](docs/GUI-BEHAVIOR.md)、[Update Engine 契约](docs/UPDATE-ENGINE.md)。
 当前工作与验收条件在 [GitHub Issues](https://github.com/ArcherSore/NarutoAutoGUI/issues)。
 
 ## 构建与自检

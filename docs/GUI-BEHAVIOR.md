@@ -1,4 +1,4 @@
-# Bunshin 正式 GUI
+# Bunshin GUI 行为说明
 
 Windows x64 / .NET 10 WPF 程序。需要管理员权限和交互式桌面；manifest 为 asInvoker，由程序在启动时自行请求提权（`--help` 在提权前输出）。
 
