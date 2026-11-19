@@ -40,7 +40,11 @@ internal static partial class SelfTestRunner
         var sessionId = (uint)process.SessionId;
         var path = process.MainModule!.FileName;
         var listed = false;
-        var wts = new SimulatedWts { DuringLogoff = _ => listed = false };
+        var bootLoggedOff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wts = new SimulatedWts { DuringLogoff = _ => {
+            listed = false;
+            bootLoggedOff.TrySetResult();
+        } };
         using var session = wts.CreateManager(logger);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var token = timeout.Token;
@@ -118,7 +122,8 @@ internal static partial class SelfTestRunner
                 Require(!exitRequested && workers.Count == 2 && wts.LogoffAttempts.SequenceEqual([sessionId])
                     && window.ConfigurationTabs.SelectedItem is TabItem { Tag: Guid shown } && shown == target,
                     "顶替开机 Run 后应继续运行所选定时配置。");
-            }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
+            }, session: session, coordinator: coordinator,
+                environment: CreateEnvironment(logger, session, coordinator, (_, _) => workers[0]),
                 launchCommand: new(AutoStart: true, Instance: "日常", QuitAfterRun: true), quitAfterRun: quit,
                 scheduleClock: clock, prepareEnvironment: async (plan, options, _) => {
                     if (workers.Count == 1 && scenario == BootReplacement.AdjacentMinutes) {
@@ -171,7 +176,12 @@ internal static partial class SelfTestRunner
                     RunState = RunState.Idle,
                     ActiveRun = null, LastRun = active with { State = RunState.Cancelled } }), token);
             }
-            await release.Task;
+            // Logging off ends the old process and closes its pipe before the replacement connects.
+            if (boot) {
+                await Task.WhenAny(bootLoggedOff.Task, release.Task);
+            } else {
+                await release.Task;
+            }
         }
     }
 }
