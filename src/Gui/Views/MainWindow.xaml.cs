@@ -215,6 +215,7 @@ public partial class MainWindow : FluentWindow
     {
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
+            _exitGeneration++;
             _forcedStartCountdown?.TrySetResult(false);
             _workerReadyWait?.Cancel();
             EndOnboarding(handled: false);

@@ -106,6 +106,10 @@ internal static partial class SelfTestRunner
             });
         }
         VerifyIdleForcedSchedule(logger, Path.Combine(directory, "idle"));
+        VerifyForcedScheduleAfterReload(logger, Path.Combine(directory, "reload"));
+        foreach (var scenario in new[] { "finished", "stopped", "stopping", "faulted", "exit", "update", "late" }) {
+            VerifyContendedForcedSchedule(logger, Path.Combine(directory, scenario), scenario);
+        }
     }
 
     private static void VerifyIdleForcedSchedule(AppLogger logger, string root)

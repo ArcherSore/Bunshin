@@ -18,10 +18,16 @@ public partial class MainWindow
     {
         public bool AwaitingConfirmation { get; set; }
         public bool CompletionReported { get; set; }
+        public Exception? CleanupFailure { get; set; }
     }
 
     private ScheduledSubmission? _scheduledSubmission;
     private TaskCompletionSource<bool>? _forcedStartCountdown;
+    private int _exitGeneration;
+    private RunSnapshot? ScheduledActiveRun =>
+        _workerCoordinator.Snapshot is { Observation: not (WorkerObservation.WorkerExited
+            or WorkerObservation.WorkerNotStarted or WorkerObservation.ChildSessionEnded), WorkerSnapshot: { } worker }
+            ? worker.ActiveRun : null;
     internal event EventHandler<ForcedScheduledStartCountdown>? ForcedScheduledStartPending;
     internal event EventHandler? ForcedScheduledStartEnded;
 
@@ -60,33 +66,48 @@ public partial class MainWindow
     // Called on the GUI dispatcher. Invalid leaves the opportunity to the next candidate.
     internal async Task<ScheduledRunResult> TryStartScheduledRunAsync(Guid configurationId, string? policyTime = null)
     {
-        var project = _projectPlan;
-        var name = project?.Configurations.FirstOrDefault(c => c.Id == configurationId)?.Name
+        var name = _projectPlan?.Configurations.FirstOrDefault(c => c.Id == configurationId)?.Name
             ?? configurationId.ToString();
         ScheduledRunResult? result = null;
         var force = _settings.ForceScheduledStart.Value;
+        var previous = _scheduledSubmission;
+        var exitGeneration = _exitGeneration;
+        var dueMinute = CurrentScheduleMinute();
         async Task StartInGateAsync(bool countdownElapsed)
         {
-            result = await StartScheduledRunInGateAsync(project, configurationId, name, policyTime,
-                force, countdownElapsed);
+            result = await StartScheduledRunInGateAsync(configurationId, name, policyTime, force, countdownElapsed,
+                previous, exitGeneration);
         }
         if (force && !_exitInProgress && !_allowClose && !_environment.Closing) {
             try {
-                await _environment.RunExclusiveAsync(() => StartInGateAsync(false));
-                if (result?.Disposition == ScheduledRunDisposition.CountdownRequired) {
-                    if (await WaitForForcedScheduledStartAsync(name)) {
-                        await _environment.RunExclusiveAsync(() => StartInGateAsync(true));
-                    }
-                    // Once announced, even a cancelled or subsequently invalid configuration owns the minute.
-                    result = new(ScheduledRunDisposition.Admitted, result?.RunId, result?.Reason);
+                if (ScheduledActiveRun is not null) {
+                    result = ValidateScheduledStart(_projectPlan, configurationId, name, out _)
+                        ?? new(ScheduledRunDisposition.CountdownRequired);
+                } else {
+                    await _environment.RunExclusiveAsync(() => StartInGateAsync(false));
                 }
-            } catch (OperationCanceledException) when (_environment.Closing) {
-                result = null;
+                if (result?.Disposition == ScheduledRunDisposition.CountdownRequired) {
+                    if (CurrentScheduleMinute() != dueMinute) {
+                        result = new(ScheduledRunDisposition.Busy, Reason: "当前时间已离开本次定时的分钟");
+                    } else if (!ScheduledStartClosing(exitGeneration)) {
+                        name = ConfigurationName(configurationId) ?? name;
+                        if (await WaitForForcedScheduledStartAsync(name)) {
+                            await _environment.RunExclusiveAsync(() => StartInGateAsync(true));
+                        }
+                        // Once announced, even a cancelled or subsequently invalid configuration owns the minute.
+                        result = new(ScheduledRunDisposition.Admitted, result?.RunId, result?.Reason);
+                    } else {
+                        result = new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
+                    }
+                }
+            } catch (OperationCanceledException) when (ScheduledStartClosing(exitGeneration)) {
+                result = new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
             }
         } else if (!force && !OperationOrExitInProgress) {
             await _environment.TryRunExclusiveAsync(() => StartInGateAsync(false));
         }
-        result ??= new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
+        result ??= new(ScheduledRunDisposition.Busy, Reason: ScheduledStartClosing(exitGeneration)
+            ? "应用正在退出" : "正在运行其他任务");
         if (result.Disposition == ScheduledRunDisposition.Busy) {
             ReportScheduledSkip(name, result.Reason!);
         }
@@ -117,21 +138,13 @@ public partial class MainWindow
         }
     }
 
-    private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(
-        ProjectPlanModule? project, Guid configurationId, string name, string? policyTime,
-        bool force, bool countdownElapsed)
+    private bool ScheduledStartClosing(int generation) =>
+        _exitInProgress || _allowClose || _environment.Closing || generation != _exitGeneration;
+
+    private ScheduledRunResult? ValidateScheduledStart(ProjectPlanModule? project, Guid configurationId, string name,
+        out RunStartAttempt? attempt)
     {
-        if (_exitInProgress || _allowClose || _environment.Closing) {
-            return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
-        }
-        if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker && !force) {
-            return new(ScheduledRunDisposition.Busy, Reason: blocker);
-        }
-        // The clock may run ahead of the dispatcher's snapshot callback. Consume the old Run before replacing it.
-        await ObserveScheduledRunAsync(observed, gateHeld: true);
-        if (_environment.Closing || _exitInProgress || _allowClose || !force && _environment.EndUnconfirmed) {
-            return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
-        }
+        attempt = null;
         if (project is null || project.ConfigurationsUnreadable) {
             const string detail = "无法读取任务配置。";
             ReportScheduledStartFailure(name, detail);
@@ -144,7 +157,6 @@ public partial class MainWindow
             }
             name = ActiveConfigurationName;
         }
-        RunStartAttempt attempt;
         try {
             attempt = CreateConfigurationAttempt(project, configurationId);
         } catch (Exception exception) {
@@ -154,14 +166,51 @@ public partial class MainWindow
             return new(ScheduledRunDisposition.Invalid, Reason: exception.Message);
         }
 
-        if (!active && SaveEditor() is { } saveFailure) {
-            return saveFailure;
+        return active ? null : SaveEditor();
+
+        ScheduledRunResult? SaveEditor()
+        {
+            try {
+                CommitFocusedConfigurationInput(unattended: true);
+                return null;
+            } catch (Exception error) {
+                var reason = $"无法保存配置「{ActiveConfigurationName}」";
+                ReportScheduledStartFailure(name, reason, error);
+                return new(ScheduledRunDisposition.Failed, Reason: reason);
+            }
         }
+    }
+
+    private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(Guid configurationId, string name,
+        string? policyTime, bool force, bool countdownElapsed, ScheduledSubmission? previous, int exitGeneration)
+    {
+        if (ScheduledStartClosing(exitGeneration)) {
+            return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
+        }
+        if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker && !force) {
+            return new(ScheduledRunDisposition.Busy, Reason: blocker);
+        }
+        // The clock may run ahead of the dispatcher's snapshot callback. Consume the old Run before replacing it.
+        previous ??= _scheduledSubmission;
+        await ObserveScheduledRunAsync(observed, gateHeld: true);
+        if (ScheduledStartClosing(exitGeneration) || !force && _environment.EndUnconfirmed) {
+            return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
+        }
+        if (force && _environment.EndUnconfirmed && previous?.CleanupFailure is { } cleanupFailure) {
+            const string reason = "旧的桌面分身未能关闭";
+            ReportScheduledStartFailure(name, reason, cleanupFailure);
+            return new(ScheduledRunDisposition.Admitted, Reason: reason);
+        }
+        // Manual preparation can reload the project during the countdown or while we wait for admission.
+        var project = _projectPlan;
+        if (ValidateScheduledStart(project, configurationId, name, out var attempt) is { } failure) {
+            return failure;
+        }
+        name = ConfigurationName(configurationId) ?? name;
         if (_environment.ScheduledRunBlocker(out _, out var hadSession) is { } changed && !force) {
             return new(ScheduledRunDisposition.Busy, Reason: changed);
         }
-        var activeRun = _workerCoordinator.Snapshot.WorkerSnapshot?.ActiveRun;
-        if (force && !countdownElapsed && activeRun is not null) {
+        if (force && !countdownElapsed && ScheduledActiveRun is not null) {
             return new(ScheduledRunDisposition.CountdownRequired);
         }
         Guid? submitted = null;
@@ -169,11 +218,11 @@ public partial class MainWindow
         var endingOldSession = false;
         SetPendingOperation(PendingOperation.PreparingEnvironment);
         try {
-            project.ActivateConfiguration(configurationId);
+            project!.ActivateConfiguration(configurationId);
             RenderScheduledActivation(configurationId);
             AddScheduleActivity(policyTime is null ? $"启动「{name}」" : $"启动「{name}」（{policyTime}）");
             endingOldSession = true;
-            if (countdownElapsed && _workerCoordinator.Snapshot.WorkerSnapshot?.ActiveRun is { } replaced
+            if (countdownElapsed && ScheduledActiveRun is { } replaced
                 && _quitAfterRun?.IsWaitingFor(replaced.RunId) == true) {
                 _quitAfterRun.Abandon();
             }
@@ -185,17 +234,20 @@ public partial class MainWindow
             if (hadSession) {
                 AddScheduleActivity("已关闭旧的桌面分身");
             }
-            if (!_exitInProgress && !_environment.Closing) {
+            if (!ScheduledStartClosing(exitGeneration)) {
                 await PrepareProjectEnvironmentAsync(project, showDesktop: false);
-                if (await WaitForRunStartAsync()) {
+                if (!ScheduledStartClosing(exitGeneration) && await WaitForRunStartAsync()
+                    && !ScheduledStartClosing(exitGeneration)) {
                     var worker = _workerCoordinator.Snapshot.WorkerSnapshot
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
-                    _scheduledSubmission = new(name, worker.WorkerInstanceId, attempt.RunId);
+                    _scheduledSubmission = new(name, worker.WorkerInstanceId, attempt!.RunId);
                     submitted = attempt.RunId;
                     await SubmitRunAsync(attempt, name, onSending: () => sending = true);
                 }
             }
             return new(ScheduledRunDisposition.Admitted, submitted);
+        } catch (OperationCanceledException) when (ScheduledStartClosing(exitGeneration) && !submitted.HasValue) {
+            return new(ScheduledRunDisposition.Admitted, Reason: "应用正在退出");
         } catch (Exception exception) {
             if (submitted.HasValue && _scheduledSubmission is { } own) {
                 var status = _workerCoordinator.ObserveStart(own.WorkerId, own.RunId);
@@ -222,18 +274,6 @@ public partial class MainWindow
             return new(ScheduledRunDisposition.Admitted, submitted, exception.Message);
         } finally {
             SetPendingOperation(PendingOperation.None);
-        }
-
-        ScheduledRunResult? SaveEditor()
-        {
-            try {
-                CommitFocusedConfigurationInput(unattended: true);
-                return null;
-            } catch (Exception error) {
-                var reason = $"无法保存配置「{ActiveConfigurationName}」";
-                ReportScheduledStartFailure(name, reason, error);
-                return new(ScheduledRunDisposition.Failed, Reason: reason);
-            }
         }
     }
 
@@ -276,7 +316,11 @@ public partial class MainWindow
                 bool CanClose() => _scheduledSubmission == own && !OperationOrExitInProgress
                     && _environment.CanEndSuccessfulRun(own.WorkerId, own.RunId);
                 var ended = gateHeld ? await _environment.EndWhileExclusiveAsync(CanClose)
-                    : await _environment.EndAsync(CanClose);
+                    : await _environment.EndAsync(CanClose, inGate: result => {
+                        // A waiting replacement must see this failure before it can attempt another logoff.
+                        own.CleanupFailure ??= result.Error;
+                        return Task.CompletedTask;
+                    });
                 if (ended.Outcome != EnvironmentEndOutcome.Declined && _scheduledSubmission == own) {
                     _scheduledSubmission = null;
                     if (ended.Outcome == EnvironmentEndOutcome.Ended) {
@@ -287,6 +331,7 @@ public partial class MainWindow
                     throw error;
                 }
             } catch (Exception exception) {
+                own.CleanupFailure = exception;
                 if (_scheduledSubmission == own) {
                     _scheduledSubmission = null;
                 }
