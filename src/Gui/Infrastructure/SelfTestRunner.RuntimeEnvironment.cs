@@ -309,8 +309,7 @@ internal static partial class SelfTestRunner
 
     // Ending before the fake Worker is admitted would discard the Admission it connects with.
     private static void AwaitRunningWorker(WorkerCoordinator coordinator) => AwaitWorker(coordinator,
-        snapshot => snapshot is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-            WorkerSnapshot.ActiveRun: not null }, "假 Worker 未报告运行中的 Run。");
+        snapshot => snapshot is { Fresh: true, WorkerSnapshot.ActiveRun: not null }, "假 Worker 未报告运行中的 Run。");
 
     private static void AwaitWorker(WorkerCoordinator coordinator, Func<WorkerCoordinatorSnapshot, bool> condition,
         string failure) =>

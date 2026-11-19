@@ -31,6 +31,23 @@ internal sealed record WorkerCoordinatorSnapshot(
     WorkerObservation Observation, bool SnapshotFresh,
     WorkerSnapshot? WorkerSnapshot, string Detail)
 {
+    internal bool Fresh => Observation == WorkerObservation.Connected && SnapshotFresh;
+    internal bool Resynchronising => Observation == WorkerObservation.Connected && !SnapshotFresh;
+
+    // A Worker may still be running across a disconnect or GUI restart.
+    internal bool LiveAdmissionWithoutFreshSnapshot => !NoLiveAdmission && !SnapshotFresh;
+
+    // Editing depends on whether a Run owns the configuration, regardless of Worker readiness.
+    internal bool FreshIdle => Fresh && WorkerSnapshot is { ActiveRun: null, RunState: RunState.Idle };
+
+    // Starting a Run also requires the Worker to be ready to execute it.
+    internal bool FreshReadyToStart => FreshIdle && WorkerSnapshot is { WorkerState: WorkerState.Ready };
+
+    // Scheduled cleanup needs a settled Worker and can proceed with unavailable dependencies.
+    internal bool FreshIdleForEnvironmentEnd => Fresh && WorkerSnapshot is {
+        ActiveRun: null, WorkerState: WorkerState.Ready or WorkerState.NotReady
+    };
+
     internal bool NoLiveAdmission => Observation is WorkerObservation.WorkerNotStarted
         or WorkerObservation.ChildSessionEnded or WorkerObservation.WorkerExited;
 
@@ -147,7 +164,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         await WaitForServerReadyAsync(cancellationToken);
         WorkerAdmissionRecord? existing;
         lock (_gate) {
-            if (Snapshot.Observation == WorkerObservation.Connected && Snapshot.SnapshotFresh
+            if (Snapshot.Fresh
                 && Snapshot.WorkerSnapshot?.RuntimeProfileDigest == project.RuntimeProfileDigest) {
                 return Snapshot.WorkerSnapshot;
             }
@@ -252,8 +269,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             WorkerSnapshot? lateSnapshot = null;
             lock (_gate) {
                 if (Snapshot is {
-                    Observation: WorkerObservation.Connected,
-                    SnapshotFresh: true,
+                    Fresh: true,
                     WorkerSnapshot: { WorkerInstanceId: var snapshotInstance } workerSnapshot
                 }
                     && snapshotInstance == instanceId) {
@@ -364,8 +380,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                 observed = Snapshot;
             }
             var worker = observed.WorkerSnapshot;
-            if (observed.Observation != WorkerObservation.Connected || !observed.SnapshotFresh
-                || worker?.WorkerInstanceId != instanceId) {
+            if (!observed.Fresh || worker?.WorkerInstanceId != instanceId) {
                 ready.TrySetException(new InvalidOperationException("等待就绪期间 Worker 连接或身份已改变。"));
             } else if (worker.WorkerState == WorkerState.Ready) {
                 ready.TrySetResult();
@@ -393,7 +408,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     internal StartObservation ObserveStart(Guid workerId, Guid runId)
     {
         var (current, awaitingStart) = ReadRunObservation();
-        if (current is not { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } worker }
+        if (current is not { Fresh: true, WorkerSnapshot: { } worker }
             || worker.WorkerInstanceId != workerId) {
             return StartObservation.Unknown;
         }
@@ -1090,10 +1105,8 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
 
     private void EnsureStartAllowedLocked(string desiredRuntimeProfileDigest)
     {
-        var worker = Snapshot.WorkerSnapshot;
-        if (Snapshot.Observation != WorkerObservation.Connected || !Snapshot.SnapshotFresh || worker is null
-            || worker.WorkerState != WorkerState.Ready || worker.ActiveRun is not null
-            || worker.RunState != RunState.Idle || worker.RuntimeProfileDigest != desiredRuntimeProfileDigest) {
+        if (Snapshot is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
+            || worker.RuntimeProfileDigest != desiredRuntimeProfileDigest) {
             throw new InvalidOperationException("当前 Worker/Snapshot/Run 状态不允许 Start。 ");
         }
     }

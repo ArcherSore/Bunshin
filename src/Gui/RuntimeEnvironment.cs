@@ -87,9 +87,8 @@ internal sealed class RuntimeEnvironment
             if (current is { SnapshotFresh: true, WorkerSnapshot.ActiveRun: not null }) {
                 return "正在运行其他任务";
             }
-            return awaitingStart is null && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-                WorkerSnapshot: { ActiveRun: null, WorkerState: WorkerState.Ready
-                    or WorkerState.NotReady } worker } && worker.ChildSessionId == sessionId
+            return awaitingStart is null && current is { FreshIdleForEnvironmentEnd: true, WorkerSnapshot: { } worker }
+                && worker.ChildSessionId == sessionId
                 ? null : "运行环境状态未知";
         } catch (Exception exception) {
             _logger.Warn("无法确认桌面分身空闲。", exception);
@@ -103,9 +102,8 @@ internal sealed class RuntimeEnvironment
         var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
         var (current, awaitingStart) = _coordinator.ReadRunObservation();
         return !Closing && !EndUnconfirmed && awaitingStart is null
-            && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
-                WorkerSnapshot: { ActiveRun: null, LastRun: { State: RunState.Succeeded } last,
-                    WorkerState: WorkerState.Ready or WorkerState.NotReady } idle }
+            && current is { FreshIdleForEnvironmentEnd: true,
+                WorkerSnapshot: { LastRun: { State: RunState.Succeeded } last } idle }
             && idle.WorkerInstanceId == workerId && last.RunId == runId && sessionId == idle.ChildSessionId;
     }
 
@@ -212,7 +210,7 @@ internal sealed class RuntimeEnvironment
     // A failure here only logs: logging off the Child Session ends whatever still runs in it.
     private async Task StopActiveRunAsync()
     {
-        if (_coordinator.Snapshot is not { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+        if (_coordinator.Snapshot is not { Fresh: true,
             WorkerSnapshot: { WorkerState: not WorkerState.Faulted, ActiveRun: { } run } }) {
             var current = _coordinator.Snapshot;
             _logger.Debug($"无法或无需正常停止任务{AppLogger.Field("observation", current.Observation)}"
@@ -224,7 +222,7 @@ internal sealed class RuntimeEnvironment
         try {
             using var stopTimeout = new CancellationTokenSource(_waitLimit);
             await _coordinator.StopRunAsync(run.RunId, stopTimeout.Token);
-            while (_coordinator.Snapshot is not { Observation: WorkerObservation.Connected, SnapshotFresh: true }
+            while (!_coordinator.Snapshot.Fresh
                 || _coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == run.RunId) {
                 if (_coordinator.Snapshot is { Observation: not WorkerObservation.Connected }
                     or { WorkerSnapshot.WorkerState: WorkerState.Faulted }) {

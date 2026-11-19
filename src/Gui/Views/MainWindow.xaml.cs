@@ -669,7 +669,7 @@ public partial class MainWindow : FluentWindow
         if (quitAfterRun is null && _quitAfterRun?.IsWaitingFor(attempt.RunId) == true) {
             // A retry reuses its Run ID. Only replay once the original start was ruled out.
             var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
-            if (current is not { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } w }
+            if (current is not { Fresh: true, WorkerSnapshot: { } w }
                 || awaitingStart.HasValue) {
                 return;
             }
@@ -2366,7 +2366,7 @@ public partial class MainWindow : FluentWindow
                 project.RuntimeProfileDigest)
             : ProjectReadiness.NotLoaded,
         _pendingOperation == PendingOperation.None && _workerCoordinator.StartAwaitingObservation
-            && _workerSnapshot is { Observation: WorkerObservation.Connected, SnapshotFresh: true }
+            && _workerSnapshot.Fresh
             ? PendingOperation.StartingRun : _pendingOperation,
         _environmentPreparationFailed, _exitInProgress, _environment.Ending,
         _environment.EndUnconfirmed));
@@ -2617,7 +2617,7 @@ public partial class MainWindow : FluentWindow
             ? "正在连接桌面分身…"
             : _workerSnapshot.Observation == WorkerObservation.WorkerNotStarted ? "桌面分身已连接，等待 Worker 启动…"
             : _workerSnapshot.Observation == WorkerObservation.WorkerStarting ? "正在启动 Worker…"
-            : _workerSnapshot is { Observation: WorkerObservation.Connected, SnapshotFresh: false }
+            : _workerSnapshot.Resynchronising
                 ? "正在同步 Worker 状态…" : "正在完成运行环境准备…";
 
     private string ActiveConfigurationName => _projectPlan is { } project
