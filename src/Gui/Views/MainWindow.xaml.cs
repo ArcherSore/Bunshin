@@ -668,7 +668,7 @@ public partial class MainWindow : FluentWindow
             // A retry reuses its Run ID. Only replay once the original start was ruled out.
             var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
             if (current is not { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } w }
-                || awaitingStart) {
+                || awaitingStart.HasValue) {
                 return;
             }
             if (w.ActiveRun?.RunId == attempt.RunId || w.LastRun?.RunId == attempt.RunId) {
@@ -721,6 +721,7 @@ public partial class MainWindow : FluentWindow
                     throw new InvalidDataException(
                         $"首次 run.stop 未返回 stop_requested：{response.Disposition}。 ");
                 }
+                _manuallyStoppedRun = activeRun.RunId;
                 _logger.Info($"run.stop 已确认 stop_requested：runId={activeRun.RunId:D}。 ");
             });
     }

@@ -49,25 +49,38 @@ internal static partial class SelfTestRunner
                     project.AddSchedulePolicy(second, "早班");
                     project.ActivateConfiguration(first);
                     var notices = new List<RunTerminalNotification>();
-                    window.NotificationRequested += (_, n) => notices.Add(n);
+                    var hiddenAtWarning = false;
+                    window.NotificationRequested += (_, n) => {
+                        notices.Add(n);
+                        if (!n.Failed) {
+                            hiddenAtWarning = !window.IsVisible;
+                        }
+                    };
                     var countdowns = new List<ForcedScheduledStartCountdown>();
                     // The unattended case has no countdown UI installed.
                     if (scenario != "timeout") {
-                        window.ForcedScheduledStartPending += (_, c) => countdowns.Add(c);
+                        window.ForcedScheduledStartPending += (_, c) => {
+                            Require(!window.IsVisible, "倒计时开始时主窗口应仍在托盘中。");
+                            countdowns.Add(c);
+                        };
                     }
                     var ended = 0;
                     window.ForcedScheduledStartEnded += (_, _) => ended++;
-                    bool Logged(string message) => window.LogLines.OfType<LogEntry>()
-                        .Any(e => e.TaskLabel == "定时" && e.Message == message);
+                    bool Logged(params string[] parts) => window.LogLines.OfType<LogEntry>()
+                        .Any(e => e.TaskLabel == "定时" && parts.All(part => e.Message.Contains(part)));
+                    window.Hide();
                     clock.Advance(TimeSpan.FromSeconds(scenario == "timeout" ? 73 : 60));
                     var check = window.CheckScheduledRunsAsync();
                     if (scenario == "disabled") {
                         PumpUntil(() => check.IsCompleted, "关闭强制后遇忙应立即跳过。");
-                        Require(Logged("跳过「第一班」：正在运行其他任务") && countdowns.Count == 0 && notices.Count == 0,
+                        Require(Logged("跳过", "第一班", "正在运行其他任务") && countdowns.Count == 0 && notices.Count == 0,
                             "默认忙碌跳过应有记录且无倒计时或系统提示。");
                     } else {
                         PumpUntil(() => notices.Any(n => !n.Failed), "强制启动前应发出系统提示。");
-                        Require(notices.Single(n => !n.Failed).Message.Contains("第一班"), "系统提示应指明即将启动的配置。");
+                        var warning = notices.Single(n => !n.Failed).Message;
+                        Require(hiddenAtWarning && !window.IsVisible && warning.Contains("10 秒")
+                            && warning.Contains("第一班") && warning.Contains("点击打开窗口可取消"),
+                            "主窗口在托盘时，提示应说明何时顶替、目标配置和取消入口。");
                         if (scenario == "cancel") {
                             Require(countdowns is [{ ConfigurationName: "第一班" } countdown]
                                 && countdown.Deadline == clock.GetLocalNow().AddSeconds(10),
@@ -81,7 +94,7 @@ internal static partial class SelfTestRunner
                             clock.Advance(TimeSpan.FromSeconds(1));
                         }
                         PumpUntil(() => check.IsCompleted, "取消或到期后应处理完这组机会。");
-                        Require(ended == 1 && Logged("跳过「第二班」：与「第一班」同时到点"),
+                        Require(ended == 1 && Logged("跳过", "第二班", "第一班", "同时到点"),
                             "一次倒计时只结束一次，同时命中的其余配置应说明胜出者。");
                     }
                     check.GetAwaiter().GetResult();
@@ -94,7 +107,7 @@ internal static partial class SelfTestRunner
                         Require(preparations.Count == 0 && wts.LogoffAttempts.Count == 0
                             && coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == old.ActiveRun!.RunId,
                             "跳过或取消后应保留当前任务，本分钟不能再次启动。");
-                        Require(scenario != "cancel" || countdowns.Count == 1 && Logged("已取消「第一班」的强制启动，当前任务继续"),
+                        Require(scenario != "cancel" || countdowns.Count == 1 && Logged("已取消", "第一班", "当前任务继续"),
                             "取消强制启动应记录原因且不再倒计时。");
                     }
                 }, session: session, coordinator: coordinator, scheduleClock: clock,
@@ -107,8 +120,8 @@ internal static partial class SelfTestRunner
         }
         VerifyIdleForcedSchedule(logger, Path.Combine(directory, "idle"));
         VerifyForcedScheduleAfterReload(logger, Path.Combine(directory, "reload"));
-        foreach (var scenario in new[] { "finished", "stopped", "stopping", "faulted", "exit", "update", "late" }) {
-            VerifyContendedForcedSchedule(logger, Path.Combine(directory, scenario), scenario);
+        foreach (var scenario in Enum.GetValues<ContendedSchedule>()) {
+            VerifyContendedForcedSchedule(logger, Path.Combine(directory, scenario.ToString()), scenario);
         }
     }
 

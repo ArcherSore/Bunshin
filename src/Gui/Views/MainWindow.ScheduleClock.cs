@@ -9,7 +9,10 @@ public partial class MainWindow
     private readonly DispatcherTimer _scheduleTimer;
     private DateTime _lastCheckedMinute;
     private readonly HashSet<Guid> _checkedConfigurations = [];
-    private bool _selectingSchedule;
+    private DateTime? _selectingMinute;
+    private string? _selectionCandidate;
+    private string? _minuteWinner;
+    private bool _recheckWhenAvailable;
 
     private void StartScheduleClock()
     {
@@ -34,9 +37,15 @@ public partial class MainWindow
             return;
         }
         var minute = CurrentScheduleMinute();
+        if (_settings.ForceScheduledStart.Value && _selectingMinute is { } selecting && selecting != minute) {
+            // Finish the already claimed opportunity, then check only the current minute. Never queue missed minutes.
+            _recheckWhenAvailable = true;
+            return;
+        }
         var time = TimeOnly.FromDateTime(minute);
         if (_lastCheckedMinute != minute) {
             _lastCheckedMinute = minute;
+            _minuteWinner = null;
             _checkedConfigurations.Clear();
         }
         var due = project.Configurations.Select(c => (c.Id, c.Name,
@@ -59,9 +68,10 @@ public partial class MainWindow
             ReportScheduledStartFailure(names, "无法保存定时执行记录", exception);
             return;
         }
-        var ownsSelection = !_selectingSchedule;
-        _selectingSchedule = true;
-        string? skip = ownsSelection ? null : "正在运行其他任务";
+        var ownsSelection = !_selectingMinute.HasValue;
+        _selectingMinute ??= minute;
+        var winner = _minuteWinner ?? (_selectingMinute == minute && !ownsSelection ? _selectionCandidate : null);
+        string? skip = winner is not null ? $"与「{winner}」同时到点" : ownsSelection ? null : "正在运行其他任务";
         try {
             foreach (var configuration in due.Where(c => claimed.Contains(c.Id))) {
                 if (!_scheduleTimer.IsEnabled) {
@@ -76,7 +86,11 @@ public partial class MainWindow
                 }
                 try {
                     var policyTime = $"{configuration.Policy!.Name} {minute:HH:mm}";
+                    _selectionCandidate = configuration.Name;
                     var result = await TryStartScheduledRunAsync(configuration.Id, policyTime);
+                    if (result.Disposition == ScheduledRunDisposition.Admitted && _lastCheckedMinute == minute) {
+                        _minuteWinner = configuration.Name;
+                    }
                     skip = result.Disposition switch {
                         ScheduledRunDisposition.Admitted => $"与「{configuration.Name}」同时到点",
                         ScheduledRunDisposition.Failed => result.Reason,
@@ -90,7 +104,12 @@ public partial class MainWindow
             }
         } finally {
             if (ownsSelection) {
-                _selectingSchedule = false;
+                _selectingMinute = null;
+                _selectionCandidate = null;
+                if (_recheckWhenAvailable) {
+                    _recheckWhenAvailable = false;
+                    _ = CheckScheduledRunsAsync();
+                }
             }
         }
     }

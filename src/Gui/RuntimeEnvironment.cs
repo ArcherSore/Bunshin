@@ -75,19 +75,19 @@ internal sealed class RuntimeEnvironment
             var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
             hasSession = sessionId.HasValue;
             var (current, awaitingStart) = _coordinator.ReadRunObservation();
-            if (sessionId is uint id && NoLiveAdmission(current)) {
+            if (sessionId is uint id && current.NoLiveAdmission) {
                 // With no live Admission a surviving, untracked Worker cannot be known idle.
                 _coordinator.EnsureSessionHasNoWorker(id);
                 (current, awaitingStart) = _coordinator.ReadRunObservation();
             }
             observation = current;
-            if (NoLiveAdmission(current)) {
+            if (current.NoLiveAdmission) {
                 return null;
             }
             if (current is { SnapshotFresh: true, WorkerSnapshot.ActiveRun: not null }) {
                 return "正在运行其他任务";
             }
-            return !awaitingStart && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
+            return awaitingStart is null && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
                 WorkerSnapshot: { ActiveRun: null, WorkerState: WorkerState.Ready
                     or WorkerState.NotReady } worker } && worker.ChildSessionId == sessionId
                 ? null : "运行环境状态未知";
@@ -95,10 +95,6 @@ internal sealed class RuntimeEnvironment
             _logger.Warn("无法确认桌面分身空闲。", exception);
             return "运行环境状态未知";
         }
-
-        static bool NoLiveAdmission(WorkerCoordinatorSnapshot snapshot) =>
-            snapshot.Observation is WorkerObservation.WorkerNotStarted or WorkerObservation.ChildSessionEnded
-                or WorkerObservation.WorkerExited;
     }
 
     // Called inside the end confirmation so a queued cleanup cannot close a newer Run or Child Session.
@@ -106,7 +102,7 @@ internal sealed class RuntimeEnvironment
     {
         var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
         var (current, awaitingStart) = _coordinator.ReadRunObservation();
-        return !Closing && !EndUnconfirmed && !awaitingStart
+        return !Closing && !EndUnconfirmed && awaitingStart is null
             && current is { Observation: WorkerObservation.Connected, SnapshotFresh: true,
                 WorkerSnapshot: { ActiveRun: null, LastRun: { State: RunState.Succeeded } last,
                     WorkerState: WorkerState.Ready or WorkerState.NotReady } idle }

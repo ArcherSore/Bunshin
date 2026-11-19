@@ -36,7 +36,8 @@ internal static partial class SelfTestRunner
                 var loaded = ProjectPlanModule.Open(root, path);
                 Require(preparedNames.Count == 2 && preparedNames[1] == "新版周常"
                     && loaded.Configurations.Single(c => c.Id == target).Name == "新版周常"
-                    && ProjectOf(window).ActiveConfigurationId == target, "定时启动必须使用并保留手动准备重载后的配置。");
+                    && window.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem { Tag: Guid shown }
+                    && shown == target, "定时启动必须使用并保留手动准备重载后的配置。");
             } finally {
                 release.TrySetResult();
             }
@@ -49,7 +50,9 @@ internal static partial class SelfTestRunner
         });
     }
 
-    private static void VerifyContendedForcedSchedule(AppLogger logger, string root, string scenario)
+    private enum ContendedSchedule { Finished, Stopped, Stopping, Faulted, Exit, Update, Late }
+
+    private static void VerifyContendedForcedSchedule(AppLogger logger, string root, ContendedSchedule scenario)
     {
         CreateIdleSettings(CreateProjectFixture(root), logger).ForceScheduledStart.Value = true;
         var clock = new ScheduleTestClock();
@@ -89,9 +92,10 @@ internal static partial class SelfTestRunner
                     window.ForcedScheduledStartPending += (_, countdown) => warnings.Add(countdown);
                     var elapsed = false;
                     window.ForcedScheduledStartEnded += (_, _) => elapsed = true;
-                    if (scenario is "stopping" or "faulted") {
-                        Publish(worker.ActiveRun with { State = RunState.Stopping }, faulted: scenario == "faulted");
-                    } else if (scenario == "late") {
+                    if (scenario is ContendedSchedule.Stopping or ContendedSchedule.Faulted) {
+                        Publish(worker.ActiveRun with { State = RunState.Stopping },
+                            faulted: scenario == ContendedSchedule.Faulted);
+                    } else if (scenario == ContendedSchedule.Late) {
                         Publish(null, worker.ActiveRun with { State = RunState.Succeeded });
                     }
                     var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -99,7 +103,7 @@ internal static partial class SelfTestRunner
                     try {
                         clock.Advance(TimeSpan.FromSeconds(73)); // 08:00:55
                         var check = window.CheckScheduledRunsAsync();
-                        if (scenario == "late") {
+                        if (scenario == ContendedSchedule.Late) {
                             Require(warnings.Count == 0 && !check.IsCompleted, "空闲时应等待环境操作，无需提前倒计时。");
                             Publish(worker.ActiveRun with { RunId = Guid.NewGuid() });
                             release.SetResult();
@@ -107,15 +111,16 @@ internal static partial class SelfTestRunner
                         PumpUntil(() => warnings.Count == 1, "到点时有 Active Run 应提示，即使环境仍被占用。");
                         clock.Advance(TimeSpan.FromSeconds(10));
                         PumpUntil(() => elapsed, "倒计时应按时结束。");
-                        if (scenario != "late") {
+                        if (scenario != ContendedSchedule.Late) {
                             Require(!check.IsCompleted && wts.LogoffAttempts.Count == 0,
                                 "倒计时跨分钟后仍须等待先前操作，不能提前注销。");
                         }
-                        if (scenario is "finished" or "stopped") {
-                            var state = scenario == "finished" ? RunState.Succeeded : RunState.Cancelled;
+                        if (scenario is ContendedSchedule.Finished or ContendedSchedule.Stopped) {
+                            var state = scenario == ContendedSchedule.Finished
+                                ? RunState.Succeeded : RunState.Cancelled;
                             Publish(null, worker.ActiveRun with { State = state });
-                        } else if (scenario is "exit" or "update") {
-                            if (scenario == "update") {
+                        } else if (scenario is ContendedSchedule.Exit or ContendedSchedule.Update) {
+                            if (scenario == ContendedSchedule.Update) {
                                 environment.Closing = true;
                             } else {
                                 window.SetExitInProgress(true);
@@ -125,7 +130,7 @@ internal static partial class SelfTestRunner
                         release.TrySetResult();
                         PumpUntil(() => check.IsCompleted && holder.IsCompleted, "释放环境后，本次机会应结束。");
                         check.GetAwaiter().GetResult();
-                        if (scenario is "exit" or "update") {
+                        if (scenario is ContendedSchedule.Exit or ContendedSchedule.Update) {
                             Require(wts.LogoffAttempts.Count == 0 && preparations.Count == 0,
                                 "退出或交接更新后不能再启动已倒计时的配置。");
                         } else {
@@ -146,7 +151,8 @@ internal static partial class SelfTestRunner
                 listening.Cancel();
             }
         });
-        Require(requests.Count(operation => operation == ProtocolOperations.RunStop) == (scenario == "late" ? 1 : 0),
+        var expectedStops = scenario == ContendedSchedule.Late ? 1 : 0;
+        Require(requests.Count(operation => operation == ProtocolOperations.RunStop) == expectedStops,
             "只应请求停止后来出现、仍在运行的任务。已终结、停止中、Faulted 或正在退出均不应重复发停止请求。");
     }
 }

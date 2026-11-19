@@ -31,6 +31,9 @@ internal sealed record WorkerCoordinatorSnapshot(
     WorkerObservation Observation, bool SnapshotFresh,
     WorkerSnapshot? WorkerSnapshot, string Detail)
 {
+    internal bool NoLiveAdmission => Observation is WorkerObservation.WorkerNotStarted
+        or WorkerObservation.ChildSessionEnded or WorkerObservation.WorkerExited;
+
     internal static WorkerCoordinatorSnapshot Empty { get; } = new(
         WorkerObservation.WorkerNotStarted, false, null, "Worker 尚未启动");
 }
@@ -397,17 +400,21 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         if (worker.ActiveRun?.RunId == runId || worker.LastRun?.RunId == runId) {
             return StartObservation.Accepted;
         }
-        return awaitingStart ? StartObservation.Unknown : StartObservation.NotAccepted;
+        return awaitingStart.HasValue ? StartObservation.Unknown : StartObservation.NotAccepted;
     }
 
-    internal bool StartAwaitingObservation => ReadRunObservation().AwaitingStart;
+    internal bool StartAwaitingObservation => ReadRunObservation().PendingStart.HasValue;
 
-    internal (WorkerCoordinatorSnapshot State, bool AwaitingStart) ReadRunObservation()
+    internal (WorkerCoordinatorSnapshot State, Guid? PendingStart) ReadRunObservation()
     {
         lock (_gate) {
-            return (Snapshot, _startAwaitingObservation.HasValue);
+            return (Snapshot, _startAwaitingObservation);
         }
     }
+
+    // The caller holds the environment gate, so this read follows the pending run.start on the wire.
+    internal Task ReconcilePendingStartAsync() =>
+        ReadRunObservation().PendingStart is Guid id ? RefreshSnapshotAsync(id) : Task.CompletedTask;
 
     internal async Task<RunStartResponse> StartRunAsync(
         RunStartAttempt attempt, CancellationToken cancellationToken = default, Action? onSending = null)
