@@ -17,7 +17,6 @@ internal sealed class ChildSessionManager : IDisposable
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private RdpPreviewWindow? _previewWindow;
     private ChildSessionService? _service;
-    private int _lastRdpConnectedState;
     private bool _disposed;
 
     // The optional delegates are self-test seams; production always queries and logs off through WTS.
@@ -424,12 +423,11 @@ internal sealed class ChildSessionManager : IDisposable
     private void UpdateState(
         ChildSessionState state, uint? sessionId, int connectedState, string detail, bool previewVisible = false)
     {
+        previewVisible &= state == ChildSessionState.Connected;
         var inputUnlocked = previewVisible && _previewWindow?.Interactive == true;
         var previous = Snapshot;
-        var previousConnectedState = _lastRdpConnectedState;
-        Snapshot = new ChildSessionSnapshot(state, sessionId, detail, previewVisible, inputUnlocked);
-        _lastRdpConnectedState = connectedState;
-        if (Snapshot != previous || connectedState != previousConnectedState) {
+        Snapshot = new ChildSessionSnapshot(state, sessionId, connectedState, detail, previewVisible, inputUnlocked);
+        if (Snapshot != previous) {
             // The state can stay the same while its details change; a from equal to the to would only mislead.
             var from = previous.State == state ? null : (ChildSessionState?)previous.State;
             _logger.Info($"Child Session 状态变化{AppLogger.Field("from", from)}{AppLogger.Field("to", state)}"
@@ -440,10 +438,9 @@ internal sealed class ChildSessionManager : IDisposable
         StateChanged?.Invoke(this, Snapshot);
     }
 
-    // Input changes can republish the snapshot with the last diagnostic value instead of querying ActiveX again.
-    private void OnPreviewInteractiveChanged(object? sender, EventArgs e) =>
-        UpdateState(
-            Snapshot.State, Snapshot.ChildSessionId, _lastRdpConnectedState, Snapshot.Detail, Snapshot.PreviewVisible);
+    // The window raises this only on a real change; republishing the state picks up the new input lock.
+    private void OnPreviewInteractiveChanged(object? sender, EventArgs e) => UpdateState(
+        Snapshot.State, Snapshot.ChildSessionId, Snapshot.RdpConnectedState, Snapshot.Detail, Snapshot.PreviewVisible);
 
     private void ThrowIfDisposed()
     {

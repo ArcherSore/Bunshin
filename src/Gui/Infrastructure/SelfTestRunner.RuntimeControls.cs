@@ -356,7 +356,8 @@ internal static partial class SelfTestRunner
     }
 
     private static ChildSessionSnapshot ScenarioSession(ChildSessionState state) => new(state,
-        state == ChildSessionState.NotRunning ? null : ScenarioSessionId, "scenario");
+        state == ChildSessionState.NotRunning ? null : ScenarioSessionId,
+        state == ChildSessionState.Connected ? 1 : 0, "scenario");
 
     private static WorkerSnapshot ScenarioWorker(string digest, WorkerState state = WorkerState.Ready,
         RunState? active = null, RunState? last = null, uint childSessionId = ScenarioSessionId)

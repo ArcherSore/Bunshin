@@ -45,7 +45,7 @@ internal static partial class SelfTestRunner
 
     private static void ConnectTestDesktop(ChildSessionManager session, uint id) => typeof(ChildSessionManager)
         .GetProperty("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session,
-            new ChildSessionSnapshot(ChildSessionState.Connected, id, "ready"));
+            new ChildSessionSnapshot(ChildSessionState.Connected, id, 1, "ready"));
 
     private static async Task ExerciseAutoRunAsync(AppLogger logger, string projectRoot, Guid configurationId,
         WorkerCoordinator coordinator, WorkerAdmissionRecord record, string pipeName, string scenario)

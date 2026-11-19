@@ -130,7 +130,7 @@ internal static partial class SelfTestRunner
             }
 
             SetOnboardingField(window, "_sessionSnapshot",
-                new ChildSessionSnapshot(ChildSessionState.Connected, 7, "fixture"));
+                new ChildSessionSnapshot(ChildSessionState.Connected, 7, 1, "fixture"));
             foreach (var (observation, fresh, detail) in new[] {
                 (WorkerObservation.WorkerNotStarted, false, "桌面分身已连接，等待 Worker 启动…"),
                 (WorkerObservation.WorkerStarting, false, "正在启动 Worker…"),
