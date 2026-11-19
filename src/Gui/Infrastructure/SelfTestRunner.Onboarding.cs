@@ -28,7 +28,7 @@ internal static partial class SelfTestRunner
         });
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "auto"), (window, directory) => {
             PumpOnboarding(450);
-            if (!ConfigurationDescendants((DependencyObject)window.FindName("PlanItemsPanel"))
+            if (!ConfigurationDescendants((DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel"))
                 .OfType<System.Windows.Controls.TextBox>().Any()) {
                 throw new InvalidOperationException("自动 Tour 尚未显示时，首次默认任务就应该已经展开参数。");
             }
@@ -74,7 +74,7 @@ internal static partial class SelfTestRunner
             PumpOnboarding();
             AssertOnboardingPlacement(window);
             var root = (FrameworkElement)window.FindName("WindowOverlayRoot");
-            var workspace = (FrameworkElement)window.FindName("TaskWorkspacePanel");
+            var workspace = (FrameworkElement)window.TaskPlanEditor.FindName("TaskWorkspacePanel");
             var viewport = workspace.TransformToAncestor(root).TransformBounds(new Rect(workspace.RenderSize));
             var outline = (System.Windows.Shapes.Path)window.FindName("OnboardingOutline");
             PumpUntil(() => outline.Data.Bounds.Top >= viewport.Top - PixelTolerance
@@ -108,7 +108,7 @@ internal static partial class SelfTestRunner
             var project = ProjectPlanModule.Open(directory, path);
             project.RemoveItem(PlanItemKind.MaaTask, "RealTask");
             SetOnboardingField(window, "_projectPlan", project);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             before = File.ReadAllBytes(path);
             SettingsActionFor(window, "onboarding.replay").Execute(null);
             PumpOnboarding();
@@ -285,7 +285,7 @@ internal static partial class SelfTestRunner
             }
             PumpOnboarding();
             Func<Task> restoreSession = () => {
-                if (((UIElement)window.FindName("TaskWorkspacePanel")).Visibility != Visibility.Visible
+                if (((UIElement)window.TaskPlanEditor.FindName("TaskWorkspacePanel")).Visibility != Visibility.Visible
                     || SettingsPageFor(window).Sections.SelectMany(section => section.Items)
                         .Single(item => item.Definition.SettingKey == "update.checkOnStartup").Toggle!.Value) {
                     throw new InvalidOperationException("必须先完成 Project 与更新偏好初始化，再等待 Session 恢复。");
@@ -309,7 +309,7 @@ internal static partial class SelfTestRunner
 
     private static void ClickOnboarding(MainWindow window, string name)
     {
-        var element = (UIElement)window.FindName(name);
+        var element = (UIElement)(window.FindName(name) ?? window.TaskPlanEditor.FindName(name));
         element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
         PumpOnboarding();
     }
@@ -336,6 +336,17 @@ internal static partial class SelfTestRunner
 
     private static void SetOnboardingField(MainWindow window, string name, object value) => typeof(MainWindow)
         .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, value);
+
+    private static object? InvokeEditor(MainWindow window, string name, params object?[] arguments) =>
+        typeof(TaskPlanEditor).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window.TaskPlanEditor, arguments);
+
+    private static FieldInfo EditorField(string name) =>
+        typeof(TaskPlanEditor).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+    // Expands the named task's card on the next render; null folds every card.
+    private static void SetExpandedTask(MainWindow window, string? taskName) => EditorField("_expandedTask")
+        .SetValue(window.TaskPlanEditor, taskName is null ? null : (Protocol.PlanItemKind.MaaTask, taskName));
 
     private static void AssertOnboardingStep(MainWindow window, int step, string title)
     {

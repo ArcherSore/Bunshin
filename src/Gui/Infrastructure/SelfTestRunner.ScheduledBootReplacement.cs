@@ -120,7 +120,8 @@ internal static partial class SelfTestRunner
                     warnings[1].Cancel();
                 }
                 Require(!exitRequested && workers.Count == 2 && wts.LogoffAttempts.SequenceEqual([sessionId])
-                    && window.ConfigurationTabs.SelectedItem is TabItem { Tag: Guid shown } && shown == target,
+                    && window.TaskPlanEditor.ConfigurationTabs.SelectedItem is TabItem { Tag: Guid shown }
+                    && shown == target,
                     "顶替开机 Run 后应继续运行所选定时配置。");
             }, session: session, coordinator: coordinator,
                 environment: CreateEnvironment(logger, session, coordinator, (_, _) => workers[0]),

@@ -520,12 +520,13 @@ internal static partial class SelfTestRunner
     private static void VerifyTaskShelfLayout(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "grouped-shelf"), (window, directory) => {
-            var workspace = (System.Windows.FrameworkElement)window.FindName("TaskWorkspacePanel");
-            var shelf = (System.Windows.FrameworkElement)window.FindName("TaskShelfContent");
-            var catalog = (System.Windows.Controls.StackPanel)window.FindName("AvailableTasksPanel");
-            var catalogScroll = (System.Windows.Controls.ScrollViewer)window.FindName("AvailableTasksScroll");
-            var planScroll = (System.Windows.Controls.ScrollViewer)window.FindName("PlanScroll");
-            var search = (System.Windows.Controls.TextBox)window.FindName("TaskSearchBox");
+            var workspace = (System.Windows.FrameworkElement)window.TaskPlanEditor.FindName("TaskWorkspacePanel");
+            var shelf = (System.Windows.FrameworkElement)window.TaskPlanEditor.FindName("TaskShelfContent");
+            var catalog = (System.Windows.Controls.StackPanel)window.TaskPlanEditor.FindName("AvailableTasksPanel");
+            var catalogScroll =
+                (System.Windows.Controls.ScrollViewer)window.TaskPlanEditor.FindName("AvailableTasksScroll");
+            var planScroll = (System.Windows.Controls.ScrollViewer)window.TaskPlanEditor.FindName("PlanScroll");
+            var search = (System.Windows.Controls.TextBox)window.TaskPlanEditor.FindName("TaskSearchBox");
             if (shelf.Visibility != System.Windows.Visibility.Collapsed) {
                 throw new InvalidOperationException("添加任务面板应默认收起。");
             }
@@ -569,10 +570,11 @@ internal static partial class SelfTestRunner
             if (matches.Length != 2 || matches.Any(section => !section.IsExpanded) || chips.Length != 2
                 || chips.Any(chip => !chip.IsEnabled || !System.Windows.Automation.AutomationProperties.GetName(chip)
                     .StartsWith("已添加", StringComparison.Ordinal))
-                || ((System.Windows.Controls.TextBlock)window.FindName("AvailableTaskCountText")).Text != "1 / 38") {
+                || ((System.Windows.Controls.TextBlock)window.TaskPlanEditor.FindName("AvailableTaskCountText")).Text
+                    != "1 / 38") {
                 throw new InvalidOperationException("搜索应展开所有匹配分类、显示匹配数，多组任务共享已添加状态。");
             }
-            var planItems = (System.Windows.Controls.Panel)window.FindName("PlanItemsPanel");
+            var planItems = (System.Windows.Controls.Panel)window.TaskPlanEditor.FindName("PlanItemsPanel");
             var cards = planItems.Children.Count;
             chips[0].RaiseEvent(new System.Windows.RoutedEventArgs(
                 System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
@@ -601,7 +603,7 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("清空搜索应恢复分类展开状态。");
             }
             first.IsExpanded = true;
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             PumpOnboarding();
             if (!catalog.Children.OfType<System.Windows.Controls.Expander>().First().IsExpanded) {
                 throw new InvalidOperationException("刷新任务计划不应重置分类展开状态。");
@@ -623,15 +625,14 @@ internal static partial class SelfTestRunner
             System.Windows.Controls.Button Chip(string label) => ConfigurationDescendants(catalog)
                 .OfType<System.Windows.Controls.Button>().Single(button =>
                     System.Windows.Automation.AutomationProperties.GetName(button) == $"添加任务：{label}");
-            var expanded = typeof(MainWindow).GetField("_expandedTaskName",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-            var expandedBefore = expanded.GetValue(window);
+            var expanded = EditorField("_expandedTask");
+            var expandedBefore = expanded.GetValue(window.TaskPlanEditor);
             foreach (var label in new[] { "日常任务 2", "日常任务 3" }) {
                 Chip(label).RaiseEvent(new System.Windows.RoutedEventArgs(
                     System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                 PumpOnboarding();
             }
-            var addedBadge = (System.Windows.FrameworkElement)window.FindName("AddedTasksBadge");
+            var addedBadge = (System.Windows.FrameworkElement)window.TaskPlanEditor.FindName("AddedTasksBadge");
             var added = planItems.Children.OfType<System.Windows.Controls.Border>()
                 .Single(card => card.Tag is ProjectTaskChoice { Label: "日常任务 3" });
             var shown = added.TransformToAncestor(planScroll).TransformBounds(
@@ -640,9 +641,10 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("新添加的任务应滚入视野。");
             }
             if (shelf.Visibility != System.Windows.Visibility.Visible || planItems.Children.Count <= cards
-                || ((System.Windows.Controls.TextBlock)window.FindName("AddedTasksText")).Text != "已添加 2 项"
+                || ((System.Windows.Controls.TextBlock)window.TaskPlanEditor.FindName("AddedTasksText")).Text
+                    != "已添加 2 项"
                 || addedBadge.ToolTip as string != "日常任务 2、日常任务 3"
-                || !Equals(expanded.GetValue(window), expandedBefore)) {
+                || !Equals(expanded.GetValue(window.TaskPlanEditor), expandedBefore)) {
                 throw new InvalidOperationException("连续添加时面板保持打开、统计本次添加，且新任务不自动展开。");
             }
             ClickOnboarding(window, "TaskShelfHeaderButton");
@@ -654,7 +656,7 @@ internal static partial class SelfTestRunner
             SetOnboardingField(window, "_pendingOperation", PendingOperation.PreparingEnvironment);
             InvokeOnboarding(window, "RefreshRuntimeControls");
             if (shelf.Visibility != System.Windows.Visibility.Collapsed
-                || ((System.Windows.UIElement)window.FindName("TaskShelfHeaderButton")).IsEnabled) {
+                || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskShelfHeaderButton")).IsEnabled) {
                 throw new InvalidOperationException("锁定时添加任务面板应收起且按钮禁用。");
             }
             SetOnboardingField(window, "_pendingOperation", PendingOperation.None);

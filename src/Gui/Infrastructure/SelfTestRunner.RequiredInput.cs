@@ -32,16 +32,17 @@ internal static partial class SelfTestRunner
             const System.Reflection.BindingFlags flags =
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            SetExpandedTask(window, "RealTask");
+            InvokeEditor(window, "RenderTaskPlan");
+            var items = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel");
             var editor = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(box => AutomationProperties.GetName(box) == "Recipient");
             ParameterRowPanel Row() => ConfigurationDescendants(items).OfType<ParameterRowPanel>()
                 .Single(panel => ConfigurationDescendants(panel).Contains(editor));
             bool Note() => ConfigurationDescendants(Row()).OfType<System.Windows.Controls.TextBlock>()
                 .Any(text => text.Text == "Fill in the recipient");
-            bool Reveal() => (bool)typeof(MainWindow).GetMethod("RevealInvalidParameter", flags)!.Invoke(window, null)!;
+            bool Reveal() => (bool)typeof(TaskPlanEditor).GetMethod("RevealInvalidParameter", flags)!
+                .Invoke(window.TaskPlanEditor, null)!;
             Require(Row().IsInvalid && Note() && editor.BorderBrush == window.FindResource("Brush.Error") && Reveal(),
                 "未填写的必填输入必须标红、显示 pattern_msg，并阻止开始。");
 
@@ -51,7 +52,8 @@ internal static partial class SelfTestRunner
                 "取消勾选后，任务的必填参数不得阻止其他任务开始。");
             activeProject.SetItemEnabled(Protocol.PlanItemKind.MaaTask, "RealTask", true);
             editor.Text = "Kakashi";
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [editor, false]);
+            typeof(TaskPlanEditor).GetMethod("CommitOptionInput", flags)!
+                .Invoke(window.TaskPlanEditor, [editor, false]);
             Require(!Row().IsInvalid && !Note()
                 && editor.ReadLocalValue(System.Windows.Controls.Control.BorderBrushProperty)
                     == System.Windows.DependencyProperty.UnsetValue,

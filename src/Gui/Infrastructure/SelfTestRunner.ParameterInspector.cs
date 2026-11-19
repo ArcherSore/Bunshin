@@ -83,8 +83,8 @@ internal static partial class SelfTestRunner
         project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
         project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            SetOnboardingField(window, "_expandedTaskName", null!);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            SetExpandedTask(window, null);
+            InvokeEditor(window, "RenderTaskPlan");
             string NameOf(System.Windows.DependencyObject element) =>
                 System.Windows.Automation.AutomationProperties.GetName(element);
             System.Windows.Controls.Button[] Buttons() => ConfigurationDescendants(items)
@@ -108,7 +108,7 @@ internal static partial class SelfTestRunner
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" })
                 && !project.SelectedTaskNames.Contains("PlainTask"), "拖动手柄与移除按钮不得切换展开。");
             project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             Click("Plain task，没有可配置的参数");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" }), "无参数任务的标题区不得展开空白区域。");
             Click("查看 Stress task 的任务描述");
@@ -144,14 +144,14 @@ internal static partial class SelfTestRunner
             project.SetInputValue("ServerRange", "server_range", "979");
             project.SetInputValue("ServerRange", "retry_count", "5");
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "StressTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            SetExpandedTask(window, "StressTask");
+            InvokeEditor(window, "RenderTaskPlan");
+            var items = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel");
             var notes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
             Require(notes.Any(note => note.Text == "Number of retry attempts")
                 && notes.All(note => !note.Text.StartsWith("默认：", StringComparison.Ordinal)),
                 "输入说明必须直接可见，显式值偏离默认时也不显示默认提示。");
-            var planScroll = (System.Windows.Controls.ScrollViewer)window.FindName("PlanScroll");
+            var planScroll = (System.Windows.Controls.ScrollViewer)window.TaskPlanEditor.FindName("PlanScroll");
             foreach (var (width, stacked) in new[] { (920, true), (1180, false), (1440, false) }) {
                 window.Width = width;
                 window.Height = width == 920 ? 640 : width == 1180 ? 760 : 900;

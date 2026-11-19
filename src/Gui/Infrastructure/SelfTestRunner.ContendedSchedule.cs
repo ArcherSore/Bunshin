@@ -36,7 +36,8 @@ internal static partial class SelfTestRunner
                 var loaded = ProjectPlanModule.Open(root, path);
                 Require(preparedNames.Count == 2 && preparedNames[1] == "新版周常"
                     && loaded.Configurations.Single(c => c.Id == target).Name == "新版周常"
-                    && window.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem { Tag: Guid shown }
+                    && window.TaskPlanEditor.ConfigurationTabs.SelectedItem
+                        is System.Windows.Controls.TabItem { Tag: Guid shown }
                     && shown == target, "定时启动必须使用并保留手动准备重载后的配置。");
             } finally {
                 release.TrySetResult();

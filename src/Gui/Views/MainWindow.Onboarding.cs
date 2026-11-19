@@ -7,7 +7,6 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Gui.Infrastructure;
-using Protocol;
 using WpfPoint = System.Windows.Point;
 using WpfSize = System.Windows.Size;
 
@@ -30,15 +29,11 @@ public partial class MainWindow
     private CancellationTokenSource? _onboardingStepCancellation;
     private DispatcherOperation? _onboardingLayoutOperation;
     private IInputElement? _onboardingPreviousFocus;
-    private string? _onboardingPreviousExpandedTask;
-    private PlanItemKind _onboardingPreviousExpandedKind;
-    private bool _onboardingPreviousShelfExpanded;
-    private double _onboardingPreviousScroll;
+    private TaskPlanEditor.PlanView? _onboardingPreviousView;
     private readonly RectangleGeometry _onboardingHole = new();
     private Rect _onboardingTargetBounds = Rect.Empty;
     private Rect _onboardingWindowBounds = Rect.Empty;
     private (Rect Popover, Rect Target) _onboardingArrowBounds = (Rect.Empty, Rect.Empty);
-    private readonly Dictionary<(PlanItemKind Kind, string Name), FrameworkElement> _taskDescriptionButtons = [];
 
     private bool IsOnboardingVisible => _onboardingActive && !_onboardingPaused
         && OnboardingOverlay.Visibility == Visibility.Visible;
@@ -46,7 +41,7 @@ public partial class MainWindow
     private bool CanPresentOnboarding => !_onboardingClosed && CurrentControls.CommandsAvailable
         && IsLoaded && IsVisible && WindowState != WindowState.Minimized
         && HomeView.Visibility == Visibility.Visible && _projectPlan is not null
-        && TaskWorkspacePanel.Visibility == Visibility.Visible && !IsGlobalModalOpen
+        && TaskPlanEditor.Workspace.Visibility == Visibility.Visible && !IsGlobalModalOpen
         && TaskDescriptionOverlay.Visibility != Visibility.Visible;
 
     private void ReplayOnboarding()
@@ -64,10 +59,7 @@ public partial class MainWindow
         try {
             _onboardingPreviousFocus = Keyboard.FocusedElement;
             _onboardingReplay = replay;
-            _onboardingPreviousExpandedTask = _expandedTaskName;
-            _onboardingPreviousExpandedKind = _expandedTaskKind;
-            _onboardingPreviousShelfExpanded = _taskShelfExpanded;
-            _onboardingPreviousScroll = PlanScroll.VerticalOffset;
+            _onboardingPreviousView = TaskPlanEditor.CaptureView();
             _onboardingActive = true;
             _onboardingPaused = false;
             _onboardingShown = false;
@@ -96,17 +88,13 @@ public partial class MainWindow
                 await Task.Delay(60, cancellation.Token);
             }
             if (_onboardingStep == 0 || _onboardingStep == 1 && _projectPlan!.SelectedItemCount == 0) {
-                SetTaskShelfExpanded(true);
-                AvailableTasksScroll.ScrollToTop();
+                TaskPlanEditor.OpenTaskShelf();
             }
             if (_onboardingReplay && _onboardingStep == 1 && _projectPlan!.SelectedItemCount > 0) {
-                var first = _projectPlan.SelectedItems[0];
-                _expandedTaskName = first.Name;
-                _expandedTaskKind = first.Kind;
-                RenderTaskPlan();
+                TaskPlanEditor.ExpandPlanItem(_projectPlan.SelectedItems[0]);
             }
             if (_onboardingStep == 1 && _projectPlan?.SelectedItems.FirstOrDefault() is { } firstItem
-                && _taskDescriptionButtons.TryGetValue((firstItem.Kind, firstItem.Name), out var description)) {
+                && TaskPlanEditor.TaskDescriptionButton(firstItem) is { } description) {
                 _onboardingDescriptionButton = description;
                 description.Visibility = Visibility.Visible;
             }
@@ -115,7 +103,7 @@ public partial class MainWindow
                 var card = ResolveOnboardingTarget(1);
                 // A card taller than the viewport should retain its title and description entry.
                 card.BringIntoView(new Rect(0, 0, card.ActualWidth,
-                    Math.Min(card.ActualHeight, PlanScroll.ViewportHeight)));
+                    Math.Min(card.ActualHeight, TaskPlanEditor.PlanViewportHeight)));
             }
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded, cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
@@ -156,7 +144,7 @@ public partial class MainWindow
     private FrameworkElement ResolveOnboardingTarget(int step)
     {
         if (step == 0) {
-            return TaskWorkspacePanel;
+            return TaskPlanEditor.Workspace;
         }
         if (step == 2) {
             return RuntimeControlCard;
@@ -165,11 +153,11 @@ public partial class MainWindow
             return DesktopViewButton;
         }
         var first = _projectPlan?.SelectedItems.FirstOrDefault();
-        if (first is not null && _planItemContainers.TryGetValue((first.Kind, first.Name), out var card)) {
+        if (first is not null && TaskPlanEditor.PlanItemCard(first) is { } card) {
             return card;
         }
         if (_onboardingReplay && first is null) {
-            return TaskShelfContent;
+            return TaskPlanEditor.TaskShelf;
         }
         throw new InvalidOperationException("新手指引找不到第一张任务卡。");
     }
@@ -377,7 +365,7 @@ public partial class MainWindow
     {
         var first = _projectPlan?.SelectedItems.FirstOrDefault();
         if (_onboardingStep != 1 || first is null
-            || !_taskDescriptionButtons.TryGetValue((first.Kind, first.Name), out var icon)) {
+            || TaskPlanEditor.TaskDescriptionButton(first) is not { } icon) {
             return false;
         }
         Rect bounds;
@@ -472,14 +460,7 @@ public partial class MainWindow
         _onboardingTargetBounds = Rect.Empty;
         try {
             if (restoreReplay) {
-                _expandedTaskKind = _onboardingPreviousExpandedKind;
-                _expandedTaskName = _projectPlan?.SelectedItems.Any(item => item.Kind == _expandedTaskKind
-                    && item.Name == _onboardingPreviousExpandedTask) == true ? _onboardingPreviousExpandedTask : null;
-                SetTaskShelfExpanded(_onboardingPreviousShelfExpanded);
-                if (_projectPlan is not null) {
-                    RenderTaskPlan();
-                }
-                PlanScroll.ScrollToVerticalOffset(_onboardingPreviousScroll);
+                TaskPlanEditor.RestoreView(_onboardingPreviousView!);
                 SwitchSection(MainSection.Home);
             }
             if (!_onboardingClosed && !_exitInProgress) {

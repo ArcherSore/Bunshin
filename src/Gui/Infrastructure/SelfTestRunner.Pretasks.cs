@@ -129,7 +129,7 @@ internal static partial class SelfTestRunner
                 .SequenceEqual(new[] { (PlanItemKind.Pretask, "SecondBoot"), (PlanItemKind.MaaTask, "RealTask") })
                 && File.ReadAllText(configPath) != saved && project.SelectedItemCount == 3,
                 "关闭启动项应保存配置，且不能跳过同名普通任务。");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             Require(Selection(0).IsChecked == false, "重绘任务栏不能重置勾选状态。");
             InvokeOnboarding(window, "LoadProject");
             project = ProjectOf(window);
@@ -153,7 +153,7 @@ internal static partial class SelfTestRunner
                 Require(project.IsItemEnabled(kind, "RealTask"), "删除后重新添加任务必须恢复勾选。");
             }
             project.MoveTask("RealTask", 0, PlanItemKind.Pretask);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             Select(0, false);
             Select(1, false);
             Select(2, false);

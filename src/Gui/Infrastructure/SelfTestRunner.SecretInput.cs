@@ -116,9 +116,9 @@ internal static partial class SelfTestRunner
             const System.Reflection.BindingFlags flags =
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
             EndTour(window);
-            SetOnboardingField(window, "_expandedTaskName", "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var items = (System.Windows.DependencyObject)window.FindName("PlanItemsPanel");
+            SetExpandedTask(window, "RealTask");
+            InvokeEditor(window, "RenderTaskPlan");
+            var items = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel");
             var boxes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>().ToArray();
             System.Windows.Controls.TextBox Editor(string name) =>
                 boxes.Single(box => AutomationProperties.GetName(box) == name);
@@ -130,13 +130,14 @@ internal static partial class SelfTestRunner
             var password = Editor("Login") as Wpf.Ui.Controls.PasswordBox;
             Require(password is not null && !HasBrowse(password), "密码字段必须使用不带选择按钮的密码框。");
             password!.Password = SecretInputValue;
-            typeof(MainWindow).GetMethod("CommitOptionInput", flags)!.Invoke(window, [password, false]);
+            typeof(TaskPlanEditor).GetMethod("CommitOptionInput", flags)!
+                .Invoke(window.TaskPlanEditor, [password, false]);
             Require(!password.Text.Contains(SecretInputValue, StringComparison.Ordinal),
                 "密码框不得显示密码原文。");
             SaveWindowScreenshot(window, "secret-and-path-inputs.png");
 
-            SetOnboardingField(window, "_expandedTaskName", null!);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            SetExpandedTask(window, null);
+            InvokeEditor(window, "RenderTaskPlan");
             var tag = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
                 .SingleOrDefault(text => Equals(text.ToolTip, $"Login：{ProjectInputEditor.PasswordMask}"));
             Require(tag is not null && tag.Text.Contains(ProjectInputEditor.PasswordMask, StringComparison.Ordinal)

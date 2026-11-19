@@ -68,7 +68,8 @@ public partial class MainWindow
     private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)
     {
         // A refusal is reported by the change itself: the other configuration must never be run instead.
-        if (!ChangeConfiguration(() => project.ActivateConfiguration(id), unattended: true)) {
+        if (!TaskPlanEditor.ChangeConfiguration(() => project.ActivateConfiguration(id),
+                failure => ReportUnattendedFailure("自动执行", failure))) {
             return;
         }
         if (project.EnabledItems.Count == 0) {
