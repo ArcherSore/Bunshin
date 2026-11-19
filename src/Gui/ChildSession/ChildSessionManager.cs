@@ -17,6 +17,7 @@ internal sealed class ChildSessionManager : IDisposable
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private RdpPreviewWindow? _previewWindow;
     private ChildSessionService? _service;
+    private int _lastRdpConnectedState;
     private bool _disposed;
 
     // The optional delegates are self-test seams; production always queries and logs off through WTS.
@@ -70,11 +71,9 @@ internal sealed class ChildSessionManager : IDisposable
                 currentSessionId = QueryChildSessionId();
                 var connectedState = SafeConnectedState();
                 if (_service?.ChildSessionId is uint connectedId && currentSessionId == connectedId
-                    && Snapshot.State is (ChildSessionState.ConnectedVisible
-                        or ChildSessionState.ConnectedHidden)
-                    && connectedState == 1) {
+                    && Snapshot.State == ChildSessionState.Connected && connectedState == 1) {
                     // A window the user is already watching stays; only a hidden one stays hidden.
-                    SetPreviewVisibility(showPreview || Snapshot.State == ChildSessionState.ConnectedVisible);
+                    SetPreviewVisibility(showPreview || Snapshot.PreviewVisible);
                     _logger.Debug($"复用已连接的 Child Session {connectedId}，show={showPreview}。");
                     return connectedId;
                 }
@@ -255,9 +254,8 @@ internal sealed class ChildSessionManager : IDisposable
 
         var sessionId = _service.ChildSessionId ?? SafeChildSessionId(Snapshot.ChildSessionId);
         UpdateState(
-            show ? ChildSessionState.ConnectedVisible : ChildSessionState.ConnectedHidden,
-            sessionId, connectedState,
-            show ? "已连接，子桌面可见" : "已连接，子桌面已隐藏");
+            ChildSessionState.Connected, sessionId, connectedState,
+            show ? "已连接，子桌面可见" : "已连接，子桌面已隐藏", previewVisible: show);
     }
 
     private void OnPreviewClosing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -275,7 +273,7 @@ internal sealed class ChildSessionManager : IDisposable
         }
 
         UpdateState(
-            ChildSessionState.ConnectedHidden,
+            ChildSessionState.Connected,
             _service?.ChildSessionId ?? SafeChildSessionId(Snapshot.ChildSessionId), connectedState,
             "已连接，子桌面已隐藏");
         _logger.Info("关闭子桌面窗口已转换为隐藏；RDP 连接保持存活。");
@@ -423,25 +421,29 @@ internal sealed class ChildSessionManager : IDisposable
         }
     }
 
-    private void UpdateState(ChildSessionState state, uint? sessionId, int connectedState, string detail)
+    private void UpdateState(
+        ChildSessionState state, uint? sessionId, int connectedState, string detail, bool previewVisible = false)
     {
-        var inputUnlocked = state == ChildSessionState.ConnectedVisible && _previewWindow?.Interactive == true;
+        var inputUnlocked = previewVisible && _previewWindow?.Interactive == true;
         var previous = Snapshot;
-        Snapshot = new ChildSessionSnapshot(state, sessionId, connectedState, detail, inputUnlocked);
-        if (Snapshot != previous) {
+        var previousConnectedState = _lastRdpConnectedState;
+        Snapshot = new ChildSessionSnapshot(state, sessionId, detail, previewVisible, inputUnlocked);
+        _lastRdpConnectedState = connectedState;
+        if (Snapshot != previous || connectedState != previousConnectedState) {
             // The state can stay the same while its details change; a from equal to the to would only mislead.
             var from = previous.State == state ? null : (ChildSessionState?)previous.State;
             _logger.Info($"Child Session 状态变化{AppLogger.Field("from", from)}{AppLogger.Field("to", state)}"
                 + $"{AppLogger.Field("session", sessionId)}{AppLogger.Field("connected", connectedState)}"
-                + $"{AppLogger.Field("inputUnlocked", inputUnlocked)}"
+                + $"{AppLogger.Field("visible", previewVisible)}{AppLogger.Field("inputUnlocked", inputUnlocked)}"
                 + AppLogger.Field("detail", detail.ReplaceLineEndings(" ")));
         }
         StateChanged?.Invoke(this, Snapshot);
     }
 
-    // The window raises this only on a real change; republishing the state picks up the new input lock.
+    // Input changes can republish the snapshot with the last diagnostic value instead of querying ActiveX again.
     private void OnPreviewInteractiveChanged(object? sender, EventArgs e) =>
-        UpdateState(Snapshot.State, Snapshot.ChildSessionId, Snapshot.RdpConnectedState, Snapshot.Detail);
+        UpdateState(
+            Snapshot.State, Snapshot.ChildSessionId, _lastRdpConnectedState, Snapshot.Detail, Snapshot.PreviewVisible);
 
     private void ThrowIfDisposed()
     {

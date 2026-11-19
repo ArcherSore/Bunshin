@@ -165,7 +165,7 @@ internal static partial class SelfTestRunner
         var ready = new ProjectReadiness(true, 1, true, digest);
         var idle = ScenarioWorker(digest);
         var running = ScenarioWorker(digest, active: RunState.Running);
-        var start = new RuntimeControlInputs(ScenarioSession(ChildSessionState.ConnectedHidden),
+        var start = new RuntimeControlInputs(ScenarioSession(ChildSessionState.Connected),
             Observed(WorkerObservation.Connected, idle), ready, PendingOperation.None, false, false, false, false);
         var stopped = start with {
             Session = ScenarioSession(ChildSessionState.NotRunning), Worker = WorkerCoordinatorSnapshot.Empty
@@ -205,14 +205,14 @@ internal static partial class SelfTestRunner
             }, new(preparing, true, null, connecting with { Enabled = true }, true)),
             ("就绪，子桌面隐藏", start,
                 new(new RuntimeAction.Start(true), true, null, background, true)),
-            ("就绪，子桌面可见", start with { Session = ScenarioSession(ChildSessionState.ConnectedVisible) },
+            ("就绪，子桌面可见", start with { Session = start.Session with { PreviewVisible = true } },
                 new(new RuntimeAction.Start(true), true, null, viewing, true)),
             ("准备中，登录用的子桌面可见", start with {
-                Session = ScenarioSession(ChildSessionState.ConnectedVisible),
+                Session = start.Session with { PreviewVisible = true },
                 PendingOperation = PendingOperation.PreparingEnvironment
             }, new(preparing, false, runtimeBusy, connecting with { Action = DesktopAction.Hide }, false)),
             ("大窗已允许操作", start with {
-                Session = ScenarioSession(ChildSessionState.ConnectedVisible) with { InputUnlocked = true }
+                Session = start.Session with { PreviewVisible = true, InputUnlocked = true }
             }, new(new RuntimeAction.Start(true), true, null, viewing with { Status = DesktopStatus.Interactive },
                 true)),
             ("准备失败，Worker 已就绪", start with { EnvironmentPreparationFailed = true },
@@ -356,8 +356,7 @@ internal static partial class SelfTestRunner
     }
 
     private static ChildSessionSnapshot ScenarioSession(ChildSessionState state) => new(state,
-        state == ChildSessionState.NotRunning ? null : ScenarioSessionId,
-        state is ChildSessionState.ConnectedVisible or ChildSessionState.ConnectedHidden ? 1 : 0, "scenario");
+        state == ChildSessionState.NotRunning ? null : ScenarioSessionId, "scenario");
 
     private static WorkerSnapshot ScenarioWorker(string digest, WorkerState state = WorkerState.Ready,
         RunState? active = null, RunState? last = null, uint childSessionId = ScenarioSessionId)

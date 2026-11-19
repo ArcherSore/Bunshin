@@ -293,8 +293,7 @@ internal static partial class SelfTestRunner
                             typeof(ChildSessionManager).GetProperty("Snapshot",
                                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                                 .SetValue(session, new ChildSessionSnapshot(
-                                    ChildSessionState.ConnectedHidden, record.ChildSessionId, 1,
-                                    "prepared"));
+                                    ChildSessionState.Connected, record.ChildSessionId, "prepared"));
                         });
                 } finally {
                     timeout.Cancel();
