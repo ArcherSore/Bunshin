@@ -2115,9 +2115,13 @@
                                Foreground="{StaticResource Brush.Text.Primary}" />
                     <TextBlock x:Name="ForcedStartText" Margin="0,8,0,14" TextWrapping="Wrap" LineHeight="22"
                                Foreground="{StaticResource Brush.Text.Secondary}" />
-                    <ProgressBar x:Name="ForcedStartProgress" Minimum="0" Maximum="1" Height="4"
-                                 Foreground="{StaticResource Brush.Warning}"
-                                 Background="{StaticResource Brush.Progress.Track}" />
+                    <Grid Height="4" Background="{StaticResource Brush.Progress.Track}">
+                        <Border Background="{StaticResource Brush.Warning}">
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="ForcedStartFillScale" />
+                            </Border.RenderTransform>
+                        </Border>
+                    </Grid>
                     <Grid Margin="0,16,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />

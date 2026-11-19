@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace Gui.Views;
@@ -10,7 +12,6 @@ public partial class MainWindow
 {
     private readonly DispatcherTimer _forcedStartTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
     private ForcedScheduledStartCountdown? _forcedStartDialog;
-    private TimeSpan _forcedStartTotal;
     private IInputElement? _forcedStartPreviousFocus;
 
     private void InitializeForcedStartDialog()
@@ -23,7 +24,9 @@ public partial class MainWindow
     private void ShowForcedStartDialog(ForcedScheduledStartCountdown countdown)
     {
         _forcedStartDialog = countdown;
-        _forcedStartTotal = countdown.Deadline - _scheduleClock.GetLocalNow();
+        var remaining = countdown.Deadline - _scheduleClock.GetLocalNow();
+        var duration = remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        ForcedStartFillScale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, 0, duration));
         _forcedStartPreviousFocus ??= Keyboard.FocusedElement;
         ForcedStartOverlay.Visibility = Visibility.Visible;
         EnsureModalWindowHook();
@@ -40,8 +43,6 @@ public partial class MainWindow
         var remaining = countdown.Deadline - _scheduleClock.GetLocalNow();
         var seconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
         ForcedStartText.Text = $"{seconds} 秒后将停止当前任务，并启动「{countdown.ConfigurationName}」";
-        ForcedStartProgress.Value = _forcedStartTotal > TimeSpan.Zero
-            ? Math.Clamp(remaining / _forcedStartTotal, 0, 1) : 0;
     }
 
     private void CloseForcedStartDialog()
@@ -49,6 +50,7 @@ public partial class MainWindow
         _forcedStartTimer.Stop();
         _forcedStartDialog = null;
         ForcedStartOverlay.Visibility = Visibility.Collapsed;
+        ForcedStartFillScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         RemoveModalWindowHook();
         if (_forcedStartPreviousFocus is not null) {
             Keyboard.Focus(_forcedStartPreviousFocus);
