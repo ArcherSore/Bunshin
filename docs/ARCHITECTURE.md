@@ -2,6 +2,51 @@
 
 Bunshin 是面向 MaaNOP 的 Windows x64 前端。主桌面负责配置与观察；游戏、自动化框架和 Worker 在 Child Session 中运行。发布包包含 GUI、Worker、固定 MaaFramework runtime、Update Engine 和依赖安装脚本；MaaNOP 项目内容由完整包提供。.NET 10 桌面运行库和 Visual C++ 运行库由系统提供。
 
+## 系统总览
+
+```mermaid
+flowchart LR
+    subgraph desktop["主桌面 Session（管理员权限）"]
+        subgraph gui["Bunshin GUI 进程"]
+            PM["ProjectModel<br/>用户意图 → Run Plan"]
+            RE["RuntimeEnvironment<br/>运行环境生命周期"]
+            CS["ChildSession 模块"]
+            VIEW["RDP 预览窗口"]
+        end
+        UE["Update Engine（Rust）"]
+        CRED[("Windows 凭据管理器")]
+    end
+
+    subgraph child["Child Session（独立 Windows Session）"]
+        subgraph wproc["Worker 进程"]
+            W["Worker<br/>运行状态与日志的权威来源"]
+            MAA["MaaFramework"]
+        end
+        AGENT["MaaNOP Agent"]
+        GAME["游戏"]
+    end
+
+    PKG[("完整包<br/>Project Interface")]
+    RELEASE[("GitHub Release")]
+    SENTRY[("Sentry")]
+
+    PM -. 读取 .-> PKG
+    RE --> CS
+    CS -- "WTS 查询 / 注销" --> child
+    CS -- "Task Scheduler 启动" --> wproc
+    CS -. 读取登录凭据 .-> CRED
+    VIEW <-- "RDP ActiveX<br/>连接分身 · 默认只读预览" --> child
+    gui <== "Named Pipe<br/>Admission 核验 · Run Plan · Snapshot" ==> W
+    W -- 持有 --> MAA
+    W -- 启动 --> AGENT
+    MAA <-- 连接 --> AGENT
+    MAA -- 截图 / 输入 --> GAME
+    gui -- "stdin / stdout JSON" --> UE
+    UE -- HTTPS --> RELEASE
+    UE -. "停止 GUI 后替换完整包" .-> PKG
+    W -. "匿名遥测（旁路）" .-> SENTRY
+```
+
 ## 组件与边界
 
 | 组件 | 职责 |
