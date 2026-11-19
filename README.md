@@ -74,19 +74,7 @@ Bunshin 是 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 的图形界面。它
 
 ## 开发
 
-需要 .NET 10 SDK、Rust 1.98.1 MSVC 和 Visual Studio C++ Build Tools。
-
-```powershell
-# 构建发布包，产物位于 artifacts\Bunshin\win-x64
-.\src\Gui\scripts\build.ps1
-
-# 日常验证：增量 GUI 构建 + GUI 自检
-.\src\Gui\scripts\verify.ps1
-```
-
-验证要求见 [AGENTS.md](AGENTS.md)，开发入口见[领域术语](GLOSSARY.md)、[当前架构](docs/ARCHITECTURE.md)、
-[架构决策](docs/adr/)、[GUI 开发说明](src/Gui/README.md)。
-当前工作与验收条件在 [GitHub Issues](https://github.com/ArcherSore/NarutoAutoGUI/issues)。
+构建、自检和发布见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 鸣谢
 

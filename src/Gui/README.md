@@ -2,30 +2,6 @@
 
 Windows x64 / .NET 10 WPF 程序。需要管理员权限和交互式桌面；manifest 为 asInvoker，由程序在启动时自行请求提权（`--help` 在提权前输出）。
 
-## 构建与自动自检
-
-日常验证需要 .NET 10 SDK；完整验证还需要仓库固定的 Rust MSVC 工具链。
-
-在仓库根目录运行：
-
-```powershell
-.\src\Gui\scripts\verify.ps1
-.\src\Gui\scripts\verify.ps1 -Suite All
-```
-
-`verify.ps1` 增量构建后运行自检，只输出摘要，完整日志保存在 `artifacts/validation/`。
-可选 `-Suite Project/Support/RuntimeControls/Worker/Updater/Engine`（每次选择一个分类）；
-只有源码及依赖未变、刚成功构建时，才用 `-NoBuild` 重跑测试。分类范围见根目录 [AGENTS.md](../../AGENTS.md)。
-
-完整发布仍使用 `scripts/build.ps1`；发布目录为 `artifacts\Bunshin\win-x64`，
-并包含 `worker\Bunshin.Worker.exe` 及固定 runtime。
-自检通过 `dotnet Bunshin.dll --self-test` 运行，不经过 apphost，因此不会请求提权，也不连接 RDP；完整 GUI 自检会创建本机 RDP 控件验证输入禁用和窗口模式。
-通知 tracker、诊断 ZIP 与 Settings 离屏布局可定向验证：
-
-```powershell
-.\src\Gui\scripts\verify.ps1 -Suite Support
-```
-
 ## 运行时文件
 
 - 任务配置：`<程序目录>\config\configurations.json`
@@ -38,12 +14,6 @@ Windows x64 / .NET 10 WPF 程序。需要管理员权限和交互式桌面；man
 设置页提供三个独立开关：SaveOnError 默认开启，SaveDraw 和 DebugMode 默认关闭。SaveDraw 不保存，程序重启后恢复关闭。
 更改后从下一次识别开始生效，无需结束桌面分身；GUI 在切换开关和 Worker 连接时同步当前选择。
 框架日志和图片没有容量上限，由 MaaFramework 在设置 LogDir 时删除 7 天前的文件；设置页可手动清理。
-
-验证打包后的原生 runtime 图片保存（不启动游戏或 RDP）：
-
-```powershell
-.\src\Gui\scripts\test-framework-diagnostics.ps1 -PackageDirectory artifacts\Bunshin\win-x64
-```
 
 项目根目录固定为应用程序目录，`interface.json` 直接从 `Bunshin.exe` 同级目录读取。日志按天和 10 MiB 滚动，保留 14 个文件，可从主窗口直接打开当前日志目录。若程序目录不可写，日志会回退到 LocalAppData 或临时目录并记录 WARN。
 
