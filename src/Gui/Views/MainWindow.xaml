@@ -2093,16 +2093,7 @@
 
         <Grid x:Name="ForcedStartOverlay" Panel.ZIndex="230" Visibility="Collapsed" Focusable="True"
               KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
-              AutomationProperties.Name="强制定时启动">
-            <!-- Only the cancel button or the end of the countdown closes the dialog; the scrim swallows clicks. -->
-            <Button Background="{StaticResource Brush.Overlay.Modal}" BorderThickness="0" Focusable="False"
-                    IsTabStop="False">
-                <Button.Template>
-                    <ControlTemplate TargetType="{x:Type Button}">
-                        <Border Background="{TemplateBinding Background}" />
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
+              Background="{StaticResource Brush.Overlay.Modal}" AutomationProperties.Name="强制定时启动">
             <views:ShadowBorder Width="400" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center"
                     Padding="24" Background="{StaticResource Brush.Surface}"
                     BorderBrush="{StaticResource Preview.Border}" BorderThickness="1"

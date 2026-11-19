@@ -61,7 +61,15 @@ internal static partial class SelfTestRunner
         var requests = new List<string>();
         WithRunningFakeWorker(logger, Path.Combine(root, "old-worker"), async (worker, token) => {
             connection.SetResult(worker);
-            await RecordRequestsAsync(worker.Pipe, requests, token, listening.Token);
+            if (scenario == ContendedSchedule.Stopping) {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, listening.Token);
+                var stop = await WorkerCoordinatorSelfTest.ReadRequestAsync(worker.Pipe, ProtocolOperations.RunStop,
+                    linked.Token);
+                requests.Add(stop.Operation);
+                await ReplyToFakeWorkerStopAsync(worker, stop, linked.Token, "already_stopping");
+            } else {
+                await RecordRequestsAsync(worker.Pipe, requests, token, listening.Token);
+            }
         }, coordinator => {
             AwaitRunningWorker(coordinator);
             var worker = connection.Task.GetAwaiter().GetResult();
@@ -151,8 +159,8 @@ internal static partial class SelfTestRunner
                 listening.Cancel();
             }
         });
-        var expectedStops = scenario == ContendedSchedule.Late ? 1 : 0;
+        var expectedStops = scenario is ContendedSchedule.Late or ContendedSchedule.Stopping ? 1 : 0;
         Require(requests.Count(operation => operation == ProtocolOperations.RunStop) == expectedStops,
-            "只应请求停止后来出现、仍在运行的任务。已终结、停止中、Faulted 或正在退出均不应重复发停止请求。");
+            "仍在运行或停止中的任务交给 Worker 停止。已终结、Faulted 或正在退出的任务无需发送停止请求。");
     }
 }

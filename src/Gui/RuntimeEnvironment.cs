@@ -223,9 +223,7 @@ internal sealed class RuntimeEnvironment
         }
         try {
             using var stopTimeout = new CancellationTokenSource(_waitLimit);
-            if (run.State != RunState.Stopping) {
-                await _coordinator.StopRunAsync(run.RunId, stopTimeout.Token);
-            }
+            await _coordinator.StopRunAsync(run.RunId, stopTimeout.Token);
             while (_coordinator.Snapshot is not { Observation: WorkerObservation.Connected, SnapshotFresh: true }
                 || _coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == run.RunId) {
                 if (_coordinator.Snapshot is { Observation: not WorkerObservation.Connected }

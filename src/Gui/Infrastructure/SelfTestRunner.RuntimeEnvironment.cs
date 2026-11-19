@@ -22,13 +22,7 @@ internal static partial class SelfTestRunner
         WithRunningFakeWorker(logger, Path.Combine(directory, "stop-first"), async (worker, token) => {
             var stop = await WorkerCoordinatorSelfTest.ReadRequestAsync(worker.Pipe, ProtocolOperations.RunStop, token);
             endingAtStop = environment?.Ending;
-            await worker.Pipe.WriteAsync(WireEnvelope.Response(ProtocolOperations.RunStop, stop.RequestId!.Value,
-                new RunStopResponse("stop_requested")), token);
-            var cancelled = worker.Coordinator.Snapshot.WorkerSnapshot! with {
-                StateRevision = 2, RunState = RunState.Idle, ActiveRun = null,
-                LastRun = worker.ActiveRun with { State = RunState.Cancelled }
-            };
-            await worker.Pipe.WriteAsync(StateEvent(cancelled), token);
+            await ReplyToFakeWorkerStopAsync(worker, stop, token);
         }, coordinator => {
             AwaitRunningWorker(coordinator);
             var logoff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -59,6 +53,19 @@ internal static partial class SelfTestRunner
             Require(endingAtConfirm == true && endingAtStop == true && !environment.Ending && changes == 2
                 && !environment.EndUnconfirmed, "结束期间应一直处于正在结束，结束后清除并各通知一次。");
         });
+    }
+
+    private static async Task ReplyToFakeWorkerStopAsync(FakeWorker worker, WireEnvelope request,
+        CancellationToken token, string disposition = "stop_requested")
+    {
+        await worker.Pipe.WriteAsync(WireEnvelope.Response(request.Operation, request.RequestId!.Value,
+            new RunStopResponse(disposition)), token);
+        var snapshot = worker.Coordinator.Snapshot.WorkerSnapshot!;
+        var cancelled = snapshot with {
+            StateRevision = snapshot.StateRevision + 1, RunState = RunState.Idle, ActiveRun = null,
+            LastRun = worker.ActiveRun with { State = RunState.Cancelled }
+        };
+        await worker.Pipe.WriteAsync(StateEvent(cancelled), token);
     }
 
     // U2: a stop that the Worker rejects, never answers or cannot answer because it disconnected does not block the

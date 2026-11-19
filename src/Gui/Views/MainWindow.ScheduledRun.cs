@@ -63,8 +63,7 @@ public partial class MainWindow
     // Called on the GUI dispatcher. Invalid leaves the opportunity to the next candidate.
     internal async Task<ScheduledRunResult> TryStartScheduledRunAsync(Guid configurationId, string? policyTime = null)
     {
-        var name = _projectPlan?.Configurations.FirstOrDefault(c => c.Id == configurationId)?.Name
-            ?? configurationId.ToString();
+        var name = ConfigurationName(configurationId) ?? configurationId.ToString();
         ScheduledRunResult? result = null;
         var force = _settings.ForceScheduledStart.Value;
         var previous = _scheduledSubmission;
@@ -75,7 +74,7 @@ public partial class MainWindow
             result = await StartScheduledRunInGateAsync(configurationId, name, policyTime, force, countdownElapsed,
                 previous, exitGeneration);
         }
-        if (force && !_exitInProgress && !_allowClose && !_environment.Closing) {
+        if (force && !ScheduledStartClosing(exitGeneration)) {
             try {
                 if (_workerCoordinator.Snapshot is { NoLiveAdmission: false, WorkerSnapshot.ActiveRun: not null }) {
                     result = ValidateScheduledStart(_projectPlan, configurationId, name, out _)
@@ -88,14 +87,14 @@ public partial class MainWindow
                         result = new(ScheduledRunDisposition.Busy, Reason: "当前时间已离开本次定时的分钟");
                     } else if (!ScheduledStartClosing(exitGeneration)) {
                         name = ConfigurationName(configurationId) ?? name;
-                        if (await WaitForForcedScheduledStartAsync(name)) {
+                        if (await WaitForForcedScheduledStartAsync(name, exitGeneration)) {
                             await _environment.RunExclusiveAsync(() => StartInGateAsync(true));
                             if (result is { Disposition: ScheduledRunDisposition.Busy, Reason: { } reason }) {
                                 ReportScheduledSkip(name, reason);
                             }
                         }
                         // Once announced, even a cancelled or subsequently invalid configuration owns the minute.
-                        result = new(ScheduledRunDisposition.Admitted, result?.RunId, result?.Reason);
+                        result = new(ScheduledRunDisposition.Admitted, result.RunId, result.Reason);
                     } else {
                         result = new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
                     }
@@ -115,7 +114,7 @@ public partial class MainWindow
         return result;
     }
 
-    private async Task<bool> WaitForForcedScheduledStartAsync(string name)
+    private async Task<bool> WaitForForcedScheduledStartAsync(string name, int exitGeneration)
     {
         var duration = TimeSpan.FromSeconds(10);
         var elapsed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -128,7 +127,7 @@ public partial class MainWindow
             NotificationRequested?.Invoke(this, new("强制定时启动", $"10 秒后将停止当前任务，并启动「{name}」。点击打开窗口可取消", false));
             ForcedScheduledStartPending?.Invoke(this, new(name, deadline, () => elapsed.TrySetResult(false)));
             if (await elapsed.Task) {
-                return !_allowClose && !_exitInProgress && !_environment.Closing;
+                return !ScheduledStartClosing(exitGeneration);
             }
             AddScheduleActivity($"已取消「{name}」的强制启动，当前任务继续");
             return false;
@@ -187,10 +186,10 @@ public partial class MainWindow
         if (ScheduledStartClosing(exitGeneration)) {
             return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
         }
+        WorkerCoordinatorSnapshot? observed = null;
         if (force) {
             await _workerCoordinator.ReconcilePendingStartAsync();
-        }
-        if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker && !force) {
+        } else if (_environment.ScheduledRunBlocker(out observed, out _) is { } blocker) {
             return new(ScheduledRunDisposition.Busy, Reason: blocker);
         }
         // The clock may run ahead of the dispatcher's snapshot callback. Consume the old Run before replacing it.
@@ -210,15 +209,23 @@ public partial class MainWindow
             return failure;
         }
         name = ConfigurationName(configurationId) ?? name;
-        if (_environment.ScheduledRunBlocker(out _, out var hadSession) is { } changed && !force) {
+        var hadSession = false;
+        if (!force && _environment.ScheduledRunBlocker(out _, out hadSession) is { } changed) {
             return new(ScheduledRunDisposition.Busy, Reason: changed);
         }
         var (current, pendingStart) = _workerCoordinator.ReadRunObservation();
         var active = current.NoLiveAdmission ? null : current.WorkerSnapshot?.ActiveRun;
         // An ordered read can fail on disconnect. The outstanding start may still be running.
         var atRisk = active?.RunId ?? pendingStart;
-        if (force && !countdownElapsed && atRisk.HasValue) {
-            return new(ScheduledRunDisposition.CountdownRequired);
+        if (force) {
+            if (!countdownElapsed && atRisk.HasValue) {
+                return new(ScheduledRunDisposition.CountdownRequired);
+            }
+            hadSession = _sessionManager.HasChildSession;
+            // A live Worker can keep running across a GUI restart before it supplies a fresh snapshot.
+            if (!countdownElapsed && hadSession && current is { NoLiveAdmission: false, SnapshotFresh: false }) {
+                return new(ScheduledRunDisposition.Busy, Reason: "尚未确认当前任务状态");
+            }
         }
         var replacesBootRun = countdownElapsed && atRisk is Guid id && _quitAfterRun?.IsWaitingFor(id) == true;
         if (current is { SnapshotFresh: true, WorkerSnapshot.LastRun: { } last }

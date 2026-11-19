@@ -21,13 +21,7 @@ internal static partial class SelfTestRunner
                     token, worker.Coordinator.Snapshot.WorkerSnapshot);
                 Require(ProtocolJson.Deserialize<RunStopRequest>(stop.Data).RunId == worker.ActiveRun.RunId,
                     "到期时应停止原先运行中的任务。");
-                await worker.Pipe.WriteAsync(WireEnvelope.Response(stop.Operation, stop.RequestId!.Value,
-                    new RunStopResponse("stop_requested")), token);
-                var done = worker.Coordinator.Snapshot.WorkerSnapshot! with {
-                    StateRevision = 2, RunState = RunState.Idle, ActiveRun = null,
-                    LastRun = worker.ActiveRun with { State = RunState.Cancelled }
-                };
-                await worker.Pipe.WriteAsync(StateEvent(done), token);
+                await ReplyToFakeWorkerStopAsync(worker, stop, token);
             }, coordinator => {
                 AwaitRunningWorker(coordinator);
                 var old = coordinator.Snapshot.WorkerSnapshot!;
@@ -91,6 +85,15 @@ internal static partial class SelfTestRunner
                             Require(countdowns is [{ ConfigurationName: "第一班" } countdown]
                                 && countdown.Deadline == clock.GetLocalNow().AddSeconds(10),
                                 "同刻只为首份获准的配置倒计时，并向界面提供截止时间。");
+                            window.Show();
+                            var overlay = Named<FrameworkElement>(window, "ForcedStartOverlay");
+                            var overlayRoot = Named<FrameworkElement>(window, "WindowOverlayRoot");
+                            PumpUntil(() => overlay.IsVisible && overlay.ActualWidth > 0, "恢复窗口后应显示倒计时遮罩。");
+                            var scrimPoint = new System.Windows.Point(
+                                overlayRoot.ActualWidth / 8, overlayRoot.ActualHeight / 2);
+                            var hit = overlayRoot.InputHitTest(scrimPoint) as DependencyObject;
+                            Require(hit == overlay || hit is not null && overlay.IsAncestorOf(hit),
+                                "点击对话框外的遮罩不能命中底层主窗口控件。");
                             ClickOnboarding(window, "ForcedStartCancelButton");
                         } else {
                             clock.Advance(TimeSpan.FromSeconds(9));
