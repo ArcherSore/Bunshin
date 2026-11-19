@@ -4,91 +4,52 @@
 
 # Bunshin
 
-[MaaNOP](https://github.com/ArcherSore/MaaNOP) 的 Windows 桌面界面
+[MaaNOP](https://github.com/ArcherSore/MaaNOP) 的 Windows 桌面界面：让火影忍者 Online 的日常任务在后台自己跑
 
 [![License](https://img.shields.io/github/license/ArcherSore/NarutoAutoGUI?style=flat-square&color=4a90d9)](./LICENSE)
-[![.NET](https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blueviolet?style=flat-square)](https://github.com/ArcherSore/NarutoAutoGUI)
 [![Stars](https://img.shields.io/github/stars/ArcherSore/NarutoAutoGUI?style=flat-square&color=ffca28)](https://github.com/ArcherSore/NarutoAutoGUI/stargazers)
 
 </div>
 
-## 项目简介
-
-Bunshin 是 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 的图形界面。它通过 Windows Child Session（桌面分身）
-在独立会话中运行火影忍者 Online 和自动化任务，不占用你正在使用的桌面。
-
-本仓库只发布前端及配套运行组件，不包含游戏任务资源。请前往 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 获取完整包。
-
-## 主要功能
-
-- **桌面分身**：创建和管理独立运行环境，隐藏分身窗口后游戏和任务仍会继续。
-- **任务配置**：多份独立配置，标签页切换，可从项目预设新建；每份配置分别保存任务、勾选状态及参数。
-- **定时执行**：支持为每份任务配置安排每周运行时间，并预览下次运行。
-- **运行监控**：查看任务动态，通过小窗只读观看分身，大窗可手动解锁操作。
-- **自动运行**：开机自启动、启动后自动执行配置，也可通过命令行接入计划任务或外部脚本。
-
-## 界面预览
-
 <p align="center">
-  <img alt="Bunshin 任务首页，左侧导航含定时入口" src="./docs/images/homePage.png" width="100%" />
+  <img alt="Bunshin 任务首页" src="./docs/images/homePage.png" width="100%" />
 </p>
 
-## 运行要求
+## 它能做什么
 
-| 项目 | 要求 |
-|:---|:---|
-| 系统 | Windows 10 / 11 x64 |
-| 运行库 | [.NET 10 桌面运行库](https://dotnet.microsoft.com/download/dotnet/10.0)和 Visual C++ 运行库，可用包内的 `DependencySetup_依赖库安装.bat` 一键安装 |
-| 资源 | 带游戏资源的 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 完整包 |
+Bunshin 通过 Windows 的 Child Session（桌面分身）在独立会话中运行游戏和自动化任务，**不占用你正在使用的桌面**，
+你可以一边工作一边让任务在后台执行。
 
-## 快速开始
+- **桌面分身**：游戏运行在独立桌面中，隐藏分身窗口后任务仍会继续。
+- **多份任务配置**：每份配置单独保存任务、勾选状态和参数，可从项目预设一键新建。
+- **定时执行**：按每周时间表自动运行，随时可以看到下次运行的时间。
+- **运行监控**：查看任务动态，通过小窗观看分身，需要时可手动接管操作。
+- **自动运行**：支持开机自启，也可用命令行接入计划任务或外部脚本。
 
-1. 前往 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 下载完整包并解压。
-2. 运行 `DependencySetup_依赖库安装.bat`，安装 .NET 10 桌面运行库和 Visual C++ 运行库（只需一次）。
+## 安装
+
+**系统要求**：Windows 10 / 11（64 位）。
+
+1. 前往 [MaaNOP](https://github.com/ArcherSore/MaaNOP) 下载完整包并解压。本仓库只提供界面，游戏任务资源在完整包里。
+2. 运行包内的 `DependencySetup_依赖库安装.bat`，安装 .NET 10 桌面运行库和 Visual C++ 运行库（只需一次）。
 3. 运行 `Bunshin.exe`，按提示允许管理员权限。
-4. 阅读[用户使用手册](docs/USER-GUIDE.md)，完成 Windows 凭据和 QQ 大厅自动启动的一次性配置。
+4. 首次使用需要保存 Windows 凭据，并按需配置 QQ 游戏大厅自动启动，步骤见[用户使用手册](docs/USER-GUIDE.md)。
 
-## 定时执行
+之后的更新可在程序内完成。
 
-打开左侧「定时」页，选中任务配置，在一周时间轴上添加定时。每条定时可选择一周中的多天，并设置多个时间点，
-例如每个工作日 08:00 和 20:00。页面顶部会显示下次运行的时间和配置。
+## 文档
 
-请保持 Bunshin 运行，窗口可以缩到托盘。到点后，程序会在新的桌面分身中执行对应配置，成功后自动关闭分身，
-失败或手动停止时保留现场供排查。到点时已有任务在运行，默认跳过本次定时。
-开启「强制定时启动」后，程序会先提示，10 秒后停止当前任务，在新的桌面分身中启动到点的配置。
-倒计时内取消会保留当前任务。本次定时和错过的时间点都不会补跑。
+- [用户使用手册](docs/USER-GUIDE.md)：首次配置、命令行启动、定时执行、常见问题。
 
-## 启动参数
+## 遇到问题
 
-| 参数 | 作用 |
-|:---|:---|
-| `-h`, `--help` | 显示命令行帮助并退出 |
-| `--autostart` | 按开机自启处理：窗口留在托盘，并自动执行配置 |
-| `-i <配置>`, `--instance <配置>` | 仅配合 `--autostart`：按名称或配置 ID 指定要执行的配置 |
-| `-q`, `--quit-after-run` | 自动执行结束后退出程序 |
+先看[用户使用手册](docs/USER-GUIDE.md#常见问题)里的常见问题。没有解决时，欢迎到
+[Issues](https://github.com/ArcherSore/NarutoAutoGUI/issues) 反馈，并附上系统版本、Bunshin 版本和出错时的现象。
 
-```powershell
-.\Bunshin.exe --autostart -i "日常任务" -q
-```
+## 参与开发
 
-推荐用法见[用户使用手册](docs/USER-GUIDE.md#三命令行启动)。
-
-## 开发
-
-需要 .NET 10 SDK、Rust 1.98.1 MSVC 和 Visual Studio C++ Build Tools。
-
-```powershell
-# 构建发布包，产物位于 artifacts\Bunshin\win-x64
-.\src\Gui\scripts\build.ps1
-
-# 日常验证：增量 GUI 构建 + GUI 自检
-.\src\Gui\scripts\verify.ps1
-```
-
-验证要求见 [AGENTS.md](AGENTS.md)，开发入口见[领域术语](GLOSSARY.md)、[当前架构](docs/ARCHITECTURE.md)、
-[架构决策](docs/adr/)、[GUI 开发说明](src/Gui/README.md)。
-当前工作与验收条件在 [GitHub Issues](https://github.com/ArcherSore/NarutoAutoGUI/issues)。
+构建、自检和发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 鸣谢
 

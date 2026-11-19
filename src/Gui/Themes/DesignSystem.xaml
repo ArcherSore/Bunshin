@@ -4,6 +4,8 @@
                     xmlns:sys="clr-namespace:System;assembly=System.Runtime"
                     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
 
+    <!-- 目前只有浅色主题，之后会支持切换：界面颜色引用这里的 Brush.*，不在视图中写死色值。 -->
+
     <!-- Primitive colors -->
     <Color x:Key="Color.Neutral.0">#FFFFFF</Color>
     <Color x:Key="Color.Neutral.50">#F6F8FB</Color>
