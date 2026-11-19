@@ -2090,5 +2090,47 @@
                 </Grid>
             </views:ShadowBorder>
         </Grid>
+
+        <Grid x:Name="ForcedStartOverlay" Panel.ZIndex="230" Visibility="Collapsed" Focusable="True"
+              KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
+              AutomationProperties.Name="强制定时启动">
+            <!-- Only the cancel button or the end of the countdown closes the dialog; the scrim swallows clicks. -->
+            <Button Background="{StaticResource Brush.Overlay.Modal}" BorderThickness="0" Focusable="False"
+                    IsTabStop="False">
+                <Button.Template>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border Background="{TemplateBinding Background}" />
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <views:ShadowBorder Width="400" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Padding="24" Background="{StaticResource Brush.Surface}"
+                    BorderBrush="{StaticResource Preview.Border}" BorderThickness="1"
+                    CornerRadius="{StaticResource Radius.Section}">
+                <views:ShadowBorder.Shadow>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="8" Opacity="0.2" Color="#0F172A" />
+                </views:ShadowBorder.Shadow>
+                <StackPanel>
+                    <TextBlock Text="强制定时启动" FontSize="16" FontWeight="SemiBold"
+                               Foreground="{StaticResource Brush.Text.Primary}" />
+                    <TextBlock x:Name="ForcedStartText" Margin="0,8,0,14" TextWrapping="Wrap" LineHeight="22"
+                               Foreground="{StaticResource Brush.Text.Secondary}" />
+                    <ProgressBar x:Name="ForcedStartProgress" Minimum="0" Maximum="1" Height="4"
+                                 Foreground="{StaticResource Brush.Warning}"
+                                 Background="{StaticResource Brush.Progress.Track}" />
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="取消后，当前任务继续运行" VerticalAlignment="Center"
+                                   Style="{StaticResource MutedTextStyle}" />
+                        <Button x:Name="ForcedStartCancelButton" Grid.Column="1" Content="取消" MinWidth="88"
+                                Height="36" Style="{StaticResource Update.PrimaryButton}"
+                                Click="ForcedStartCancel_Click" AutomationProperties.Name="取消强制定时启动" />
+                    </Grid>
+                </StackPanel>
+            </views:ShadowBorder>
+        </Grid>
     </Grid>
 </ui:FluentWindow>

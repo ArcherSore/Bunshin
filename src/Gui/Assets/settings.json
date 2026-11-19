@@ -38,6 +38,15 @@
           "description": "每次手动打开程序时，也自动执行上方选定的配置（关闭则仅在开机自启动时触发）。",
           "settingKey": "autorun.onManualLaunch",
           "joinPrevious": true
+        },
+        {
+          "id": "force-scheduled-start",
+          "type": "toggle",
+          "icon": "Timer20",
+          "title": "强制定时启动",
+          "description": "到点时若有任务正在运行，倒计时 10 秒后停止它并开始定时任务。",
+          "settingKey": "schedule.forceStart",
+          "joinPrevious": true
         }
       ]
     },
