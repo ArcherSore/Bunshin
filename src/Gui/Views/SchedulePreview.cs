@@ -149,6 +149,10 @@ internal sealed class SchedulePreview
     internal static string Summary(SchedulePolicy policy) => $"{DaysText(policy.Days)} " +
         (policy.Times.Count == 0 ? "未设时间" : string.Join("、", policy.Times.Select(TimeText)));
 
+    // Like MXU's collapsed schedule: up to three times are listed, more become a count; the tooltip has them all.
+    internal static string ShortSummary(SchedulePolicy policy) => policy.Times.Count <= 3 ? Summary(policy)
+        : $"{DaysText(policy.Days)} · {policy.Times.Count} 个时间";
+
     internal static string WhenText(DateTime time, DateTime now) => (time.Date - now.Date).Days switch {
         0 => "今天",
         1 => "明天",

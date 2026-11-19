@@ -24,13 +24,14 @@ internal enum TimelinePinRole { Active, Sibling, Other }
 internal sealed record TimelinePin(Guid ConfigurationId, Guid PolicyId, DayOfWeek Day, TimeOnly Time, WpfColor Color,
     TimelinePinRole Role, bool Enabled, bool Skipped, double Offset, string Tip);
 
-// One week, Monday first, 24 hours across. Drawn in OnRender so many points stay cheap. Clicking an empty track adds
+// One week, Monday first, 24 hours across. Drawn in OnRender so many points stay cheap. Clicking an empty track picks
 // a time in 15-minute steps; dragging an active point moves it in 5-minute steps; exact minutes go through the editor.
 internal sealed class ScheduleTimeline : FrameworkElement
 {
     private const double Gutter = 66, AxisHeight = 22, RightPad = 12, Bottom = 4;
     // Rows share whatever height the page gives the timeline; tracks grow slower than rows so tall rows keep a gap.
-    private const double MinRow = 40;
+    // The smallest row that still reads well; below it the editor column scrolls instead.
+    private const double MinRow = 20;
     private const int AddStep = 15, DragStep = 5;
     // The static parts of every row are drawn with shared frozen resources instead of new ones per render.
     private static readonly WpfPen GridPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
@@ -50,14 +51,18 @@ internal sealed class ScheduleTimeline : FrameworkElement
 
     private readonly WpfToolTip _tip = new() { Placement = PlacementMode.Relative };
     private IReadOnlyList<TimelinePin> _pins = [];
-    private TimelinePin? _pressed, _dragging;
+    private TimelinePin? _pressed, _dragging, _hoverPin;
+    private (IReadOnlySet<DayOfWeek> Days, TimeOnly Time, bool Remove)? _preview;
     private int _dragMinutes;
     private bool _moved;
     private (DayOfWeek Day, int Minutes)? _hover, _pressedEmpty;
 
+    // Taking focus on a press lets a time being typed in the editor commit before the click changes anything.
     public ScheduleTimeline()
     {
         _tip.PlacementTarget = this;
+        Focusable = true;
+        FocusVisualStyle = null;
     }
 
     private static T Frozen<T>(T resource) where T : Freezable
@@ -76,6 +81,13 @@ internal sealed class ScheduleTimeline : FrameworkElement
     {
         get => _pins;
         set { _pins = value; InvalidateVisual(); }
+    }
+
+    // While a scope menu is open, the option under the pointer shows which days it would add to or remove from.
+    internal (IReadOnlySet<DayOfWeek> Days, TimeOnly Time, bool Remove)? Preview
+    {
+        get => _preview;
+        set { _preview = value; InvalidateVisual(); }
     }
 
     internal IReadOnlySet<DayOfWeek> ActiveDays { get; set; } = new HashSet<DayOfWeek>();
@@ -107,7 +119,8 @@ internal sealed class ScheduleTimeline : FrameworkElement
     }
 
     private WpfPoint PinPoint(TimelinePin pin) =>
-        new(X(Minutes(pin.Time)), RowTop(pin.Day) + RowHeight / 2 + pin.Offset);
+        new(X(Minutes(pin.Time)), RowTop(pin.Day) + RowHeight / 2
+            + pin.Offset * Math.Clamp((TrackHeight - 10) / 28, 0, 1)); // Short rows squeeze the lanes together.
 
     protected override void OnRender(DrawingContext dc)
     {
@@ -159,6 +172,11 @@ internal sealed class ScheduleTimeline : FrameworkElement
             if (day == today && TryFindResource("Brush.Primary.Border") is WpfBrush border) {
                 dc.DrawRoundedRectangle(null, new WpfPen(border, 1), track, 6, 6);
             }
+            if (_preview is { } preview && preview.Days.Contains(day)) {
+                var tint = preview.Remove ? NowColor : ActiveColor;
+                dc.DrawRoundedRectangle(new SolidColorBrush(WpfColor.FromArgb(0x1C, tint.R, tint.G, tint.B)),
+                    new WpfPen(new SolidColorBrush(WpfColor.FromArgb(0x80, tint.R, tint.G, tint.B)), 1), track, 6, 6);
+            }
         }
 
         // Marks and labels go on top of every point so a covered point still shows that it will be skipped.
@@ -171,13 +189,24 @@ internal sealed class ScheduleTimeline : FrameworkElement
             DrawPinMarks(dc, pin, Text);
         }
 
+        if (_preview is { Remove: false } added) {
+            var pen = new WpfPen(new SolidColorBrush(ActiveColor), 2) { DashStyle = new DashStyle([1.5, 1.5], 0) };
+            foreach (var day in added.Days) {
+                var point = new WpfPoint(X(Minutes(added.Time)), RowTop(day) + RowHeight / 2);
+                dc.DrawEllipse(WpfBrushes.White, pen, point, 6, 6);
+                var label = Text(SchedulePreview.TimeText(added.Time), 10, ActiveColor, true);
+                dc.DrawText(label, new WpfPoint(point.X + 11, point.Y - label.Height / 2));
+            }
+        }
+
         var primary = (TryFindResource("Brush.Primary") as SolidColorBrush)?.Color ?? ActiveColor;
-        if (_hover is { } hover && _dragging is null) {
+        if (_hover is { } hover && _dragging is null && _preview is null) {
             var top = TrackTop(hover.Day);
             var x = Math.Round(X(hover.Minutes)) + 0.5;
             dc.DrawLine(new WpfPen(new SolidColorBrush(primary), 1), new WpfPoint(x, top + 2),
                 new WpfPoint(x, top + TrackHeight - 2));
-            DrawTag(dc, Text("+ " + SchedulePreview.TimeText(FromMinutes(hover.Minutes)), 10, WpfColors.White, true),
+            var time = SchedulePreview.TimeText(FromMinutes(hover.Minutes));
+            DrawTag(dc, Text((ActiveDays.Contains(hover.Day) ? "+ " : "新建 ") + time, 10, WpfColors.White, true),
                 x, top - 10, primary);
         }
 
@@ -208,8 +237,18 @@ internal sealed class ScheduleTimeline : FrameworkElement
     {
         var point = DrawnPoint(pin);
         var radius = Radius(pin);
+        // A policy's times are shared by all its days, so pointing at one shows every point that changes with it.
+        if (pin.Role == TimelinePinRole.Active && _hoverPin is { Role: TimelinePinRole.Active } hovered
+            && hovered.PolicyId == pin.PolicyId && hovered.Time == pin.Time && _dragging is null) {
+            dc.DrawEllipse(new SolidColorBrush(WpfColor.FromArgb(0x40, pin.Color.R, pin.Color.G, pin.Color.B)), null,
+                point, radius + 5, radius + 5);
+        }
+        var removed = _preview is { Remove: true } preview && pin.Role == TimelinePinRole.Active
+            && preview.Days.Contains(pin.Day) && preview.Time == pin.Time;
         dc.PushOpacity(pin.Role switch { TimelinePinRole.Sibling => 0.35, TimelinePinRole.Other => 0.8, _ => 1.0 });
-        if (pin.Enabled) {
+        if (removed) {
+            dc.DrawEllipse(new SolidColorBrush(NowColor), new WpfPen(WpfBrushes.White, 2), point, radius, radius);
+        } else if (pin.Enabled) {
             dc.DrawEllipse(new SolidColorBrush(pin.Color),
                 new WpfPen(WpfBrushes.White, pin.Role == TimelinePinRole.Other ? 1 : 2), point, radius, radius);
         } else {
@@ -277,7 +316,7 @@ internal sealed class ScheduleTimeline : FrameworkElement
         if (HitPin(point) is { } pin) {
             ShowTip(pin);
             Cursor = pin.Role == TimelinePinRole.Active ? WpfCursors.SizeWE : WpfCursors.Hand;
-            SetHover(null);
+            SetHover(null, pin);
             return;
         }
         _tip.IsOpen = false;
@@ -295,6 +334,7 @@ internal sealed class ScheduleTimeline : FrameworkElement
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
+        Focus();
         var point = e.GetPosition(this);
         _pressed = HitPin(point);
         _pressedEmpty = null;
@@ -339,10 +379,10 @@ internal sealed class ScheduleTimeline : FrameworkElement
         e.Handled = true;
     }
 
-    private void SetHover((DayOfWeek, int)? hover)
+    private void SetHover((DayOfWeek, int)? hover, TimelinePin? pin = null)
     {
-        if (_hover != hover) {
-            _hover = hover;
+        if (_hover != hover || _hoverPin != pin) {
+            (_hover, _hoverPin) = (hover, pin);
             InvalidateVisual();
         }
     }

@@ -48,8 +48,11 @@ internal static partial class SelfTestRunner
 
             Policies(project, daily, out var policy);
             Call(view, "Timeline_EmptyClicked", DayOfWeek.Wednesday, new TimeOnly(21, 0));
+            Require(Policies(project, daily, out policy).Count == 1 && !policy.Times.Contains(new(21, 0)),
+                "在当前定时包含的星期点击空白处，应先询问范围而不是直接改动。");
+            ChooseScope(view, 2);
             Require(Policies(project, daily, out policy).Count == 1 && policy.Times.Contains(new(21, 0)),
-                "在当前定时包含的星期点击空白处，应把时间加入这条定时。");
+                "选择勾选的星期都加，应把时间加入这条定时。");
             Call(view, "Timeline_EmptyClicked", DayOfWeek.Saturday, new TimeOnly(10, 0));
             var added = Policies(project, daily, out _).Single(p => p.Id != policy.Id);
             Require(added.Days.SequenceEqual([DayOfWeek.Saturday]) && added.Times.SequenceEqual([new TimeOnly(10, 0)]),
@@ -61,7 +64,7 @@ internal static partial class SelfTestRunner
             Call(view, "Timeline_PinMoved", pin(policy.Id, new(21, 0)), new TimeOnly(21, 5));
             Require(Policies(project, daily, out policy).Count == 2 && policy.Times.Contains(new(21, 5))
                 && !policy.Times.Contains(new(21, 0)), "拖动时间点应改成新时间。");
-            view.SelectedTimeInput.Text = "2107";
+            ((System.Windows.Controls.TextBox)Field(view, "_timeEditor")!).Text = "21:07";
             Call(view, "CommitSelectedTime");
             Require(Policies(project, daily, out policy).Count == 2 && policy.Times.Contains(new(21, 7)),
                 "精确时间应可改到任意分钟。");
@@ -72,6 +75,14 @@ internal static partial class SelfTestRunner
             Call(view, "Timeline_DayClicked", DayOfWeek.Monday);
             Require(Policies(project, daily, out policy).Count == 2 && !policy.Days.Contains(DayOfWeek.Monday),
                 "点击星期应把这一天移出当前定时。");
+            Call(view, "Timeline_PinDoubleClicked", view.Timeline.Pins.First(p => p.PolicyId == policy.Id
+                && p.Day == DayOfWeek.Wednesday && p.Time == new TimeOnly(8, 0)));
+            ChooseScope(view, 1);
+            var split = Policies(project, daily, out policy);
+            Require(!policy.Days.Contains(DayOfWeek.Wednesday) && policy.Times.Contains(new(8, 0))
+                && split.Any(p => p.Days.SequenceEqual([DayOfWeek.Wednesday]) && !p.Times.Contains(new(8, 0))
+                    && p.Times.Contains(new(20, 0))),
+                "双击删除时只删周三，应把周三拆成一条不含该时间的定时，其他星期不变。");
 
             Call(view, "Timeline_PinClicked", view.Timeline.Pins.First(p => p.ConfigurationId == empty));
             Require(view.Timeline.Pins.Where(p => p.Role != TimelinePinRole.Other).All(p => p.ConfigurationId == empty),
@@ -87,6 +98,14 @@ internal static partial class SelfTestRunner
             var policies = project.GetSchedulePolicies(id);
             first = policies[0];
             return policies;
+        }
+
+        static void ChooseScope(ScheduleView view, int index)
+        {
+            var menu = (System.Windows.Controls.ContextMenu)Field(view, "_scopeMenu")!;
+            ((System.Windows.Controls.MenuItem)menu.Items[index]).RaiseEvent(
+                new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+            menu.IsOpen = false;
         }
 
         static object? Field(object target, string name) =>
