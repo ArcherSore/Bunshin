@@ -131,8 +131,8 @@ internal static partial class SelfTestRunner
     private static void VerifyPresetMenu(AppLogger logger, string testDirectory, ProjectPlanModule project)
     {
         WithPlanWindow(logger, testDirectory, project, (window, _) => {
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var button = (Button)window.FindName("PresetConfigurationButton");
+            InvokeEditor(window, "RenderTaskPlan");
+            var button = (Button)window.TaskPlanEditor.FindName("PresetConfigurationButton");
             Require(button.Visibility == Visibility.Visible, "有预设时必须展示新建入口。");
             button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var menu = button.ContextMenu!;
@@ -151,7 +151,7 @@ internal static partial class SelfTestRunner
             var plain = CreateProjectFixture(Path.Combine(testDirectory, "no-presets"));
             var plainPath = Path.Combine(plain, "config.json");
             SetOnboardingField(window, "_projectPlan", ProjectPlanModule.Open(plain, plainPath));
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             Require(button.Visibility == Visibility.Collapsed, "未声明预设时必须隐藏新建入口。");
         });
     }

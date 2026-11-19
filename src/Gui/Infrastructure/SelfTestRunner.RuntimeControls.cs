@@ -446,8 +446,10 @@ internal static partial class SelfTestRunner
     private static string[] ShownHeaderControls(MainWindow window) =>
         RuntimeHeaderControls.Where(name => Named<UIElement>(window, name).IsVisible).ToArray();
 
+    // The task plan editor inside the window keeps its own namescope.
     private static T Named<T>(FrameworkElement owner, string name) where T : class =>
-        owner.FindName(name) as T ?? throw new InvalidOperationException($"{owner.GetType().Name} 缺少控件 {name}。");
+        (owner.FindName(name) ?? (owner as MainWindow)?.TaskPlanEditor.FindName(name)) as T
+        ?? throw new InvalidOperationException($"{owner.GetType().Name} 缺少控件 {name}。");
 
     private static void Require(bool condition, string failure)
     {

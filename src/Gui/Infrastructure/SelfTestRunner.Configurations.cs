@@ -74,10 +74,10 @@ internal static partial class SelfTestRunner
     {
         var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "tabs.json"));
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var tabs = window.FindName("ConfigurationTabs") as System.Windows.Controls.TabControl
+            InvokeEditor(window, "RenderTaskPlan");
+            var tabs = window.TaskPlanEditor.FindName("ConfigurationTabs") as System.Windows.Controls.TabControl
                 ?? throw new InvalidOperationException("任务工作区需要配置 Tab 控件。");
-            var add = (System.Windows.Controls.Button)window.FindName("NewConfigurationButton");
+            var add = (System.Windows.Controls.Button)window.TaskPlanEditor.FindName("NewConfigurationButton");
             add.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
             if (project.Configurations.Count != 2 || tabs.Items.Count != 2 || tabs.SelectedIndex != 1) {
                 throw new InvalidOperationException("新建按钮必须创建并激活第二份空配置。");
@@ -88,7 +88,7 @@ internal static partial class SelfTestRunner
             }
             project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
             SetExpandedTask(window, "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             var retry = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Retry count");
@@ -123,7 +123,8 @@ internal static partial class SelfTestRunner
                     busy ? Views.PendingOperation.PreparingEnvironment : Views.PendingOperation.None);
                 InvokeOnboarding(window, "RefreshRuntimeControls");
             }
-            bool LockBadgeShown() => ((System.Windows.UIElement)window.FindName("ConfigurationLockBadge")).Visibility
+            bool LockBadgeShown() =>
+                ((System.Windows.UIElement)window.TaskPlanEditor.FindName("ConfigurationLockBadge")).Visibility
                 == System.Windows.Visibility.Visible;
             var editors = ConfigurationDescendants(items).OfType<System.Windows.Controls.Control>()
                 .Where(editor => editor is System.Windows.Controls.TextBox or System.Windows.Controls.ComboBox
@@ -140,8 +141,8 @@ internal static partial class SelfTestRunner
             var buttons = ConfigurationDescendants(items).OfType<System.Windows.Controls.Button>().ToArray();
             string NameOf(System.Windows.DependencyObject element) =>
                 System.Windows.Automation.AutomationProperties.GetName(element);
-            if (!((System.Windows.UIElement)window.FindName("TaskWorkspacePanel")).IsEnabled
-                || !((System.Windows.UIElement)window.FindName("PlanScroll")).IsEnabled
+            if (!((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskWorkspacePanel")).IsEnabled
+                || !((System.Windows.UIElement)window.TaskPlanEditor.FindName("PlanScroll")).IsEnabled
                 || !buttons.Single(button => NameOf(button).StartsWith("Real task，", StringComparison.Ordinal))
                     .IsEnabled
                 || buttons.Single(button => NameOf(button) == "拖动以调整顺序").IsEnabled
@@ -162,10 +163,10 @@ internal static partial class SelfTestRunner
     private static void VerifyAddedTasksPerConfiguration(Views.MainWindow window)
     {
         var project = ProjectOf(window);
-        var tabs = (System.Windows.Controls.TabControl)window.FindName("ConfigurationTabs");
-        var catalog = (System.Windows.DependencyObject)window.FindName("AvailableTasksPanel");
-        var badge = (System.Windows.UIElement)window.FindName("AddedTasksBadge");
-        var text = (System.Windows.Controls.TextBlock)window.FindName("AddedTasksText");
+        var tabs = (System.Windows.Controls.TabControl)window.TaskPlanEditor.FindName("ConfigurationTabs");
+        var catalog = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("AvailableTasksPanel");
+        var badge = (System.Windows.UIElement)window.TaskPlanEditor.FindName("AddedTasksBadge");
+        var text = (System.Windows.Controls.TextBlock)window.TaskPlanEditor.FindName("AddedTasksText");
         void AddFirstAvailable() => ConfigurationDescendants(catalog).OfType<System.Windows.Controls.Button>()
             .First(button => System.Windows.Automation.AutomationProperties.GetName(button)
                 .StartsWith("添加任务：", StringComparison.Ordinal))
@@ -181,7 +182,7 @@ internal static partial class SelfTestRunner
         var first = project.Configurations[0].SelectedTasks.ToArray();
         tabs.SelectedIndex = 0;
         if (badge.Visibility != System.Windows.Visibility.Collapsed
-            || ((System.Windows.UIElement)window.FindName("TaskShelfContent")).Visibility
+            || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskShelfContent")).Visibility
                 != System.Windows.Visibility.Visible
             || !project.Configurations[1].SelectedTasks.SequenceEqual(second)
             || !project.Configurations[0].SelectedTasks.SequenceEqual(first)) {
@@ -203,13 +204,14 @@ internal static partial class SelfTestRunner
             .OfType<System.Windows.Controls.TextBlock>()
             .SingleOrDefault(item => item.Text == "Use ranges such as 978 or 978-1012"
                 && item.Visibility == System.Windows.Visibility.Visible);
-        bool RevealDraft() => (bool)typeof(Views.MainWindow).GetMethod("RevealInvalidParameter",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
+        bool RevealDraft() => (bool)typeof(Views.TaskPlanEditor).GetMethod("RevealInvalidParameter",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(window.TaskPlanEditor, null)!;
         string SavedServer() => project.Configurations[0].ExplicitOptions["ServerRange"].GetProperty("Inputs")
             .GetProperty("server_range").GetString()!;
 
         SetExpandedTask(window, "RealTask");
-        InvokeOnboarding(window, "RenderTaskPlan");
+        InvokeEditor(window, "RenderTaskPlan");
         var input = Server();
         input.Text = "978-,";
         input.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
@@ -217,11 +219,11 @@ internal static partial class SelfTestRunner
             RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
         });
         if (input.Text != "978-," || Hint() is null || SavedServer() != "979"
-            || ((System.Windows.UIElement)window.FindName("ProjectValidationBorder")).Visibility
+            || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("ProjectValidationBorder")).Visibility
                 == System.Windows.Visibility.Visible) {
             throw new InvalidOperationException("非法输入应保留原文并在字段下提示，不得保存或弹出页面级错误。");
         }
-        InvokeOnboarding(window, "RenderTaskPlan");
+        InvokeEditor(window, "RenderTaskPlan");
         input = Server();
         if (input.Text != "978-," || Hint() is null || !RevealDraft()) {
             throw new InvalidOperationException("未修正的非法输入在重绘后必须保留，并阻止开始任务。");
@@ -268,7 +270,7 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "config.json"));
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
             SetExpandedTask(window, "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             if (!ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                     .Any(item => System.Windows.Automation.AutomationProperties.GetName(item) == "ServerRange")
                 || !ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
@@ -276,7 +278,7 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("option 与 input label 均为空时，参数字段应显示 option 名称。");
             }
             SetExpandedTask(window, null);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
             Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
                 && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7")),
@@ -308,7 +310,7 @@ internal static partial class SelfTestRunner
         project.AddItem(Protocol.PlanItemKind.MaaTask, "OtherTask");
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
             SetExpandedTask(window, "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             System.Windows.Controls.TextBlock? OtherPreview(string text) => ConfigurationDescendants(items)
                 .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => Equals(tag.ToolTip, text));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
@@ -351,7 +353,7 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(projectDirectory, configPath);
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
             SetExpandedTask(window, "RealTask");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
@@ -405,7 +407,7 @@ internal static partial class SelfTestRunner
             () => Task.CompletedTask, () => Task.CompletedTask, _ => Task.CompletedTask);
         try {
             SetOnboardingField(window, "_projectPlan", project);
-            verify(window, (System.Windows.DependencyObject)window.FindName("PlanItemsPanel"));
+            verify(window, (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel"));
         } finally {
             window.AllowClose();
             window.Close();

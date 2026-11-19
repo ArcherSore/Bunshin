@@ -207,7 +207,7 @@ internal static partial class SelfTestRunner
                         // The fake admission already exists; model the editable UI before a real Prepare creates it.
                         SetOnboardingField(window, "_workerSnapshot", new WorkerCoordinatorSnapshot(
                             WorkerObservation.WorkerNotStarted, false, null, "before preparation"));
-                        InvokeOnboarding(window, "RenderTaskPlan");
+                        InvokeEditor(window, "RenderTaskPlan");
                         System.Windows.Controls.CheckBox SkippedSelection() => ConfigurationDescendants(
                             Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel"))
                             .OfType<System.Windows.Controls.CheckBox>().Single(selection =>

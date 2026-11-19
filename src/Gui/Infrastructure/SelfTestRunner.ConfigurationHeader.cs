@@ -13,9 +13,9 @@ internal static partial class SelfTestRunner
 {
     private static void VerifyConfigurationHeader(AppLogger logger, string testDirectory)
     {
-        Require(MainWindow.RevealOffset(0, 300, 400, 100, 32) == 232
-            && MainWindow.RevealOffset(300, 300, 0, 100, 32) == 0
-            && MainWindow.RevealOffset(100, 300, 200, 100, 32) == 100,
+        Require(TaskPlanEditor.RevealOffset(0, 300, 400, 100, 32) == 232
+            && TaskPlanEditor.RevealOffset(300, 300, 0, 100, 32) == 0
+            && TaskPlanEditor.RevealOffset(100, 300, 200, 100, 32) == 100,
             "选中标签滚入视野时应带边距且尽量少移动。");
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "configuration-header"), (window, _) => {
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -25,11 +25,11 @@ internal static partial class SelfTestRunner
                 project.CreateConfiguration();
             }
             project.ActivateConfiguration(project.Configurations[0].Id);
-            InvokeOnboarding(window, "RenderTaskPlan");
-            var tabs = (TabControl)window.FindName("ConfigurationTabs");
-            var bar = (FrameworkElement)window.FindName("ConfigurationBar");
-            var badge = (FrameworkElement)window.FindName("ConfigurationLockBadge");
-            var add = (FrameworkElement)window.FindName("NewConfigurationButton");
+            InvokeEditor(window, "RenderTaskPlan");
+            var tabs = (TabControl)window.TaskPlanEditor.FindName("ConfigurationTabs");
+            var bar = (FrameworkElement)window.TaskPlanEditor.FindName("ConfigurationBar");
+            var badge = (FrameworkElement)window.TaskPlanEditor.FindName("ConfigurationLockBadge");
+            var add = (FrameworkElement)window.TaskPlanEditor.FindName("NewConfigurationButton");
             var scroll = (ScrollViewer)tabs.Template.FindName("ConfigurationScroll", tabs);
             var header = (FrameworkElement)System.Windows.Media.VisualTreeHelper.GetParent(bar);
             var title = ((Panel)header).Children.OfType<TextBlock>().Single(text => text.Text == "任务");
@@ -62,11 +62,12 @@ internal static partial class SelfTestRunner
                     $"{width} 宽度下 14 个配置锁定时，页头应为单行，标题、锁定徽标与新建按钮完整可见。");
             }
             // A small CI screen clamps the window below 1180, where the compact badge is the expected form.
-            Require(((TextBlock)window.FindName("ConfigurationLockText")).Text != "已锁定" == window.ActualWidth >= 1180,
+            Require(((TextBlock)window.TaskPlanEditor.FindName("ConfigurationLockText")).Text != "已锁定"
+                == window.ActualWidth >= 1180,
                 "宽于 1180 时锁定徽标显示完整说明。");
             window.Width = 920;
             PumpOnboarding();
-            Require(((TextBlock)window.FindName("ConfigurationLockText")).Text == "已锁定"
+            Require(((TextBlock)window.TaskPlanEditor.FindName("ConfigurationLockText")).Text == "已锁定"
                 && badge.ToolTip is string reason && reason.Contains("锁定", StringComparison.Ordinal),
                 "窄于 1180 时锁定徽标改为紧凑形式，完整原因保留在提示中。");
 
@@ -106,20 +107,20 @@ internal static partial class SelfTestRunner
                 && Inside(last, scroll) && scroll.HorizontalOffset >= scroll.ScrollableWidth - PixelTolerance
                 && Inside(add, bar), "可编辑时焦点切换选择，最后一个标签带边距完整显示。");
             project.ActivateConfiguration(project.Configurations[0].Id);
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             PumpOnboarding();
             Require(scroll.HorizontalOffset == 0 && Inside(tabs.Items.OfType<TabItem>().First(), scroll),
                 "第一个标签被选中时应完整显示。");
 
-            typeof(MainWindow).GetMethod("ShowProjectValidationError", flags)!
-                .Invoke(window, new object[] { new InvalidDataException("配置校验失败") });
+            typeof(TaskPlanEditor).GetMethod("ShowProjectValidationError", flags)!
+                .Invoke(window.TaskPlanEditor, new object[] { new InvalidDataException("配置校验失败") });
             tabs.SelectedIndex = 1;
             Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[1].Id,
                 "任务配置校验失败时标签条保持显示，并能切换配置。");
-            var drafts = (System.Collections.IDictionary)typeof(MainWindow).GetField("_invalidInputDrafts", flags)!
-                .GetValue(window)!;
+            var drafts = (System.Collections.IDictionary)typeof(TaskPlanEditor).GetField("_invalidInputDrafts", flags)!
+                .GetValue(window.TaskPlanEditor)!;
             drafts[(project.ActiveConfigurationId, "ServerRange", "server_range")] = new InputDraft("978-,", "格式错误");
-            InvokeOnboarding(window, "RenderTaskPlan");
+            InvokeEditor(window, "RenderTaskPlan");
             tabs.SelectedIndex = 0;
             Require(bar.IsVisible && project.ActiveConfigurationId == project.Configurations[0].Id,
                 "参数存在无效草稿时标签条保持显示，并能切换配置。");

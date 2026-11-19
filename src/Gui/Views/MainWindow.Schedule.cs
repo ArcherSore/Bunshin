@@ -19,12 +19,12 @@ public partial class MainWindow
     }
 
     // Unfixed invalid drafts block the configuration like they block Start, without saving them.
-    private RunStartAttempt CreateConfigurationAttempt(ProjectPlanModule project, Guid configurationId)
-    {
-        var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == configurationId)
-            .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value.Message);
-        return project.CreateRunStartAttempt(configurationId, inputErrors: drafts);
-    }
+    private RunStartAttempt CreateConfigurationAttempt(ProjectPlanModule project, Guid configurationId) =>
+        project.CreateRunStartAttempt(configurationId, inputErrors: TaskPlanEditor.InvalidInputs(configurationId));
+
+    // A missing id must not throw: a configuration deleted in the meantime only loses its name in the log.
+    private string? ConfigurationName(Guid id) =>
+        _projectPlan?.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
 
     // The capsule repeats the home page's run status in four words; the console itself stays on the home page.
     private void ApplyScheduleCapsule(StatusTone tone)

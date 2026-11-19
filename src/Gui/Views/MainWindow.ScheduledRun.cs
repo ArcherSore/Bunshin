@@ -52,9 +52,7 @@ public partial class MainWindow
 
     private void RenderScheduledActivation(Guid configurationId)
     {
-        RenderConfigurationChange(
-            ConfigurationTabs.SelectedItem is not System.Windows.Controls.TabItem { Tag: Guid shown }
-            || shown != configurationId);
+        TaskPlanEditor.RenderActivatedConfiguration(configurationId);
         if (ScheduleView.IsVisible) {
             ScheduleView.Refresh();
         }
@@ -170,7 +168,7 @@ public partial class MainWindow
         ScheduledRunResult? SaveEditor()
         {
             try {
-                CommitFocusedConfigurationInput(unattended: true);
+                TaskPlanEditor.CommitFocusedConfigurationInput(unattended: true);
                 return null;
             } catch (Exception error) {
                 var reason = $"无法保存配置「{ActiveConfigurationName}」";

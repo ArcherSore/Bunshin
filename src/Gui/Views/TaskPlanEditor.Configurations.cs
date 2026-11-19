@@ -5,7 +5,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Gui.Infrastructure;
-using Gui.Worker;
 using WpfButton = System.Windows.Controls.Button;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using ContextMenu = System.Windows.Controls.ContextMenu;
@@ -13,7 +12,7 @@ using MenuItem = System.Windows.Controls.MenuItem;
 
 namespace Gui.Views;
 
-public partial class MainWindow
+public sealed partial class TaskPlanEditor
 {
     // The selected tab is scrolled clear of the edge fades; one wheel notch moves the tabs this far.
     private const double ConfigurationTabRevealMargin = 32;
@@ -24,8 +23,8 @@ public partial class MainWindow
 
     private void RenderConfigurationTabs()
     {
-        var project = _projectPlan!;
-        _settings.UpdateAutoRunConfigurations(AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
+        var project = Project!;
+        ConfigurationsRendered?.Invoke(this, project);
         PresetConfigurationButton.Visibility = project.Presets.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         var existing = ConfigurationTabs.Items.Cast<TabItem>().ToArray();
         if (!existing.Select(item => (Id: (Guid)item.Tag, Name: AutomationProperties.GetName(item)))
@@ -53,7 +52,7 @@ public partial class MainWindow
                 }
                 AutomationProperties.SetName(delete, $"删除配置 {configuration.Name}");
                 delete.PreviewMouseLeftButtonDown += (_, e) => {
-                    if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not null
+                    if (!Editable || _configurationNameEditor is not null
                         || !CommitFocusedConfigurationInput()) {
                         e.Handled = true;
                     } else {
@@ -75,7 +74,7 @@ public partial class MainWindow
                 header.Children.Add(delete);
                 var tab = new ConfigurationTab {
                     Tag = configuration.Id, Header = header, Style = (Style)FindResource("Configuration.Tab"),
-                    CanSwitch = () => CurrentControls.ConfigurationEditable
+                    CanSwitch = () => Editable
                 };
                 label.SetBinding(TextBlock.FontWeightProperty,
                     new System.Windows.Data.Binding(nameof(FontWeight)) { Source = tab });
@@ -107,7 +106,7 @@ public partial class MainWindow
     // Locked, the tabs still scroll and take focus, but only the active one reads as available.
     private void RefreshConfigurationTabStates()
     {
-        var locked = CurrentControls.ConfigurationLock;
+        var locked = _configurationLock();
         foreach (TabItem tab in ConfigurationTabs.Items) {
             var name = AutomationProperties.GetName(tab);
             var blocked = locked is not null && !tab.IsSelected;
@@ -180,14 +179,14 @@ public partial class MainWindow
         }
     }
 
-    protected override void OnSourceInitialized(EventArgs e)
+    // The hook goes on the window's source, which the window hands over once it exists.
+    internal void AddConfigurationWheelHook(HwndSource? source)
     {
-        base.OnSourceInitialized(e);
-        _configurationWheelSource = PresentationSource.FromVisual(this) as HwndSource;
+        _configurationWheelSource = source;
         _configurationWheelSource?.AddHook(ConfigurationWheelHook);
     }
 
-    private void RemoveConfigurationWheelHook()
+    internal void RemoveConfigurationWheelHook()
     {
         _configurationWheelSource?.RemoveHook(ConfigurationWheelHook);
         _configurationWheelSource = null;
@@ -231,7 +230,7 @@ public partial class MainWindow
         }
     }
 
-    private bool CommitFocusedConfigurationInput(bool unattended = false)
+    internal bool CommitFocusedConfigurationInput(bool unattended = false)
     {
         if (Keyboard.FocusedElement is not WpfTextBox editor) {
             return true;
@@ -243,14 +242,14 @@ public partial class MainWindow
     private void NewConfigurationButton_Click(object sender, RoutedEventArgs e)
     {
         ChangeConfiguration(() => {
-            var id = _projectPlan!.CreateConfiguration();
+            var id = Project!.CreateConfiguration();
             _logger.Info($"已新建配置{AppLogger.Field("name", ConfigurationName(id))}");
         });
     }
 
     // A missing id must not throw: deleting an already removed configuration stays a quiet no-op.
     private string? ConfigurationName(Guid id) =>
-        _projectPlan?.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
+        Project?.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
 
     private void PresetConfigurationButton_Click(object sender, RoutedEventArgs e)
     {
@@ -258,12 +257,12 @@ public partial class MainWindow
             PlacementTarget = PresetConfigurationButton,
             Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
         };
-        foreach (var preset in _projectPlan!.Presets) {
+        foreach (var preset in Project!.Presets) {
             var item = new MenuItem { Header = preset.Label, ToolTip = preset.Description };
             AutomationProperties.SetName(item, $"从预设新建配置：{preset.Label}");
             BindConfigurationEditable(item);
             item.Click += (_, _) => ChangeConfiguration(() => {
-                var id = _projectPlan!.CreateConfigurationFromPreset(preset.Name);
+                var id = Project!.CreateConfigurationFromPreset(preset.Name);
                 _logger.Info($"已从预设新建配置{AppLogger.Field("preset", preset.Name)}"
                     + AppLogger.Field("name", ConfigurationName(id)));
             });
@@ -280,8 +279,8 @@ public partial class MainWindow
             return;
         }
         ChangeConfiguration(() => {
-            var from = _projectPlan!.ActiveConfigurationId;
-            _projectPlan.ActivateConfiguration(id);
+            var from = Project!.ActiveConfigurationId;
+            Project.ActivateConfiguration(id);
             if (from != id) {
                 _logger.Info($"已切换配置{AppLogger.Field("from", ConfigurationName(from))}"
                     + AppLogger.Field("to", ConfigurationName(id)));
@@ -294,13 +293,17 @@ public partial class MainWindow
         if (sender is WpfButton { Tag: Guid id }) {
             ChangeConfiguration(() => {
                 var name = ConfigurationName(id);
-                if (_projectPlan!.DeleteConfiguration(id)) {
+                if (Project!.DeleteConfiguration(id)) {
                     _logger.Info($"已删除配置{AppLogger.Field("name", name)}"
-                        + AppLogger.Field("active", ConfigurationName(_projectPlan.ActiveConfigurationId)));
+                        + AppLogger.Field("active", ConfigurationName(Project.ActiveConfigurationId)));
                 }
             });
         }
     }
+
+    // A scheduled start activates its configuration itself; the tabs then only follow.
+    internal void RenderActivatedConfiguration(Guid configurationId) => RenderConfigurationChange(
+        ConfigurationTabs.SelectedItem is not TabItem { Tag: Guid shown } || shown != configurationId);
 
     private void RenderConfigurationChange(bool switched)
     {
@@ -308,37 +311,35 @@ public partial class MainWindow
             _addedSinceShelfOpened.Clear();
             UpdateAddedTasks();
         }
-        _pendingStartAttempt = null;
+        PlanEdited?.Invoke(this, EventArgs.Empty);
         _expandedTask = null;
         _dragTask = null;
         EndConfigurationRename();
-        CloseTaskDescriptionDrawer();
+        TaskDescriptionCloseRequested?.Invoke(this, EventArgs.Empty);
         RenderTaskPlan();
     }
 
-    // Returns whether the change was made. An unattended change (started by the launch itself) reports a refusal or
-    // failure without a dialog nobody can answer.
-    private bool ChangeConfiguration(Action change, bool unattended = false)
+    // Returns whether the change was made. An unattended change (started by the launch itself) names where a refusal
+    // or failure is reported, without a dialog nobody can answer.
+    internal bool ChangeConfiguration(Action change, Action<Exception>? unattendedFailure = null)
     {
-        if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not null
+        if (!Editable || _configurationNameEditor is not null
             || !CommitFocusedConfigurationInput()) {
-            if (_projectPlan is not null) {
+            if (Project is not null) {
                 RestoreConfigurationSelection();
             }
-            if (unattended) {
-                ReportAutoRunFailure("无法切换到所选配置。");
-            }
+            unattendedFailure?.Invoke(new InvalidOperationException("无法切换到所选配置。"));
             return false;
         }
         try {
-            var previous = _projectPlan?.ActiveConfigurationId;
+            var previous = Project?.ActiveConfigurationId;
             change();
-            RenderConfigurationChange(_projectPlan?.ActiveConfigurationId != previous);
+            RenderConfigurationChange(Project?.ActiveConfigurationId != previous);
             return true;
         } catch (Exception exception) {
             RestoreConfigurationSelection();
-            if (unattended) {
-                ReportUnattendedFailure("自动执行", exception);
+            if (unattendedFailure is not null) {
+                unattendedFailure(exception);
             } else {
                 HandleProjectEditError("保存任务配置失败", exception);
             }
@@ -358,7 +359,7 @@ public partial class MainWindow
 
     private void BeginConfigurationRename(TabItem tab)
     {
-        if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not null
+        if (!Editable || _configurationNameEditor is not null
             || !CommitFocusedConfigurationInput()) {
             return;
         }
@@ -412,7 +413,7 @@ public partial class MainWindow
 
     private bool CommitConfigurationName(bool unattended = false)
     {
-        if (!CurrentControls.ConfigurationEditable || _configurationNameEditor is not { Tag: Guid id } editor
+        if (!Editable || _configurationNameEditor is not { Tag: Guid id } editor
             || _committingConfigurationInput) {
             return true;
         }
@@ -420,7 +421,7 @@ public partial class MainWindow
         try {
             if (!string.IsNullOrWhiteSpace(editor.Text)) {
                 var from = ConfigurationName(id);
-                _projectPlan!.RenameConfiguration(id, editor.Text);
+                Project!.RenameConfiguration(id, editor.Text);
                 if (ConfigurationName(id) != from) {
                     _logger.Info($"已重命名配置{AppLogger.Field("from", from)}"
                         + AppLogger.Field("to", ConfigurationName(id)));
@@ -430,9 +431,9 @@ public partial class MainWindow
             RestoreConfigurationSelection();
             return true;
         } catch (Exception exception) when (!unattended) {
-            editor.Text = _projectPlan!.Configurations.Single(item => item.Id == id).Name;
+            editor.Text = Project!.Configurations.Single(item => item.Id == id).Name;
             EndConfigurationRename();
-            HandleOperationError("保存配置名称失败", exception);
+            _editFailed("保存配置名称失败", exception);
             return false;
         } finally {
             _committingConfigurationInput = false;
@@ -442,7 +443,7 @@ public partial class MainWindow
     private bool CommitOptionInput(WpfTextBox textBox, bool unattended = false)
     {
         var text = GetInputText(textBox);
-        if (_updatingOptionEditors || _committingConfigurationInput || !CurrentControls.ConfigurationEditable
+        if (_updatingOptionEditors || _committingConfigurationInput || !Editable
             || textBox.Tag is not OptionInputTag tag || tag.Submitted && text == tag.Value) {
             return true;
         }
@@ -451,7 +452,7 @@ public partial class MainWindow
         }
         _committingConfigurationInput = true;
         try {
-            if (_projectPlan!.CheckInputValue(tag.OptionName, tag.InputName, text) is { } problem) {
+            if (Project!.CheckInputValue(tag.OptionName, tag.InputName, text) is { } problem) {
                 // A rejected value is a typo, not a failure: keep the text and explain it under the field.
                 // The saved value is unchanged; the draft survives re-rendering until it is fixed or Esc restores it.
                 var message = tag.PatternMessage ?? problem;
@@ -461,17 +462,17 @@ public partial class MainWindow
                 _logger.Info($"input 未通过校验，未保存：option={tag.OptionName}，input={tag.InputName}。 ");
                 return false;
             }
-            _projectPlan.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text);
+            Project.SetInputValue(tag.ConfigurationId, tag.OptionName, tag.InputName, text);
             _invalidInputDrafts.Remove(tag.Key);
             textBox.Tag = tag with { Value = text, Submitted = true };
-            _pendingStartAttempt = null;
+            PlanEdited?.Invoke(this, EventArgs.Empty);
             ShowOptionInputError(textBox, null);
             RefreshAfterOptionSaved(rebuildCards: false);
             return true;
         } catch (Exception exception) when (!unattended) {
             SetInputText(textBox, tag.Value);
             textBox.Tag = tag with { Submitted = true };
-            HandleOperationError("保存 input option 失败", exception);
+            _editFailed("保存 input option 失败", exception);
             ShowProjectValidationError(exception);
             return false;
         } finally {
