@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -13,6 +14,8 @@ using WpfBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
 using WpfColor = System.Windows.Media.Color;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using MenuItem = System.Windows.Controls.MenuItem;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfOrientation = System.Windows.Controls.Orientation;
 using WpfTextBlock = System.Windows.Controls.TextBlock;
@@ -20,6 +23,10 @@ using WpfTextBlock = System.Windows.Controls.TextBlock;
 namespace Gui.Views;
 
 internal enum ScheduleRuntimeTone { Idle, Busy, Run, Failed }
+
+// One choice of a scope menu; Days and Remove drive the timeline preview while the choice is pointed at.
+internal sealed record ScheduleScopeOption(string Header, string? Note, IReadOnlyCollection<DayOfWeek> Days,
+    bool Remove, Action Apply);
 
 // The schedule page: every configuration's weekly policies on one timeline, one configuration edited at a time.
 // Policies are saved through ProjectPlanModule as soon as they change; this view keeps only what is selected.
@@ -38,10 +45,24 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
     private Guid? _focus;
     private (Guid PolicyId, TimeOnly Time)? _selected;
     private SchedulePreview? _preview;
+    private ContextMenu? _scopeMenu;
+    private string? _shareHintPath;
+    private bool _shareHintClosed;
+    // One editor moves into whichever chip is selected, so a refresh while typing keeps the caret.
+    private readonly System.Windows.Controls.TextBox _timeEditor;
 
     public ScheduleView()
     {
         InitializeComponent();
+        _timeEditor = new() { Style = (Style)FindResource("Schedule.TimeEditor") };
+        AutomationProperties.SetName(_timeEditor, "精确时间");
+        InputMethod.SetIsInputMethodEnabled(_timeEditor, false);
+        _timeEditor.PreviewTextInput += TimeEditor_PreviewTextInput;
+        _timeEditor.PreviewKeyDown += TimeEditor_PreviewKeyDown;
+        _timeEditor.LostKeyboardFocus += (_, _) => CommitSelectedTime();
+        // Pasting or cutting could drop the colon; typing digits covers every edit.
+        CommandManager.AddPreviewExecutedHandler(_timeEditor, (_, e) => e.Handled =
+            e.Command == ApplicationCommands.Paste || e.Command == ApplicationCommands.Cut);
         _tick.Tick += (_, _) => Refresh();
         IsVisibleChanged += (_, _) => {
             if (IsVisible) {
@@ -55,17 +76,19 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         Timeline.DayClicked += Timeline_DayClicked;
         Timeline.PinClicked += Timeline_PinClicked;
         Timeline.PinMoved += Timeline_PinMoved;
-        Timeline.PinDoubleClicked += pin => EditPolicy(pin.PolicyId,
-            p => p with { Times = p.Times.Where(t => t != pin.Time).ToArray() }, clearSelection: true);
+        Timeline.PinDoubleClicked += Timeline_PinDoubleClicked;
         SetRuntimeStatus("空闲", ScheduleRuntimeTone.Idle);
     }
 
     internal event EventHandler? HomeRequested;
 
+    // The shared-times hint is closed once for every configuration; the file under the config folder remembers it.
     internal void Attach(Func<ProjectPlanModule?> project, Func<Guid, string?> invalidReason,
-        Action<string, Exception> editFailed, TimeProvider clock)
+        Action<string, Exception> editFailed, TimeProvider clock, string shareHintPath)
     {
         (_project, _invalidReason, _editFailed, _clock) = (project, invalidReason, editFailed, clock);
+        _shareHintPath = shareHintPath;
+        _shareHintClosed = File.Exists(shareHintPath);
     }
 
     internal void SetRuntimeStatus(string text, ScheduleRuntimeTone tone)
@@ -271,21 +294,25 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 Fill = policy.Enabled ? color : WpfBrushes.Transparent,
                 Stroke = policy.Enabled ? null : (WpfBrush)FindResource("Brush.Border.Strong"), StrokeThickness = 2
             });
-            content.Children.Add(new WpfTextBlock { Text = policy.Name, Margin = new Thickness(7, 0, 0, 0) });
-            content.Children.Add(new WpfTextBlock {
-                Text = policy.Times.Count.ToString(), Margin = new Thickness(7, 0, 0, 0), FontSize = 11,
-                Foreground = (WpfBrush)FindResource("Brush.Text.Muted"), VerticalAlignment = VerticalAlignment.Center
+            var text = new StackPanel { Margin = new Thickness(8, 0, 0, 0), MaxWidth = 220 };
+            text.Children.Add(new WpfTextBlock { Text = policy.Name, TextTrimming = TextTrimming.CharacterEllipsis });
+            text.Children.Add(new WpfTextBlock {
+                Text = SchedulePreview.ShortSummary(policy), FontSize = 11, FontWeight = FontWeights.Normal,
+                TextTrimming = TextTrimming.CharacterEllipsis, Foreground = (WpfBrush)FindResource("Brush.Text.Muted")
             });
+            content.Children.Add(text);
             var isActive = policy == active;
             var chip = new WpfButton {
-                Content = content, Height = 30, Padding = new Thickness(10, 0, 10, 0),
-                Margin = new Thickness(0, 0, 6, 0),
+                Content = content, Height = 42, Padding = new Thickness(10, 0, 12, 0),
+                Margin = new Thickness(0, 0, 6, 0), ToolTip = SchedulePreview.Summary(policy),
                 Style = (Style)FindResource("SubtleButtonStyle"), Background = (WpfBrush)FindResource("Brush.Surface"),
                 BorderBrush = isActive ? color : (WpfBrush)FindResource("Brush.Border"),
                 BorderThickness = new Thickness(isActive ? 2 : 1), FontWeight = isActive ? FontWeights.SemiBold
                     : FontWeights.Normal
             };
             AutomationProperties.SetName(chip, $"{policy.Name}，{SchedulePreview.Summary(policy)}");
+            // The short summary hides times, so the full list opens after the system hover time.
+            ToolTipService.SetInitialShowDelay(chip, (int)SystemParameters.MouseHoverTime.TotalMilliseconds);
             chip.Click += (_, _) => {
                 _activePolicy[focus.Id] = policy.Id;
                 _selected = null;
@@ -299,7 +326,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             Content = new SymbolIcon { Symbol = SymbolRegular.Add16, FontSize = 15 }
         };
         AutomationProperties.SetName(add, "新建定时");
-        add.Click += (_, _) => AddPolicy(focus, "定时 " + (focus.SchedulePolicies.Count + 1), null, null);
+        add.Click += (_, _) => AddPolicy(focus, "定时 " + (focus.SchedulePolicies.Count + 1));
         PolicyBar.Children.Add(add);
     }
 
@@ -319,16 +346,20 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         PresetWeekdays.IsChecked = days.SetEquals(SchedulePreview.WeekOrder[..5]);
         PresetWeekend.IsChecked = days.SetEquals(SchedulePreview.WeekOrder[5..]);
         PresetEveryDay.IsChecked = days.Count == 7;
-        var selected = _selected is { } s && s.PolicyId == policy.Id ? s.Time : (TimeOnly?)null;
-        SelectedTimeRow.Visibility = selected is null ? Visibility.Collapsed : Visibility.Visible;
-        if (selected is { } time) {
-            SelectedTimeText.Text = "● " + SchedulePreview.TimeText(time);
-            SelectedTimeText.Foreground = Inspector.BorderBrush;
-            if (!SelectedTimeInput.IsKeyboardFocusWithin) {
-                SelectedTimeInput.Text = SchedulePreview.TimeText(time);
-            }
-            SelectedTimeShared.Text = $"{SchedulePreview.DaysText(policy.Days)}共用";
+        RenderDays(policy, color);
+        // While the editor has focus its chip stays as it is; leaving it commits and renders again. Everything that
+        // selects another time takes focus first, so this only skips the editor's own changes and the clock tick.
+        if (!_timeEditor.IsKeyboardFocusWithin || _selected is not { } editing || editing.PolicyId != policy.Id
+            || !policy.Times.Contains(editing.Time)) {
+            RenderTimes(policy, color);
         }
+        var rest = SchedulePreview.WeekOrder.Where(d => !days.Contains(d)).ToArray();
+        ShareHint.Visibility = _shareHintClosed ? Visibility.Collapsed : Visibility.Visible;
+        SplitRestButton.Visibility = rest.Length == 0 || policy.Times.Count == 0 ? Visibility.Collapsed
+            : Visibility.Visible;
+        SplitRestButton.Content = new WpfTextBlock {
+            Text = $"为{SchedulePreview.DaysText(rest)}新建定时", Foreground = (WpfBrush)FindResource("Brush.Primary")
+        };
         IssuesPanel.Children.Clear();
         foreach (var (error, text) in _preview!.Issues(focus, policy)) {
             var row = new DockPanel();
@@ -348,6 +379,118 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             IssuesPanel.Children.Add(box);
         }
     }
+
+    // The day buttons are created once, so a click that first commits a typed time still lands on them.
+    private void RenderDays(SchedulePolicy policy, WpfColor color)
+    {
+        if (DayChips.Children.Count == 0) {
+            foreach (var day in SchedulePreview.WeekOrder) {
+                var chip = new ToggleButton {
+                    Content = SchedulePreview.DayName(day)[1..], Tag = day, Style = (Style)FindResource("Schedule.Day")
+                };
+                AutomationProperties.SetName(chip, SchedulePreview.DayName(day));
+                chip.Click += (_, _) => Timeline_DayClicked(day);
+                DayChips.Children.Add(chip);
+            }
+        }
+        foreach (ToggleButton chip in DayChips.Children) {
+            chip.IsChecked = policy.Days.Contains((DayOfWeek)chip.Tag);
+            if (chip.IsChecked == true) {
+                chip.Background = chip.BorderBrush = new SolidColorBrush(color);
+                chip.Foreground = WpfBrushes.White;
+            } else {
+                chip.ClearValue(BackgroundProperty);
+                chip.ClearValue(BorderBrushProperty);
+                chip.ClearValue(ForegroundProperty);
+            }
+        }
+    }
+
+    private void RenderTimes(SchedulePolicy policy, WpfColor color)
+    {
+        TimeChips.Children.Clear();
+        (_timeEditor.Parent as System.Windows.Controls.Panel)?.Children.Remove(_timeEditor);
+        var brush = new SolidColorBrush(color);
+        foreach (var time in policy.Times) {
+            var selected = _selected is { } s && s.PolicyId == policy.Id && s.Time == time;
+            var row = new StackPanel { Orientation = WpfOrientation.Horizontal };
+            if (selected) {
+                _timeEditor.Text = SchedulePreview.TimeText(time);
+                row.Children.Add(_timeEditor);
+            } else {
+                // Same width as the editor, so selecting a chip does not change its length.
+                // Colours are set on the text itself: the app-wide TextBlock style ignores inherited ones.
+                row.Children.Add(new WpfTextBlock {
+                    Text = SchedulePreview.TimeText(time), Width = 46, Padding = new Thickness(2, 0, 2, 0),
+                    FontSize = 14, FontWeight = FontWeights.Bold, Foreground = brush,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            }
+            var remove = new WpfButton {
+                Style = (Style)FindResource("Schedule.ChipRemove"), Margin = new Thickness(2, 0, 0, 0), ToolTip = "删除",
+                Content = new SymbolIcon {
+                    Symbol = SymbolRegular.Dismiss12, FontSize = 9,
+                    Foreground = selected ? WpfBrushes.White : (WpfBrush)FindResource("Brush.Text.Muted")
+                }
+            };
+            AutomationProperties.SetName(remove, $"删除 {SchedulePreview.TimeText(time)}");
+            // The chip buttons are rebuilt by every refresh, so they never take focus; a time being typed elsewhere
+            // is committed here instead, and deleting the edited chip drops what was typed.
+            remove.Click += (_, _) => {
+                if (!selected) {
+                    Keyboard.ClearFocus();
+                }
+                var removed = selected && _selected is { } typed ? typed.Time : time;
+                EditPolicy(policy.Id, p => p with { Times = p.Times.Where(t => t != removed).ToArray() },
+                    clearSelection: true);
+            };
+            row.Children.Add(remove);
+            var chip = new Border {
+                Child = row, Height = 30, CornerRadius = new CornerRadius(15), Padding = new Thickness(12, 0, 5, 0),
+                Margin = new Thickness(0, 0, 6, 6), BorderThickness = new Thickness(1),
+                Background = selected ? brush : Tint(0x1A), BorderBrush = selected ? brush : Tint(0x70),
+                Cursor = selected ? System.Windows.Input.Cursors.IBeam : System.Windows.Input.Cursors.Hand
+            };
+            TextElement.SetForeground(chip, selected ? WpfBrushes.White : brush);
+            if (!selected) {
+                chip.MouseLeftButtonUp += (_, _) => SelectTime(policy.Id, time);
+            }
+            TimeChips.Children.Add(chip);
+        }
+        var add = new WpfButton {
+            Content = "+ 时间", Style = (Style)FindResource("Schedule.AddTime"), BorderBrush = brush,
+            Foreground = brush
+        };
+        AutomationProperties.SetName(add, "添加时间");
+        add.Click += (_, _) => {
+            Keyboard.ClearFocus();
+            if (EditedPolicy is not { } current) {
+                return;
+            }
+            var time = new TimeOnly(12, 0);
+            for (var i = 0; i < 96 && current.Times.Contains(time); i++) {
+                time = time.AddMinutes(15);
+            }
+            EditPolicy(current.Id, p => p with { Times = [.. p.Times, time] }, select: time);
+            FocusTimeEditor();
+        };
+        TimeChips.Children.Add(add);
+
+        SolidColorBrush Tint(byte alpha) => new(WpfColor.FromArgb(alpha, color.R, color.G, color.B));
+    }
+
+    private void SelectTime(Guid policyId, TimeOnly time)
+    {
+        Keyboard.ClearFocus();
+        _selected = (policyId, time);
+        Refresh();
+        FocusTimeEditor();
+    }
+
+    private void FocusTimeEditor() => Dispatcher.BeginInvoke(() => {
+        _timeEditor.Focus();
+        _timeEditor.SelectAll();
+    }, DispatcherPriority.Input);
 
     // Policy edits are saved immediately; a failed save is reported and the view shows what was stored.
     private void Edit(string operation, Action<ProjectPlanModule> change)
@@ -379,29 +522,99 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         Edit("保存定时失败", project => project.UpdateSchedulePolicy(focus.Id, change(policy)));
     }
 
-    private void AddPolicy(TaskConfiguration focus, string name, DayOfWeek? day, TimeOnly? time)
+    private void AddPolicy(TaskConfiguration focus, string name, IReadOnlyList<DayOfWeek>? days = null,
+        IReadOnlyList<TimeOnly>? times = null)
     {
         Edit("新建定时失败", project => {
             var policy = project.AddSchedulePolicy(focus.Id, name);
-            if (day is { } d && time is { } t) {
-                policy = policy with { Days = [d], Times = [t] };
+            if (days is not null && times is not null) {
+                policy = policy with { Days = days, Times = times };
                 project.UpdateSchedulePolicy(focus.Id, policy);
             }
             _activePolicy[focus.Id] = policy.Id;
-            _selected = (policy.Id, policy.Times[0]);
+            _selected = policy.Times.Count == 0 ? null : (policy.Id, policy.Times[0]);
         });
     }
 
+    // Times are shared by every day of a policy, so a click on one of its days asks whether to add for that day
+    // alone (a new policy) or for all of them. Clicking a day outside the policy starts a new one directly.
     private void Timeline_EmptyClicked(DayOfWeek day, TimeOnly time)
     {
         if (Focused is not { } focus) {
             return;
         }
-        if (ActivePolicy(focus) is { } policy && policy.Days.Contains(day)) {
-            EditPolicy(policy.Id, p => p with { Times = [.. p.Times, time] }, select: time);
-        } else {
-            AddPolicy(focus, $"{SchedulePreview.DayName(day)} {SchedulePreview.TimeText(time)}", day, time);
+        var single = $"{SchedulePreview.DayName(day)} {SchedulePreview.TimeText(time)}";
+        if (ActivePolicy(focus) is not { } policy || !policy.Days.Contains(day)) {
+            AddPolicy(focus, single, [day], [time]);
+            return;
         }
+        void AddToAll() => EditPolicy(policy.Id, p => p with { Times = [.. p.Times, time] }, select: time);
+        if (policy.Days.Count == 1) {
+            AddToAll();
+            return;
+        }
+        OpenScopeMenu($"添加 {SchedulePreview.TimeText(time)}", time,
+            new($"只在{SchedulePreview.DayName(day)}", "新建一条定时", [day], false,
+                () => AddPolicy(focus, single, [day], [time])),
+            new($"{SchedulePreview.DaysText(policy.Days)}都加", $"加入「{policy.Name}」", policy.Days, false, AddToAll));
+    }
+
+    private void Timeline_PinDoubleClicked(TimelinePin pin)
+    {
+        if (Focused is not { } focus || focus.SchedulePolicies.FirstOrDefault(p => p.Id == pin.PolicyId) is not
+            { } policy) {
+            return;
+        }
+        void RemoveFromAll() => EditPolicy(policy.Id,
+            p => p with { Times = p.Times.Where(t => t != pin.Time).ToArray() }, clearSelection: true);
+        if (policy.Days.Count == 1) {
+            RemoveFromAll();
+            return;
+        }
+        var day = SchedulePreview.DayName(pin.Day);
+        var rest = policy.Times.Where(t => t != pin.Time).ToArray();
+        OpenScopeMenu($"删除 {SchedulePreview.TimeText(pin.Time)}", pin.Time,
+            new($"只删{day}的", rest.Length == 0 ? $"{day}移出这条定时" : $"{day}拆成一条新定时", [pin.Day], true,
+                () => SplitDay(focus, policy, pin.Day, rest)),
+            new($"{SchedulePreview.DaysText(policy.Days)}都删", null, policy.Days, true, RemoveFromAll));
+    }
+
+    // Removing a time from one day only: that day leaves the policy and keeps its other times in a new one.
+    private void SplitDay(TaskConfiguration focus, SchedulePolicy policy, DayOfWeek day, TimeOnly[] rest)
+    {
+        _selected = null;
+        Edit("保存定时失败", project => {
+            project.UpdateSchedulePolicy(focus.Id, policy with { Days = policy.Days.Where(d => d != day).ToArray() });
+            if (rest.Length != 0) {
+                var split = project.AddSchedulePolicy(focus.Id, $"{policy.Name} · {SchedulePreview.DayName(day)}");
+                project.UpdateSchedulePolicy(focus.Id,
+                    split with { Enabled = policy.Enabled, Days = [day], Times = rest });
+            }
+        });
+    }
+
+    private void OpenScopeMenu(string title, TimeOnly time, params ScheduleScopeOption[] options)
+    {
+        var itemStyle = (Style)FindResource("Schedule.ScopeItem");
+        var menu = new ContextMenu {
+            Style = (Style)FindResource("FloatingContextMenuStyle"), PlacementTarget = Timeline,
+            Placement = PlacementMode.MousePoint
+        };
+        menu.Items.Add(new MenuItem {
+            Header = title, IsEnabled = false, Style = itemStyle, FontSize = 11.5, FontWeight = FontWeights.Normal,
+            Foreground = (WpfBrush)FindResource("Brush.Text.Muted"), Cursor = System.Windows.Input.Cursors.Arrow
+        });
+        foreach (var option in options) {
+            var item = new MenuItem { Header = option.Header, Tag = option.Note, Style = itemStyle };
+            void Show() => Timeline.Preview = (option.Days.ToHashSet(), time, option.Remove);
+            item.MouseEnter += (_, _) => Show();
+            item.GotKeyboardFocus += (_, _) => Show();
+            item.Click += (_, _) => option.Apply();
+            menu.Items.Add(item);
+        }
+        menu.Closed += (_, _) => Timeline.Preview = null;
+        _scopeMenu = menu;
+        menu.IsOpen = true;
     }
 
     private void Timeline_DayClicked(DayOfWeek day)
@@ -487,35 +700,134 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         Edit("删除定时失败", project => project.DeleteSchedulePolicy(focus.Id, policy.Id));
     }
 
+    // Out-of-range digits are clamped rather than rejected: 29:75 becomes 23:59.
+    private TimeOnly? EditorTime()
+    {
+        var text = _timeEditor.Text;
+        if (text.Length == 5 && text[2] == ':' && int.TryParse(text[..2], out var hour)
+            && int.TryParse(text[3..], out var minute)) {
+            return new TimeOnly(Math.Min(hour, 23), Math.Min(minute, 59));
+        }
+        return SchedulePreview.ParseTime(text);
+    }
+
     private void CommitSelectedTime()
     {
         if (EditedPolicy is not { } policy || _selected is not { } selected || selected.PolicyId != policy.Id) {
             return;
         }
-        if (SchedulePreview.ParseTime(SelectedTimeInput.Text) is not { } time || time == selected.Time) {
-            SelectedTimeInput.Text = SchedulePreview.TimeText(selected.Time);
+        if (EditorTime() is not { } time || time == selected.Time) {
+            _timeEditor.Text = SchedulePreview.TimeText(selected.Time);
             return;
         }
         EditPolicy(policy.Id, p => p with { Times = [.. p.Times.Where(t => t != selected.Time), time] }, select: time);
     }
 
-    private void SelectedTimeInput_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
-        CommitSelectedTime();
-
-    private void SelectedTimeInput_KeyDown(object sender, WpfKeyEventArgs e)
+    // The colon is fixed: a digit overwrites the one after the caret and deleting turns digits into 0.
+    private void TimeEditor_PreviewTextInput(object sender, TextCompositionEventArgs e)
     {
-        if (e.Key == Key.Enter) {
-            CommitSelectedTime();
-            SelectedTimeInput.SelectAll();
+        e.Handled = true;
+        if (e.Text.Length != 1 || !char.IsAsciiDigit(e.Text[0]) || ZeroSelection() is not { } chars) {
+            return;
+        }
+        var at = _timeEditor.SelectionStart == 2 ? 3 : _timeEditor.SelectionStart;
+        if (at <= 4) {
+            chars[at] = e.Text[0];
+            SetEditor(chars, at + 1 == 2 ? 3 : at + 1);
         }
     }
 
-    private void DeleteSelectedTime_Click(object sender, RoutedEventArgs e)
+    private void TimeEditor_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
-        if (EditedPolicy is { } policy && _selected is { } selected && selected.PolicyId == policy.Id) {
-            EditPolicy(policy.Id, p => p with { Times = p.Times.Where(t => t != selected.Time).ToArray() },
-                clearSelection: true);
+        var start = _timeEditor.SelectionStart;
+        switch (e.Key) {
+            case Key.Enter or Key.Escape:
+                if (e.Key == Key.Enter) {
+                    CommitSelectedTime();
+                }
+                _selected = null;
+                Keyboard.ClearFocus();
+                Refresh();
+                break;
+            case Key.Up or Key.Down:
+                StepSelectedTime(e.Key == Key.Up ? 5 : -5);
+                break;
+            case Key.Back or Key.Delete when ZeroSelection() is { } chars:
+                if (_timeEditor.SelectionLength > 0) {
+                    SetEditor(chars, start);
+                } else if (e.Key == Key.Back && start > 0) {
+                    var at = start == 3 ? 1 : start - 1;
+                    chars[at] = '0';
+                    SetEditor(chars, at);
+                } else if (e.Key == Key.Delete && start < 5) {
+                    var at = start == 2 ? 3 : start;
+                    chars[at] = '0';
+                    SetEditor(chars, at + 1 == 2 ? 3 : at + 1);
+                }
+                break;
+            case Key.Space or Key.Back or Key.Delete:
+                break;
+            default:
+                return;
         }
+        e.Handled = true;
+    }
+
+    private char[]? ZeroSelection()
+    {
+        var chars = _timeEditor.Text.ToCharArray();
+        if (chars.Length != 5 || chars[2] != ':') {
+            return null;
+        }
+        for (var i = _timeEditor.SelectionStart; i < _timeEditor.SelectionStart + _timeEditor.SelectionLength; i++) {
+            if (i != 2) {
+                chars[i] = '0';
+            }
+        }
+        return chars;
+    }
+
+    private void SetEditor(char[] chars, int caret)
+    {
+        _timeEditor.Text = new string(chars);
+        _timeEditor.Select(caret, 0);
+    }
+
+    private void StepSelectedTime(int minutes)
+    {
+        if (EditedPolicy is not { } policy || _selected is not { } selected || selected.PolicyId != policy.Id) {
+            return;
+        }
+        var time = selected.Time.AddMinutes(minutes);
+        for (var i = 0; i < 288 && policy.Times.Contains(time); i++) {
+            time = time.AddMinutes(minutes);
+        }
+        EditPolicy(policy.Id, p => p with { Times = [.. p.Times.Where(t => t != selected.Time), time] }, select: time);
+        _timeEditor.Text = SchedulePreview.TimeText(time);
+        _timeEditor.SelectAll();
+    }
+
+    private void SplitRest_Click(object sender, RoutedEventArgs e)
+    {
+        if (Focused is not { } focus || EditedPolicy is not { } policy) {
+            return;
+        }
+        var rest = SchedulePreview.WeekOrder.Where(d => !policy.Days.Contains(d)).ToArray();
+        AddPolicy(focus, SchedulePreview.DaysText(rest), rest, policy.Times);
+    }
+
+    // Failing to remember only means the hint returns next launch, so it is not worth a message.
+    private void ShareHintClose_Click(object sender, RoutedEventArgs e)
+    {
+        _shareHintClosed = true;
+        if (_shareHintPath is { } path) {
+            try {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "closed");
+            } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
+            }
+        }
+        Refresh();
     }
 
     private void StatusCapsule_Click(object sender, RoutedEventArgs e) => HomeRequested?.Invoke(this, EventArgs.Empty);

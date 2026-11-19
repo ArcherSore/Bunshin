@@ -32,7 +32,10 @@
                     <ControlTemplate TargetType="ToggleButton">
                         <Border Background="{TemplateBinding Background}" CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
-                            <ContentPresenter VerticalAlignment="Center" />
+                            <!-- A TextBlock of its own: the app-wide TextBlock style would hide the checked colour. -->
+                            <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                       FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                                       Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center" />
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
@@ -47,6 +50,144 @@
                     <Setter Property="FontWeight" Value="SemiBold" />
                 </Trigger>
             </Style.Triggers>
+        </Style>
+        <Style x:Key="Schedule.Label" TargetType="TextBlock" BasedOn="{StaticResource MutedTextStyle}">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="2,7,0,0" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+        <Style x:Key="Schedule.Day" TargetType="ToggleButton">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Body}" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="6">
+                            <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                       FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                                       Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsMouseOver" Value="True" />
+                        <Condition Property="IsChecked" Value="False" />
+                    </MultiTrigger.Conditions>
+                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                </MultiTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Schedule.ChipRemove" TargetType="Button">
+            <Setter Property="Width" Value="20" />
+            <Setter Property="Height" Value="20" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Back" Background="{TemplateBinding Background}" CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Back" Property="Background" Value="#1F182230" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Schedule.AddTime" TargetType="Button">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Rectangle RadiusX="15" RadiusY="15" Fill="{TemplateBinding Background}"
+                                       Stroke="{TemplateBinding BorderBrush}" StrokeDashArray="3 2" />
+                            <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
+                                       FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                                       Margin="{TemplateBinding Padding}" Foreground="{TemplateBinding Foreground}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Schedule.TimeEditor" TargetType="TextBox">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="CaretBrush" Value="White" />
+            <Setter Property="SelectionBrush" Value="White" />
+            <Setter Property="SelectionOpacity" Value="0.35" />
+            <Setter Property="MaxLength" Value="5" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Schedule.ScopeItem" TargetType="MenuItem">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Row" Background="Transparent" CornerRadius="6" Padding="10,6"
+                                MinWidth="200">
+                            <StackPanel>
+                                <TextBlock Text="{TemplateBinding Header}" FontSize="{TemplateBinding FontSize}"
+                                           FontWeight="{TemplateBinding FontWeight}"
+                                           Foreground="{TemplateBinding Foreground}" />
+                                <TextBlock x:Name="Note" Text="{TemplateBinding Tag}" Margin="0,1,0,0"
+                                           FontSize="11.5" Foreground="{StaticResource Brush.Text.Muted}" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Row" Property="Background"
+                                        Value="{StaticResource Brush.Surface.Disabled}" />
+                            </Trigger>
+                            <Trigger Property="Tag" Value="{x:Null}">
+                                <Setter TargetName="Note" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <!-- Deleting cannot be undone, so the button turns red under the pointer. -->
         <Style x:Key="Schedule.Delete" TargetType="Button" BasedOn="{StaticResource NeutralIconButtonStyle}">
@@ -77,9 +218,9 @@
         </Style>
     </UserControl.Resources>
 
-    <!-- The page fills the window: the list and the timeline stretch to the bottom, and the timeline's rows grow
-         with the height. Below the minimum the whole page scrolls instead of squeezing the timeline. -->
-    <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+    <!-- The page fits the window without scrolling: the timeline's rows take the height the editor leaves, and the
+         configuration list scrolls on its own when it is long. -->
+    <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled"
                   Focusable="False">
         <Border Padding="16,12,16,16" MinHeight="{Binding ViewportHeight, ElementName=PageScroll}">
             <Grid>
@@ -141,7 +282,11 @@
                         </DockPanel>
                     </Border>
 
-                    <Grid Grid.Column="2">
+                    <!-- The timeline's rows shrink first; only near the window's minimum height does this column
+                         scroll, while the banner and the configuration list stay put. -->
+                    <ScrollViewer x:Name="EditorScroll" Grid.Column="2" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                    <Grid MinHeight="{Binding ViewportHeight, ElementName=EditorScroll}">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
@@ -188,12 +333,19 @@
                                                          OffContent="{x:Null}" VerticalAlignment="Center"
                                                          AutomationProperties.Name="启用这条定时"
                                                          Click="PolicyEnabled_Click" />
-                                        <TextBox x:Name="PolicyName" Width="180" Margin="10,0,0,0"
-                                                 VerticalContentAlignment="Center" MaxLength="40"
+                                        <TextBox x:Name="PolicyName" Width="220" Margin="10,0,0,0" Padding="2,4"
+                                                 MinHeight="32" VerticalContentAlignment="Center" MaxLength="40"
                                                  AutomationProperties.Name="定时名称"
                                                  LostKeyboardFocus="PolicyName_LostKeyboardFocus"
                                                  KeyDown="PolicyName_KeyDown" />
-                                        <Border Margin="12,0,0,0" Padding="2" CornerRadius="6" BorderThickness="1"
+                                    </StackPanel>
+                                </DockPanel>
+                                <DockPanel Margin="0,10,0,0">
+                                    <TextBlock Text="星期" Margin="2,5,0,0" Style="{StaticResource Schedule.Label}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel x:Name="DayChips" Orientation="Horizontal"
+                                                    AutomationProperties.Name="星期" />
+                                        <Border Margin="8,0,0,0" Padding="2" CornerRadius="6" BorderThickness="1"
                                                 BorderBrush="{StaticResource Brush.Border}"
                                                 VerticalAlignment="Center" AutomationProperties.Name="星期预设">
                                             <StackPanel Orientation="Horizontal">
@@ -210,22 +362,30 @@
                                         </Border>
                                     </StackPanel>
                                 </DockPanel>
-                                <StackPanel x:Name="SelectedTimeRow" Orientation="Horizontal" Margin="0,8,0,0">
-                                    <TextBlock x:Name="SelectedTimeText" VerticalAlignment="Center"
-                                               FontFamily="{StaticResource FontFamily.Monospace}"
-                                               FontWeight="SemiBold" />
-                                    <TextBox x:Name="SelectedTimeInput" Width="80" Margin="12,0,0,0"
-                                             VerticalContentAlignment="Center" AutomationProperties.Name="精确时间"
-                                             LostKeyboardFocus="SelectedTimeInput_LostKeyboardFocus"
-                                             KeyDown="SelectedTimeInput_KeyDown" />
-                                    <Button Margin="8,0,0,0" Style="{StaticResource Schedule.Delete}"
-                                            ToolTip="删除这个时间" AutomationProperties.Name="删除这个时间"
-                                            Click="DeleteSelectedTime_Click">
-                                        <ui:SymbolIcon Symbol="Delete20" FontSize="16" />
-                                    </Button>
-                                    <TextBlock x:Name="SelectedTimeShared" Margin="12,0,0,0"
-                                               VerticalAlignment="Center" Style="{StaticResource MutedTextStyle}" />
-                                </StackPanel>
+                                <DockPanel Margin="0,10,0,0">
+                                    <TextBlock Text="时间" Style="{StaticResource Schedule.Label}" />
+                                    <WrapPanel x:Name="TimeChips" Margin="0,0,0,-6" AutomationProperties.Name="时间" />
+                                </DockPanel>
+                                <Border x:Name="ShareHint" Margin="0,10,0,0" Padding="10,4,4,4" CornerRadius="6"
+                                        Background="{StaticResource Brush.Surface.Subdued}">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" MinHeight="26" Height="26" Padding="8,0"
+                                                FontSize="12" FontWeight="Normal"
+                                                Style="{StaticResource SubtleButtonStyle}"
+                                                Click="ShareHintClose_Click">
+                                            <TextBlock Text="知道了" Foreground="{StaticResource Brush.Text.Muted}" />
+                                        </Button>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="勾选的星期共用这些时间。" FontSize="12"
+                                                       VerticalAlignment="Center"
+                                                       Style="{StaticResource SecondaryTextStyle}" />
+                                            <Button x:Name="SplitRestButton" Margin="4,0,0,0" MinHeight="26"
+                                                    Height="26" Padding="6,0" FontSize="12" FontWeight="Normal"
+                                                    Style="{StaticResource SubtleButtonStyle}"
+                                                    Click="SplitRest_Click" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
                                 <StackPanel x:Name="IssuesPanel" />
                             </StackPanel>
                         </Border>
@@ -233,6 +393,7 @@
                                    Text="点击时间轴创建第一条定时"
                                    Style="{StaticResource MutedTextStyle}" />
                     </Grid>
+                    </ScrollViewer>
                 </Grid>
             </Grid>
         </Border>
