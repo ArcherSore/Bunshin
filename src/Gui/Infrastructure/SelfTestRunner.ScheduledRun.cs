@@ -87,6 +87,8 @@ internal static partial class SelfTestRunner
         VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle, lostReply: true);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "next-tick"),
             RunState.Failed, tickBeforeDispatch: true);
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "cleanup-collision"),
+            RunState.Succeeded, tickBeforeDispatch: true);
     }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
@@ -103,6 +105,11 @@ internal static partial class SelfTestRunner
         WorkerAdmissionRecord? record = null;
         string digest = "";
         var preparations = 0;
+        var cleanupCollision = tickBeforeDispatch && terminal == RunState.Succeeded;
+        var clock = new ScheduleTestClock();
+        if (cleanupCollision) {
+            CreateIdleSettings(CreateProjectFixture(directory), logger).ForceScheduledStart.Value = true;
+        }
         var failPreparation = terminal == RunState.Cancelled;
         var coordinator = new WorkerCoordinator(logger, Path.Combine(directory, "state"), process.MainModule!.FileName,
             pipeName, usePipeAcl: false, captureProcesses: () =>
@@ -162,7 +169,9 @@ internal static partial class SelfTestRunner
                         logger.EntryWritten -= Record;
                     }
                 }
-                ExpectBusy("正在运行其他任务");
+                if (!cleanupCollision) {
+                    ExpectBusy("正在运行其他任务");
+                }
                 void Publish(RunSnapshot last, long revision)
                 {
                     Task.Run(() => pipe.WriteAsync(StateEvent(snapshot with { StateRevision = revision,
@@ -237,12 +246,27 @@ internal static partial class SelfTestRunner
                     Publish(done, 4);
                 } else if (tickBeforeDispatch) {
                     // Advance IPC on the pool while the dispatcher is still handling the clock tick.
-                    var received = snapshot with { LastRun = done, StateRevision = 3 };
+                    var received = snapshot with { LastRun = done, StateRevision = cleanupCollision ? 4 : 3 };
+                    if (cleanupCollision) {
+                        project.AddSchedulePolicy(target, "早班");
+                        wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
+                    }
                     Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
                     AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                         "下一分钟已到时 Worker 应已报告此前 Run 的失败。");
                     var completed = new List<Guid>();
                     window.ScheduledRunCompleted += (_, run) => completed.Add(run.RunId);
+                    if (cleanupCollision) {
+                        clock.Advance(TimeSpan.FromMinutes(1));
+                        var check = window.CheckScheduledRunsAsync();
+                        PumpUntil(() => check.IsCompleted, "旧定时 Run 收尾失败后应结束新的定时机会。");
+                        check.GetAwaiter().GetResult();
+                        Require(preparations == 1 && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
+                            && completed.SequenceEqual([own.RunId])
+                            && failures.Count(line => line.StartsWith("定时任务未能启动 / ")) == 1,
+                            "上次定时成功的收尾与新机会相遇，注销失败只允许尝试一次并报告本次未能启动。");
+                        return;
+                    }
                     var next = window.TryStartScheduledRunAsync(target);
                     PumpUntil(() => next.IsCompleted, "下一次机会应消化上次终态，再在新环境中启动。");
                     Require(next.Result.Disposition == ScheduledRunDisposition.Admitted
@@ -316,6 +340,7 @@ internal static partial class SelfTestRunner
                         "重试已终结的 Run 之后仍应可以运行新的配置。");
                 }
             }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
+                scheduleClock: clock,
                 prepareEnvironment: async (project, options, show) => {
                     if (failPreparation) {
                         failPreparation = false;

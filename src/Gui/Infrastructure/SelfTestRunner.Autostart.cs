@@ -83,6 +83,13 @@ internal static partial class SelfTestRunner
         var store = new FakeSchtasks();
         ApplicationSettings Create() =>
             CreateIdleSettings(directory, logger, new AutostartTask(AutostartExecutable, AutostartUser, store.Run));
+        var force = Create().Registry.Toggles["schedule.forceStart"];
+        Require(!force.Value, "已有配置升级或首次启动时，强制定时启动默认关闭。");
+        force.Value = true;
+        var restored = Create().ForceScheduledStart;
+        Require(restored.Value, "重新启动后应保留强制定时启动偏好。");
+        restored.Value = false;
+        Require(!Create().ForceScheduledStart.Value, "关闭强制定时启动也应保存。");
         var daily = new AutoRunTarget(Guid.NewGuid(), "日常");
         var weekly = new AutoRunTarget(Guid.NewGuid(), "周常");
 

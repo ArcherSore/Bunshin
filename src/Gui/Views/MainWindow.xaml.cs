@@ -186,6 +186,7 @@ public partial class MainWindow : FluentWindow
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        InitializeForcedStartDialog();
         KeyDown += MainWindow_KeyDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
@@ -215,6 +216,8 @@ public partial class MainWindow : FluentWindow
     {
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
+            _exitGeneration++;
+            _forcedStartCountdown?.TrySetResult(false);
             _workerReadyWait?.Cancel();
             EndOnboarding(handled: false);
         }
@@ -301,6 +304,8 @@ public partial class MainWindow : FluentWindow
             RemoveConfigurationWheelHook();
             _runTimer.Stop();
             _scheduleTimer.Stop();
+            _forcedStartTimer.Stop();
+            _forcedStartCountdown?.TrySetResult(false);
             RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;
@@ -665,7 +670,7 @@ public partial class MainWindow : FluentWindow
             // A retry reuses its Run ID. Only replay once the original start was ruled out.
             var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
             if (current is not { Observation: WorkerObservation.Connected, SnapshotFresh: true, WorkerSnapshot: { } w }
-                || awaitingStart) {
+                || awaitingStart.HasValue) {
                 return;
             }
             if (w.ActiveRun?.RunId == attempt.RunId || w.LastRun?.RunId == attempt.RunId) {
@@ -718,6 +723,7 @@ public partial class MainWindow : FluentWindow
                     throw new InvalidDataException(
                         $"首次 run.stop 未返回 stop_requested：{response.Disposition}。 ");
                 }
+                _manuallyStoppedRun = activeRun.RunId;
                 _logger.Info($"run.stop 已确认 stop_requested：runId={activeRun.RunId:D}。 ");
             });
     }
@@ -905,6 +911,10 @@ public partial class MainWindow : FluentWindow
 
     private void MainWindow_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (e.Key == Key.Escape && ForcedStartOverlay.Visibility == Visibility.Visible) {
+            e.Handled = true;
+            return;
+        }
         if (IsOnboardingVisible) {
             if (e.Key == Key.Escape) {
                 EndOnboarding(handled: true);
@@ -2223,7 +2233,7 @@ public partial class MainWindow : FluentWindow
     private void MainWindow_StateChanged(object? sender, EventArgs e) => ReevaluateOnboarding();
 
     private bool IsGlobalModalOpen => UpdateOverlay.Visibility == Visibility.Visible
-        || WelcomeOverlay.Visibility == Visibility.Visible;
+        || WelcomeOverlay.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible;
 
     private void EnsureModalWindowHook()
     {
@@ -2235,6 +2245,10 @@ public partial class MainWindow : FluentWindow
 
     private void RemoveModalWindowHook()
     {
+        // The countdown can sit above another dialog; the hook stays until the last one closes.
+        if (IsGlobalModalOpen && !_allowClose) {
+            return;
+        }
         _modalWindowSource?.RemoveHook(ModalWindowHook);
         _modalWindowSource = null;
     }

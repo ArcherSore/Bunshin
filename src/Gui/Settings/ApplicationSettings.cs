@@ -46,6 +46,8 @@ internal sealed class ApplicationSettings
             "autorun.onManualLaunch", "手动启动时也自动执行", false, null);
         ReadAutoRunConfiguration();
         AutoRunOnManualLaunch.IsEnabled = _autoRunConfigurationId is not null;
+        ForceScheduledStart = CreatePersistedToggle(Path.Combine(applicationDirectory, "config", "force-start.txt"),
+            "schedule.forceStart", "强制定时启动", false, null);
         CheckOnStartup = new SettingsToggle(SaveUpdatePreference);
         SaveOnError = CreateFrameworkToggle(applicationDirectory, "framework.saveOnError", "save-on-error", true);
         // Annotated images fill a disk quickly and nothing caps them, so each launch starts with them off.
@@ -85,6 +87,7 @@ internal sealed class ApplicationSettings
         Registry.Toggles.Add("application.autostart", Autostart);
         Registry.Toggles.Add("autorun.onManualLaunch", AutoRunOnManualLaunch);
         Registry.Choices.Add("autorun.configuration", AutoRunConfiguration);
+        Registry.Toggles.Add("schedule.forceStart", ForceScheduledStart);
         Registry.Toggles.Add("framework.saveOnError", SaveOnError);
         Registry.Toggles.Add("framework.saveDraw", SaveDraw);
         Registry.Toggles.Add("framework.debugMode", DebugMode);
@@ -115,6 +118,7 @@ internal sealed class ApplicationSettings
     internal SettingsToggle Autostart { get; }
     internal SettingsChoice AutoRunConfiguration { get; }
     internal SettingsToggle AutoRunOnManualLaunch { get; }
+    internal SettingsToggle ForceScheduledStart { get; }
     internal SettingsToggle SaveOnError { get; }
     internal SettingsToggle SaveDraw { get; }
     internal SettingsToggle DebugMode { get; }

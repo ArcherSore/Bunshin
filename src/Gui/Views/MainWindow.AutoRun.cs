@@ -12,6 +12,18 @@ public partial class MainWindow
     private readonly RunTerminalNotificationTracker _terminalNotifications = new();
     internal event EventHandler<RunTerminalNotification>? NotificationRequested;
 
+    internal void ObserveApplicationRun(WorkerCoordinatorSnapshot snapshot, Action exitAfterRun)
+    {
+        Dispatcher.BeginInvoke(() => {
+            if (_quitAfterRun?.Observe(snapshot) == true) {
+                _logger.Info("--quit-after-run：任务已结束，正在退出程序。");
+                exitAfterRun();
+            } else {
+                ObserveRunNotification(snapshot);
+            }
+        });
+    }
+
     internal void ObserveRunNotification(WorkerCoordinatorSnapshot snapshot)
     {
         if (_terminalNotifications.Observe(snapshot, ActiveConfigurationName) is { } notification) {
