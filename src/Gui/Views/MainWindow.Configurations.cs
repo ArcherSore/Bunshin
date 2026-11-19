@@ -250,7 +250,7 @@ public partial class MainWindow
 
     // A missing id must not throw: deleting an already removed configuration stays a quiet no-op.
     private string? ConfigurationName(Guid id) =>
-        _projectPlan!.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
+        _projectPlan?.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
 
     private void PresetConfigurationButton_Click(object sender, RoutedEventArgs e)
     {

@@ -85,6 +85,13 @@ internal static partial class SelfTestRunner
                 != settings.CurrentVersion) {
             throw new InvalidOperationException("内置 Settings Definition 的 section/item/key 映射不完整。");
         }
+        var autorun = page.Sections.Single(section => section.Items.Any(
+            item => item.Definition.SettingKey == "autorun.onManualLaunch")).Items.ToList();
+        var force = autorun.Single(item => item.Definition.SettingKey == "schedule.forceStart");
+        var manual = autorun.Single(item => item.Definition.SettingKey == "autorun.onManualLaunch");
+        Require(force.Toggle == settings.ForceScheduledStart && force.Definition.JoinPrevious
+            && autorun.IndexOf(force) == autorun.IndexOf(manual) + 1,
+            "强制定时启动开关应绑定对应偏好，并紧随「手动启动时也自动执行」并入同一张卡片。");
         foreach (var item in items.Where(item => item.Action is not null)) {
             item.Action!.ExecuteAsync().GetAwaiter().GetResult();
         }

@@ -28,6 +28,7 @@ SettingsDefinition 负责页面定义，SettingsRegistry 将 toggle、choice、a
 | setting | application.closeToTray | 关闭窗口时隐藏到托盘 |
 | setting | application.autostart | 开机自启动；状态取自系统计划任务，不存配置 |
 | setting | autorun.onManualLaunch | 手动启动时也自动执行所选配置 |
+| setting | schedule.forceStart | 强制定时启动，默认关闭；开启后可在倒计时结束时顶替正在运行的任务 |
 | choice | autorun.configuration | 启动后自动执行的配置；选项随配置列表变化，按配置 ID 保存，配置被删除时回退为不自动执行 |
 | setting | framework.saveOnError | 保存失败截图 |
 | setting | framework.saveDraw | 保存识别标注图，不持久化 |

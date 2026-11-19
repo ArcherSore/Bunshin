@@ -24,7 +24,6 @@ public partial class App : System.Windows.Application
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private bool _hasShownTrayNotification;
-    private QuitAfterRunTracker? _quitAfterRun;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -69,10 +68,10 @@ public partial class App : System.Windows.Application
             Path.Combine(AppContext.BaseDirectory, "worker", AppIdentity.WorkerFileName));
         _workerCoordinator.StateChanged += WorkerCoordinator_StateChanged;
         _environment = new RuntimeEnvironment(_logger, _sessionManager, _workerCoordinator);
-        _quitAfterRun = command.QuitAfterRun ? new QuitAfterRunTracker() : null;
+        var quitAfterRun = command.QuitAfterRun ? new QuitAfterRunTracker() : null;
         _mainWindow = new MainWindow(
             _logger, _sessionManager, _workerCoordinator, _environment, RequestExitAsync, EndEnvironmentAsync,
-            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: _quitAfterRun);
+            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: quitAfterRun);
         _mainWindow.HiddenToTray += MainWindow_HiddenToTray;
         _mainWindow.ProjectIdentityChanged += MainWindow_ProjectIdentityChanged;
         _mainWindow.NotificationRequested += (_, n) => ShowBalloon(n.Title, n.Message, n.Failed);
@@ -205,15 +204,7 @@ public partial class App : System.Windows.Application
 
     private void WorkerCoordinator_StateChanged(object? sender, WorkerCoordinatorSnapshot snapshot)
     {
-        Dispatcher.BeginInvoke(() => {
-            // --quit-after-run: the Run this launch started has ended, so nothing is left to confirm or announce.
-            if (_quitAfterRun?.Observe(snapshot) == true) {
-                _logger?.Info("--quit-after-run：任务已结束，正在退出程序。");
-                _ = ExitAsync(confirm: false);
-                return;
-            }
-            _mainWindow?.ObserveRunNotification(snapshot);
-        });
+        _mainWindow?.ObserveApplicationRun(snapshot, () => _ = ExitAsync(confirm: false));
     }
 
     // Only when the window is not already in front of the user.

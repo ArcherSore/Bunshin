@@ -90,6 +90,12 @@ GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的
 该流程中开始前的失败写日志并以托盘通知。
 `--quit-after-run` 在开始写入请求正文时绑定开机自动执行的 Run ID，只有新鲜快照确认该 Run 的终态才退出。
 
+全局偏好 `schedule.forceStart` 默认关闭，到点遇到 Active Run 时跳过。开启后，首份获准的定时配置
+遇到 Active Run 时发出提示和可取消的 10 秒倒计时。倒计时使用调度时钟，期间不占用运行环境闸门。
+取消会消耗本次机会。到期后等待闸门，按最新状态结束旧运行环境。退出或安装更新期间放弃启动。
+旧分身还在、Worker 状态未确认且无法判断是否需要倒计时时，跳过本次定时机会。
+实际顶替开机 Run 前解除其退出绑定，手动停止仍遵循原有规则。
+
 ## 任务与状态流
 
 Configuration Set 保存多份独立任务配置及激活项；它是用户意图，不是执行结果。ProjectModel 按当前 Project Interface 校验激活配置，开始时生成不可变、有序的 Run Plan。Worker Launch Context 独立确定项目与框架环境；Run Plan 只描述本次任务与参数。
