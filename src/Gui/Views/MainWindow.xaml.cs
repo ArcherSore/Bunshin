@@ -656,8 +656,7 @@ public partial class MainWindow : FluentWindow
     private async Task StartCurrentPlanAsync(QuitAfterRunTracker? quitAfterRun = null)
     {
         // The operation may wait behind another one, so the session is checked again when it runs.
-        if (_sessionManager.Snapshot.State is not (ChildSessionState.ConnectedVisible
-            or ChildSessionState.ConnectedHidden)) {
+        if (_sessionManager.Snapshot.State != ChildSessionState.Connected) {
             throw new InvalidOperationException("Child Session 尚未连接，当前不能开始任务。 ");
         }
         var project = RequireProject();
@@ -2613,7 +2612,7 @@ public partial class MainWindow : FluentWindow
 
     // Preparation does not launch the game; describe only the stages Session and Worker observations confirm.
     private string PreparationStage() =>
-        _sessionSnapshot.State is not (ChildSessionState.ConnectedVisible or ChildSessionState.ConnectedHidden)
+        _sessionSnapshot.State != ChildSessionState.Connected
             ? "正在连接桌面分身…"
             : _workerSnapshot.Observation == WorkerObservation.WorkerNotStarted ? "桌面分身已连接，等待 Worker 启动…"
             : _workerSnapshot.Observation == WorkerObservation.WorkerStarting ? "正在启动 Worker…"

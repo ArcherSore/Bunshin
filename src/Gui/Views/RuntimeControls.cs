@@ -12,7 +12,7 @@ internal static class RuntimeControls
         var (session, observed, project, pending, preparationFailed, exiting, ending, endUnconfirmed) = inputs;
         var commandsAvailable = pending == PendingOperation.None && !exiting && !ending
             && session.State is not (ChildSessionState.Connecting or ChildSessionState.Disconnecting);
-        var sessionConnected = session.State is ChildSessionState.ConnectedVisible or ChildSessionState.ConnectedHidden;
+        var sessionConnected = session.State == ChildSessionState.Connected;
         // A confirmed ended runtime keeps its last snapshot for diagnostics, but that snapshot cannot own controls.
         var worker = observed.Observation is WorkerObservation.ChildSessionEnded or WorkerObservation.WorkerExited
             ? null : observed.WorkerSnapshot;
@@ -81,7 +81,7 @@ internal static class RuntimeControls
             : active is not null || pending == PendingOperation.StartingRun ? LockReason.RunActive
             : LockReason.RuntimeBusy;
         var desktop = new DesktopToggle(
-            session.State == ChildSessionState.ConnectedVisible ? DesktopAction.Hide : DesktopAction.Show,
+            session.PreviewVisible ? DesktopAction.Hide : DesktopAction.Show,
             sessionConnected && commandsAvailable,
             DesktopStatusOf(session, action is RuntimeAction.InProgress { Kind: ProgressKind.PreparingEnvironment }));
         return new RuntimeControlState(action, editable, configurationLock, desktop, commandsAvailable);
@@ -97,10 +97,8 @@ internal static class RuntimeControls
         }
         return session.State switch {
             ChildSessionState.Existing or ChildSessionState.Connecting => DesktopStatus.Connecting,
-            ChildSessionState.ConnectedHidden or ChildSessionState.ConnectedVisible when preparing
-                => DesktopStatus.Connecting,
-            ChildSessionState.ConnectedHidden => DesktopStatus.Background,
-            ChildSessionState.ConnectedVisible => DesktopStatus.Viewing,
+            ChildSessionState.Connected when preparing => DesktopStatus.Connecting,
+            ChildSessionState.Connected => session.PreviewVisible ? DesktopStatus.Viewing : DesktopStatus.Background,
             ChildSessionState.Disconnecting => DesktopStatus.Ending,
             ChildSessionState.Faulted => DesktopStatus.Disconnected,
             _ => DesktopStatus.NotRunning

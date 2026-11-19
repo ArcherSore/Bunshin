@@ -183,7 +183,7 @@ internal static partial class SelfTestRunner
             void Observe(WorkerSnapshot worker)
             {
                 SetOnboardingField(window, "_sessionSnapshot",
-                    new ChildSessionSnapshot(ChildSessionState.ConnectedHidden, 7, 1, "fixture"));
+                    new ChildSessionSnapshot(ChildSessionState.Connected, 7, 1, "fixture"));
                 SetOnboardingField(window, "_workerSnapshot",
                     new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true, worker, ""));
                 InvokeOnboarding(window, "RefreshRuntimeControls");
