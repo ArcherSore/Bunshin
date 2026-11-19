@@ -180,9 +180,8 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             existing = _admission;
         }
         if (existing is not null) {
-            var liveness = ClassifyAdmission(existing);
-            if (liveness != AdmissionLiveness.Stale
-                || !TryDiscardStaleAdmission(existing, "上次的 Worker 已不存在，Admission Record 已清理")) {
+            var (disposition, liveness) = ResolveAdmission(existing, AdmissionScenario.BeforeLaunch);
+            if (disposition != AdmissionDisposition.Discarded) {
                 throw CreateAdmissionRefusal(existing, liveness);
             }
             _logger.Info($"已证明 Worker instance={existing.WorkerInstanceId} 不再存在，已清理其 Admission Record。 ");
@@ -238,25 +237,22 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             lock (_gate) {
                 current = _admission?.WorkerInstanceId == instanceId ? _admission : null;
             }
-            if (current is null) {
-                throw;
-            }
             // RunEx may already have been submitted, so a launch exception alone does not prove the Worker absent.
-            var liveness = ClassifyAdmission(current);
-            if (liveness == AdmissionLiveness.Alive && current.WorkerPid is not null) {
-                _logger.Warn(
-                    "Task Scheduler 进程枚举验证失败，但同一 Worker 已通过 Pipe PID/Session/映像校验；"
-                    + "继续等待 fresh Snapshot。",
-                    exception);
-            } else {
-                if (liveness == AdmissionLiveness.Stale
-                    && TryDiscardStaleAdmission(current, "Worker 启动失败且已证明没有存活的 Worker；Admission 已回滚")) {
+            switch (ResolveAdmission(current, AdmissionScenario.LaunchFailure).Disposition) {
+                case AdmissionDisposition.KeptAliveForReconnect:
+                    _logger.Warn(
+                        "Task Scheduler 进程枚举验证失败，但同一 Worker 已通过 Pipe PID/Session/映像校验；"
+                        + "继续等待 fresh Snapshot。",
+                        exception);
+                    break;
+                case AdmissionDisposition.Discarded:
                     _logger.Warn("Worker 启动失败，且已证明没有存活的 Worker；已回滚 worker.json 与 launch manifest。 ");
-                } else {
-                    KeepUnprovenAdmission(current, "Worker 启动未确认；为避免重复启动，Admission 已保留");
+                    throw;
+                case AdmissionDisposition.KeptUnproven:
                     _logger.Warn("Worker 启动未确认，且无法证明 Worker 不会出现；保留 Admission，结束桌面分身前不再启动。 ");
-                }
-                throw;
+                    throw;
+                default:
+                    throw;
             }
         }
 
@@ -287,31 +283,67 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             }
 
             var timeout = $"Worker admission 在 {AdmissionTimeout.TotalSeconds:0} 秒后超时；";
-            string disposition;
-            var liveness = timedOutAdmission is null ? (AdmissionLiveness?)null : ClassifyAdmission(timedOutAdmission);
-            if (timedOutAdmission is null) {
-                disposition = "Admission 已由 Child Session 生命周期清理。 ";
-            } else if (liveness == AdmissionLiveness.Stale && TryDiscardStaleAdmission(
-                timedOutAdmission, "Worker admission 超时且没有存活的已验证进程；Pending Admission 已回滚")) {
+            var disposition = ResolveAdmission(timedOutAdmission, AdmissionScenario.SnapshotTimeout).Disposition;
+            string detail;
+            if (disposition == AdmissionDisposition.AlreadyCleaned) {
+                detail = "Admission 已由 Child Session 生命周期清理。 ";
+            } else if (disposition == AdmissionDisposition.Discarded) {
                 _logger.Warn($"{timeout}已证明没有存活的 Worker，已回滚 worker.json 与 launch manifest。 ");
-                disposition = "未发现存活的已验证 Worker，Pending Admission 已自动回滚。 ";
-            } else if (liveness == AdmissionLiveness.Alive) {
-                SetDisconnectedObservation(timedOutAdmission, WorkerObservation.IpcDisconnected,
-                    $"Worker PID {timedOutAdmission.WorkerPid} 仍存活，但未按时完成 admission + fresh Snapshot");
+                detail = "未发现存活的已验证 Worker，Pending Admission 已自动回滚。 ";
+            } else if (disposition == AdmissionDisposition.KeptAliveForReconnect) {
                 _logger.Warn(
-                    $"{timeout}PID={timedOutAdmission.WorkerPid}、SessionId={timedOutAdmission.ChildSessionId} 仍存活，"
+                    $"{timeout}PID={timedOutAdmission!.WorkerPid}、SessionId={timedOutAdmission.ChildSessionId} 仍存活，"
                     + "保留 Admission 供 Worker 重连。 ");
-                disposition = "已验证 Worker 仍存活，Admission 已保留供重连。 ";
+                detail = "已验证 Worker 仍存活，Admission 已保留供重连。 ";
             } else {
-                KeepUnprovenAdmission(timedOutAdmission, "Worker admission 超时，且无法确认 Worker 是否仍在运行");
                 _logger.Warn($"{timeout}无法确认 Worker 是否仍在运行，保留 Admission。 ");
-                disposition = $"无法确认 Worker 是否仍在运行，Admission 已保留。{EndChildSessionHint}";
+                detail = $"无法确认 Worker 是否仍在运行，Admission 已保留。{EndChildSessionHint}";
             }
             throw new TimeoutException(
                 $"Worker 未在 {AdmissionTimeout.TotalSeconds:0} 秒内完成 admission + fresh Snapshot；"
-                + disposition,
+                + detail,
                 exception);
         }
+    }
+
+    private enum AdmissionScenario { BeforeLaunch, LaunchFailure, SnapshotTimeout }
+    private enum AdmissionDisposition { Discarded, KeptAliveForReconnect, KeptUnproven, AlreadyCleaned }
+
+    private (AdmissionDisposition Disposition, AdmissionLiveness? Liveness) ResolveAdmission(
+        WorkerAdmissionRecord? record, AdmissionScenario scenario)
+    {
+        if (record is null) {
+            return (AdmissionDisposition.AlreadyCleaned, null);
+        }
+
+        var liveness = ClassifyAdmission(record);
+        if (liveness == AdmissionLiveness.Stale) {
+            var detail = scenario switch {
+                AdmissionScenario.BeforeLaunch => "上次的 Worker 已不存在，Admission Record 已清理",
+                AdmissionScenario.LaunchFailure => "Worker 启动失败且已证明没有存活的 Worker；Admission 已回滚",
+                AdmissionScenario.SnapshotTimeout => "Worker admission 超时且没有存活的已验证进程；Pending Admission 已回滚",
+                _ => throw new ArgumentOutOfRangeException(nameof(scenario))
+            };
+            if (TryDiscardStaleAdmission(record, detail)) {
+                return (AdmissionDisposition.Discarded, liveness);
+            }
+        }
+
+        if (liveness == AdmissionLiveness.Alive
+            && (scenario != AdmissionScenario.LaunchFailure || record.WorkerPid is not null)) {
+            if (scenario == AdmissionScenario.SnapshotTimeout) {
+                SetDisconnectedObservation(record, WorkerObservation.IpcDisconnected,
+                    $"Worker PID {record.WorkerPid} 仍存活，但未按时完成 admission + fresh Snapshot");
+            }
+            return (AdmissionDisposition.KeptAliveForReconnect, liveness);
+        }
+
+        if (scenario != AdmissionScenario.BeforeLaunch) {
+            KeepUnprovenAdmission(record, scenario == AdmissionScenario.LaunchFailure
+                ? "Worker 启动未确认；为避免重复启动，Admission 已保留"
+                : "Worker admission 超时，且无法确认 Worker 是否仍在运行");
+        }
+        return (AdmissionDisposition.KeptUnproven, liveness);
     }
 
     private void RecordVerifiedWorkerProcess(Guid workerInstanceId, VerifiedChildSessionProcessLaunch launch)
@@ -1266,7 +1298,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     private static InvalidOperationException CreateAdmissionRefusal(
-        WorkerAdmissionRecord record, AdmissionLiveness liveness) => new(liveness switch {
+        WorkerAdmissionRecord record, AdmissionLiveness? liveness) => new(liveness switch {
             AdmissionLiveness.Alive when record.WorkerPid is int pid =>
                 $"桌面分身中的 Worker（PID {pid}）仍在运行，正在等待它重新连接。请稍后重试；如仍无法恢复，{EndChildSessionHint}",
             AdmissionLiveness.Alive => "Worker 正在启动，请稍后重试。",
