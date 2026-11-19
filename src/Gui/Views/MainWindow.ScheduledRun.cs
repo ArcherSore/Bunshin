@@ -5,10 +5,12 @@ using Protocol;
 
 namespace Gui.Views;
 
-internal enum ScheduledRunDisposition { Invalid, Busy, Failed, Admitted }
+internal enum ScheduledRunDisposition { Invalid, Busy, Failed, CountdownRequired, Admitted }
 
 internal sealed record ScheduledRunResult(
     ScheduledRunDisposition Disposition, Guid? RunId = null, string? Reason = null);
+
+internal sealed record ForcedScheduledStartCountdown(string ConfigurationName, DateTimeOffset Deadline, Action Cancel);
 
 public partial class MainWindow
 {
@@ -19,6 +21,9 @@ public partial class MainWindow
     }
 
     private ScheduledSubmission? _scheduledSubmission;
+    private TaskCompletionSource<bool>? _forcedStartCountdown;
+    internal event EventHandler<ForcedScheduledStartCountdown>? ForcedScheduledStartPending;
+    internal event EventHandler? ForcedScheduledStartEnded;
 
     private void AddScheduleActivity(string message, LogLevel level = LogLevel.Info)
     {
@@ -59,9 +64,27 @@ public partial class MainWindow
         var name = project?.Configurations.FirstOrDefault(c => c.Id == configurationId)?.Name
             ?? configurationId.ToString();
         ScheduledRunResult? result = null;
-        if (!OperationOrExitInProgress) {
-            await _environment.TryRunExclusiveAsync(async () =>
-                result = await StartScheduledRunInGateAsync(project, configurationId, name, policyTime));
+        var force = _settings.ForceScheduledStart.Value;
+        async Task StartInGateAsync(bool countdownElapsed)
+        {
+            result = await StartScheduledRunInGateAsync(project, configurationId, name, policyTime,
+                force, countdownElapsed);
+        }
+        if (force && !_exitInProgress && !_allowClose && !_environment.Closing) {
+            try {
+                await _environment.RunExclusiveAsync(() => StartInGateAsync(false));
+                if (result?.Disposition == ScheduledRunDisposition.CountdownRequired) {
+                    if (await WaitForForcedScheduledStartAsync(name)) {
+                        await _environment.RunExclusiveAsync(() => StartInGateAsync(true));
+                    }
+                    // Once announced, even a cancelled or subsequently invalid configuration owns the minute.
+                    result = new(ScheduledRunDisposition.Admitted, result?.RunId, result?.Reason);
+                }
+            } catch (OperationCanceledException) when (_environment.Closing) {
+                result = null;
+            }
+        } else if (!force && !OperationOrExitInProgress) {
+            await _environment.TryRunExclusiveAsync(() => StartInGateAsync(false));
         }
         result ??= new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
         if (result.Disposition == ScheduledRunDisposition.Busy) {
@@ -71,15 +94,42 @@ public partial class MainWindow
         return result;
     }
 
-    private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(
-        ProjectPlanModule? project, Guid configurationId, string name, string? policyTime)
+    private async Task<bool> WaitForForcedScheduledStartAsync(string name)
     {
-        if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker) {
+        var duration = TimeSpan.FromSeconds(10);
+        var elapsed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _forcedStartCountdown = elapsed;
+        var deadline = _scheduleClock.GetLocalNow() + duration;
+        using var timer = _scheduleClock.CreateTimer(_ => elapsed.TrySetResult(true), null, duration,
+            Timeout.InfiniteTimeSpan);
+        try {
+            AddScheduleActivity($"「{name}」到点，强制停止当前任务");
+            NotificationRequested?.Invoke(this, new("强制定时启动", $"10 秒后将停止当前任务，并启动「{name}」", false));
+            ForcedScheduledStartPending?.Invoke(this, new(name, deadline, () => elapsed.TrySetResult(false)));
+            if (await elapsed.Task) {
+                return !_allowClose && !_exitInProgress && !_environment.Closing;
+            }
+            AddScheduleActivity($"已取消「{name}」的强制启动，当前任务继续");
+            return false;
+        } finally {
+            _forcedStartCountdown = null;
+            ForcedScheduledStartEnded?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(
+        ProjectPlanModule? project, Guid configurationId, string name, string? policyTime,
+        bool force, bool countdownElapsed)
+    {
+        if (_exitInProgress || _allowClose || _environment.Closing) {
+            return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
+        }
+        if (_environment.ScheduledRunBlocker(out var observed, out _) is { } blocker && !force) {
             return new(ScheduledRunDisposition.Busy, Reason: blocker);
         }
         // The clock may run ahead of the dispatcher's snapshot callback. Consume the old Run before replacing it.
         await ObserveScheduledRunAsync(observed, gateHeld: true);
-        if (_environment.Closing || _environment.EndUnconfirmed) {
+        if (_environment.Closing || _exitInProgress || _allowClose || !force && _environment.EndUnconfirmed) {
             return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
         }
         if (project is null || project.ConfigurationsUnreadable) {
@@ -107,8 +157,12 @@ public partial class MainWindow
         if (!active && SaveEditor() is { } saveFailure) {
             return saveFailure;
         }
-        if (_environment.ScheduledRunBlocker(out _, out var hadSession) is { } changed) {
+        if (_environment.ScheduledRunBlocker(out _, out var hadSession) is { } changed && !force) {
             return new(ScheduledRunDisposition.Busy, Reason: changed);
+        }
+        var activeRun = _workerCoordinator.Snapshot.WorkerSnapshot?.ActiveRun;
+        if (force && !countdownElapsed && activeRun is not null) {
+            return new(ScheduledRunDisposition.CountdownRequired);
         }
         Guid? submitted = null;
         var sending = false;
@@ -119,6 +173,10 @@ public partial class MainWindow
             RenderScheduledActivation(configurationId);
             AddScheduleActivity(policyTime is null ? $"启动「{name}」" : $"启动「{name}」（{policyTime}）");
             endingOldSession = true;
+            if (countdownElapsed && _workerCoordinator.Snapshot.WorkerSnapshot?.ActiveRun is { } replaced
+                && _quitAfterRun?.IsWaitingFor(replaced.RunId) == true) {
+                _quitAfterRun.Abandon();
+            }
             var ended = await _environment.EndWhileExclusiveAsync();
             if (ended.Outcome != EnvironmentEndOutcome.Ended) {
                 throw ended.Error ?? new InvalidOperationException("旧桌面分身未确认结束。");

@@ -215,6 +215,7 @@ public partial class MainWindow : FluentWindow
     {
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
+            _forcedStartCountdown?.TrySetResult(false);
             _workerReadyWait?.Cancel();
             EndOnboarding(handled: false);
         }
@@ -301,6 +302,7 @@ public partial class MainWindow : FluentWindow
             RemoveConfigurationWheelHook();
             _runTimer.Stop();
             _scheduleTimer.Stop();
+            _forcedStartCountdown?.TrySetResult(false);
             RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;

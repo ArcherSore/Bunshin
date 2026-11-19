@@ -9,10 +9,72 @@ internal static partial class SelfTestRunner
     private sealed class ScheduleTestClock : TimeProvider
     {
         private DateTimeOffset _now = new(2026, 11, 15, 23, 59, 42, TimeSpan.Zero);
+        private readonly Dictionary<ScheduleTimer, DateTimeOffset> _deadlines = [];
         public override TimeZoneInfo LocalTimeZone { get; } =
             TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
         public override DateTimeOffset GetUtcNow() => _now;
-        internal void Advance(TimeSpan by) => _now += by;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ScheduleTimer(this, callback, state);
+            timer.Change(dueTime, period);
+            return timer;
+        }
+
+        internal void Advance(TimeSpan by)
+        {
+            ScheduleTimer[] elapsed;
+            lock (_deadlines) {
+                _now += by;
+                elapsed = _deadlines.Where(pair => pair.Value <= _now).Select(pair => pair.Key).ToArray();
+                foreach (var timer in elapsed) {
+                    _deadlines.Remove(timer);
+                }
+            }
+            foreach (var timer in elapsed) {
+                timer.Fire();
+            }
+        }
+
+        // Advance delivers the countdown timer on the same clock used to select the opportunity.
+        private sealed class ScheduleTimer(ScheduleTestClock clock, TimerCallback callback, object? state) : ITimer
+        {
+            private bool _disposed;
+
+            internal void Fire() => callback(state);
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (period != Timeout.InfiniteTimeSpan) {
+                    throw new NotSupportedException("The schedule test clock supports one-shot timers.");
+                }
+                lock (clock._deadlines) {
+                    if (_disposed) {
+                        return false;
+                    }
+                    if (dueTime == Timeout.InfiniteTimeSpan) {
+                        clock._deadlines.Remove(this);
+                    } else {
+                        clock._deadlines[this] = clock._now + dueTime;
+                    }
+                    return true;
+                }
+            }
+
+            public void Dispose()
+            {
+                lock (clock._deadlines) {
+                    _disposed = true;
+                    clock._deadlines.Remove(this);
+                }
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 
     private static void VerifyScheduleClock(AppLogger logger, string directory)

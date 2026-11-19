@@ -43,6 +43,10 @@ internal static partial class SelfTestRunner
         }
     }
 
+    private static void ConnectTestDesktop(ChildSessionManager session, uint id) => typeof(ChildSessionManager)
+        .GetProperty("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session,
+            new ChildSessionSnapshot(ChildSessionState.ConnectedHidden, id, 1, "ready"));
+
     private static async Task ExerciseAutoRunAsync(AppLogger logger, string projectRoot, Guid configurationId,
         WorkerCoordinator coordinator, WorkerAdmissionRecord record, string pipeName, string scenario)
     {
@@ -54,12 +58,9 @@ internal static partial class SelfTestRunner
         var pipe = initialPipe;
         AwaitWorker(coordinator, observation => observation.SnapshotFresh, "Worker 未报告就绪。");
         using var session = new SimulatedWts().CreateManager(logger);
-        void ConnectDesktop() => typeof(ChildSessionManager)
-            .GetProperty("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(session,
-                new ChildSessionSnapshot(ChildSessionState.ConnectedHidden, record.ChildSessionId, 1, "ready"));
         var failNextPreparation = scenario == "prepare-failure";
         if (scenario != "reconnect" && !failNextPreparation) {
-            ConnectDesktop();
+            ConnectTestDesktop(session, record.ChildSessionId);
         }
         Task Prepare(ProjectPlanModule _, Func<MaaFrameworkOptions> options, bool showDesktop)
         {
@@ -67,7 +68,7 @@ internal static partial class SelfTestRunner
                 failNextPreparation = false;
                 throw new InvalidOperationException("scripted preparation failure");
             }
-            ConnectDesktop();
+            ConnectTestDesktop(session, record.ChildSessionId);
             return Task.CompletedTask;
         }
         var command = new LaunchCommand(AutoStart: true, QuitAfterRun: true, Instance: configurationId.ToString());
