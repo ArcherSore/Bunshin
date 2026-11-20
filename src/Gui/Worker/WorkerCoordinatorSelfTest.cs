@@ -26,6 +26,7 @@ internal static partial class WorkerCoordinatorSelfTest
         (nameof(VerifyStartEvidenceHistoryAsync), VerifyStartEvidenceHistoryAsync),
         (nameof(VerifyStartEvidenceFailuresAsync), VerifyStartEvidenceFailuresAsync),
         (nameof(VerifyInitialSyncTimeoutAsync), VerifyInitialSyncTimeoutAsync),
+        (nameof(VerifyAbandonedLogRetriesAsync), VerifyAbandonedLogRetriesAsync),
         (nameof(VerifyConnectionLifecycleAsync),
             (logger, directory, _) => VerifyConnectionLifecycleAsync(logger, directory)),
         (nameof(VerifyAdmissionRecoveryAsync), (logger, directory, project) => VerifyAdmissionRecoveryAsync(

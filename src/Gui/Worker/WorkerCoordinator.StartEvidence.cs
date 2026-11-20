@@ -40,8 +40,6 @@ internal sealed record WorkerObservationBatch(WorkerConnectionId? Connection, Wo
 
 internal sealed partial class WorkerCoordinator
 {
-    // Without a usable barrier (or with only unresolved starts), resync on a new pipe.
-    internal const int MaxAbandonedEvidenceRequests = 128;
     // Only the read loop owns drain. Removing an Admission invalidates writes but leaves this
     // reader's verified identity and request associations intact until its last frame is consumed.
     private sealed class EvidenceConnection(ProtocolConnection pipe, WorkerAdmissionRecord admission, long generation)
@@ -53,23 +51,39 @@ internal sealed partial class WorkerCoordinator
         internal bool Fresh;
         internal bool ReadEnded;
 
-        // The prefix identifies this pipe's targeted queries after a newer barrier has
-        // superseded their individual associations. Ordinary/foreign request IDs still fail.
+        // The opaque wire ID keeps the connection prefix, Run slot and per-Run query number.
+        // Late replies need only one validation record per Run, even across repeated barriers.
         private readonly byte[] _queryPrefix = Guid.NewGuid().ToByteArray();
-        private long _issuedQueries;
+        private readonly List<(Guid RunId, uint Issued)> _queryRuns = [];
 
-        internal Guid IssueQueryId()
+        internal Guid IssueQueryId(Guid runId)
         {
-            BinaryPrimitives.WriteInt64LittleEndian(_queryPrefix.AsSpan(8), checked(++_issuedQueries));
+            var slot = _queryRuns.FindIndex(run => run.RunId == runId);
+            if (slot < 0) {
+                slot = _queryRuns.Count;
+                _queryRuns.Add((runId, 0));
+            }
+            var issued = checked(_queryRuns[slot].Issued + 1);
+            _queryRuns[slot] = (runId, issued);
+            BinaryPrimitives.WriteInt32LittleEndian(_queryPrefix.AsSpan(8), slot);
+            BinaryPrimitives.WriteUInt32LittleEndian(_queryPrefix.AsSpan(12), issued);
             return new Guid(_queryPrefix);
         }
 
-        internal bool IsIssuedQuery(Guid id)
+        internal Guid? QueryTarget(Guid id)
         {
             Span<byte> bytes = stackalloc byte[16];
             id.TryWriteBytes(bytes);
-            var number = BinaryPrimitives.ReadInt64LittleEndian(bytes[8..]);
-            return bytes[..8].SequenceEqual(_queryPrefix.AsSpan(0, 8)) && number > 0 && number <= _issuedQueries;
+            var slot = BinaryPrimitives.ReadInt32LittleEndian(bytes[8..]);
+            var number = BinaryPrimitives.ReadUInt32LittleEndian(bytes[12..]);
+            return bytes[..8].SequenceEqual(_queryPrefix.AsSpan(0, 8)) && (uint)slot < _queryRuns.Count
+                && number > 0 && number <= _queryRuns[slot].Issued ? _queryRuns[slot].RunId : null;
+        }
+
+        internal void ClearRequests()
+        {
+            Requests.Clear();
+            _queryRuns.Clear();
         }
     }
 
@@ -152,7 +166,7 @@ internal sealed partial class WorkerCoordinator
             _evidenceRequested = true;
             source = _evidenceConnection;
             var id = source?.Id.WorkerInstanceId == run.WorkerInstanceId ? source.Id : (WorkerConnectionId?)null;
-            var requestId = queryId.HasValue && id.HasValue ? source!.IssueQueryId() : Guid.NewGuid();
+            var requestId = queryId.HasValue && id.HasValue ? source!.IssueQueryId(run.RunId) : Guid.NewGuid();
             entry = new(new(requestId, run, submission, queryId, id));
             if (submission is not null) {
                 PublishLocked(new(id, WorkerEvidenceKind.BeforeBody, entry.Request));
@@ -192,7 +206,6 @@ internal sealed partial class WorkerCoordinator
             return reply;
         } catch (Exception error) {
             var failure = RequestFailure(error, deadline, cancellationToken);
-            bool close;
             lock (_gate) {
                 entry.Waiter = null;
                 if (!entry.BodyStarted) {
@@ -203,15 +216,6 @@ internal sealed partial class WorkerCoordinator
                 if (write is null || entry.BodyStarted) {
                     ReportFailureLocked(source, entry, failure);
                 }
-                close = source is not null && source.Pipe == _connection && !source.ReadEnded
-                    && source.Requests.Count >= MaxAbandonedEvidenceRequests
-                    && source.Requests.Values.Count(pending => pending.Waiter is null) >= MaxAbandonedEvidenceRequests;
-                if (close) {
-                    source!.Pipe.RetireWrites();
-                }
-            }
-            if (close) {
-                _ = source!.Pipe.DisposeAsync();
             }
             if (failure != error) {
                 throw failure;
@@ -282,10 +286,12 @@ internal sealed partial class WorkerCoordinator
     private bool ReceiveEvidenceReply(EvidenceConnection source, Guid id, WireEnvelope frame)
     {
         lock (_gate) {
-            if (!source.Requests.Remove(id, out var entry) && !source.IsIssuedQuery(id)) {
+            source.Requests.Remove(id, out var entry);
+            var request = entry?.Request;
+            var target = request?.Run.RunId ?? source.QueryTarget(id);
+            if (target is null) {
                 return false;
             }
-            var request = entry?.Request;
             try {
                 var start = request?.Submission is not null;
                 if (entry is { BodyStarted: false } || frame.ProtocolVersion != ProtocolConstants.ProtocolVersion
@@ -303,7 +309,7 @@ internal sealed partial class WorkerCoordinator
                     batch = new(source.Id, WorkerEvidenceKind.QueryReply, request, ReplyCode: frame.Error!.Code,
                         Error: ResponseError(frame));
                 } else {
-                    batch = ReadQuerySnapshotLocked(source, request, frame);
+                    batch = ReadQuerySnapshotLocked(source, request, target.Value, frame);
                 }
                 PublishLocked(batch);
                 entry?.Waiter?.TrySetResult(batch);
@@ -320,12 +326,12 @@ internal sealed partial class WorkerCoordinator
     }
 
     private WorkerObservationBatch ReadQuerySnapshotLocked(EvidenceConnection source, WorkerRequestEvidence? request,
-        WireEnvelope frame)
+        Guid targetRunId, WireEnvelope frame)
     {
         var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
         if (response.RunRegistered is not bool registered || response.Snapshot is null
-            || !registered && request is not null && (response.Snapshot.ActiveRun?.RunId == request.Run.RunId
-                || response.Snapshot.LastRun?.RunId == request.Run.RunId)) {
+            || !registered && (response.Snapshot.ActiveRun?.RunId == targetRunId
+                || response.Snapshot.LastRun?.RunId == targetRunId)) {
             throw new ProtocolException("定向 getSnapshot 缺少有效的 runRegistered 或与快照冲突。");
         }
         var batch = SnapshotBatchLocked(source, response.Snapshot, full: true, historicalOnly: request is null);
@@ -434,7 +440,7 @@ internal sealed partial class WorkerCoordinator
                 foreach (var entry in source.Requests.Values) {
                     entry.Waiter?.TrySetResult(drained);
                 }
-                source.Requests.Clear();
+                source.ClearRequests();
                 if (_evidenceConnection == source) {
                     _evidenceConnection = null;
                 }

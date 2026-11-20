@@ -80,6 +80,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     private sealed record PendingRequest(RequestRoute Route, TaskCompletionSource<WireEnvelope> Completion);
     private readonly ConcurrentDictionary<Guid, PendingRequest> _pending = new();
     private readonly ConcurrentDictionary<Guid, RequestRoute> _abandonedRequests = new();
+    internal int AbandonedRequestCount => _abandonedRequests.Count;
     private readonly TaskCompletionSource<bool> _serverReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _serverTask;
     private ProtocolConnection? _connection;
@@ -535,9 +536,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         lock (_logRecovery.DispatchGate) {
             lock (_gate) {
                 record = _admission;
-                if (ObservingEvidence) {
-                    _connection?.RetireWrites();
-                }
+                _connection?.RetireWrites();
                 _admission = null;
                 _admissionUnreadable = false;
                 _connection = null;
@@ -633,7 +632,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
         RaiseStateChanged();
 
-        var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var reader = ReadAndDrainAsync(evidence, logRecoveryGeneration, connectionLifetime);
         try {
             var response = await SendRequestAsync<object, GetSnapshotResponse>(
@@ -654,34 +653,19 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                         _logRecovery.InvalidateConnectionLocked();
                         detached = _admission;
                     }
-                    if (!evidence.ReadEnded) {
-                        foreach (var entry in evidence.Requests.Values) {
-                            entry.Waiter?.TrySetCanceled();
-                        }
-                    }
                 }
             }
             CancelPendingRequests();
-            connectionLifetime.Cancel();
-            // An admitted reader normally runs to EOF above, including after Admission removal.
-            // A failed initial sync releases the server even if its reader is still in a callback.
-            _ = FinishReaderAsync(reader, connectionLifetime);
             // A killed Worker ends the pipe with a plain EOF, so every end of an admitted connection is observed here.
             // It runs after detaching so ClassifyAdmission inspects the recorded PID instead of trusting the pipe.
             if (detached is not null && !cancellationToken.IsCancellationRequested) {
                 MarkDisconnected(detached);
             }
-        }
-    }
-
-    private static async Task FinishReaderAsync(Task reader, CancellationTokenSource lifetime)
-    {
-        try {
-            await reader.ConfigureAwait(false);
-        } catch when (reader.IsCanceled || reader.IsFaulted) {
-            // ServeConnectionAsync reports the operation that ended the connection.
-        } finally {
-            lifetime.Dispose();
+            // Initial sync may have timed out while the reader was dispatching an older frame.
+            // Keep the stream and its reply routes alive until that reader finishes.
+            await reader.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            _pending.Clear();
+            _abandonedRequests.Clear();
         }
     }
 
@@ -1001,10 +985,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                     response.Error?.Code ?? "internal_error", response.Error?.Message ?? "Worker 返回未知错误。 ");
             }
             return ProtocolJson.Deserialize<TResponse>(response.Data);
-        } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-            AbandonPendingRequest(requestId, route);
-            throw;
-        } catch (TimeoutException) {
+        } catch (Exception error) when (error is OperationCanceledException or TimeoutException) {
             AbandonPendingRequest(requestId, route);
             throw;
         } catch {
@@ -1020,15 +1001,13 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             _abandonedRequests.TryRemove(requestId, out _);
             return;
         }
-        if (!ObservingEvidence) {
-            _ = ExpireAbandonedRequestAsync(requestId);
-        }
+        _ = ExpireAbandonedRequestAsync(requestId);
     }
 
     private async Task ExpireAbandonedRequestAsync(Guid requestId)
     {
         try {
-            await Task.Delay(RequestTimeout, _shutdown.Token).ConfigureAwait(false);
+            await Task.Delay(RequestTimeout, _requestClock, _shutdown.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) {
         } finally {
             _abandonedRequests.TryRemove(requestId, out _);
@@ -1037,12 +1016,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
 
     private void CancelPendingRequests()
     {
-        foreach (var pair in _pending) {
-            if (_pending.TryRemove(pair.Key, out var pending)) {
-                pending.Completion.TrySetCanceled();
-            }
+        foreach (var pending in _pending.Values) {
+            pending.Completion.TrySetCanceled();
         }
-        _abandonedRequests.Clear();
     }
 
     private void EnsureStartAllowedLocked(string desiredRuntimeProfileDigest)
