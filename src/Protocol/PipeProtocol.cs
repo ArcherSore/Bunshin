@@ -12,7 +12,10 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
     private readonly Stream _stream;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private bool _disposed;
+    private long _writeSequence;
+    private bool _incompleteFrame;
+    private volatile bool _writesRetired;
+    private int _disposed;
 
     public ProtocolConnection(Stream stream)
     {
@@ -55,7 +58,15 @@ public sealed class ProtocolConnection : IAsyncDisposable
     public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken) =>
         WriteAsync(envelope, cancellationToken, null);
 
-    public async Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending)
+    public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending) =>
+        WriteFrameAsync(envelope, cancellationToken, null, onSending);
+
+    // The admitted peer is retiring. Keep reading its final frames until EOF.
+    public void RetireWrites() => _writesRetired = true;
+
+    // The callbacks run under the same lock as every other writer on this stream.
+    public async Task WriteFrameAsync(WireEnvelope envelope, CancellationToken cancellationToken,
+        Action<long>? onWriteLocked, Action? onSending)
     {
         ThrowIfDisposed();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
@@ -67,15 +78,34 @@ public sealed class ProtocolConnection : IAsyncDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(prefix, (uint)payload.Length);
 
         await _writeGate.WaitAsync(cancellationToken);
+        var writingFrame = false;
         try {
+            ThrowIfDisposed();
+            ThrowIfWritesRetired();
+            if (onWriteLocked is not null && _incompleteFrame) {
+                // A legacy writer may have failed before the first ordered request on this pipe.
+                await DisposeAsync();
+                throw new IOException("IPC 写端已有不完整的帧。");
+            }
+            _writeSequence++;
+            onWriteLocked?.Invoke(_writeSequence);
+            writingFrame = true;
             await _stream.WriteAsync(prefix, cancellationToken);
             // A length prefix alone cannot deliver a request. Once the payload write starts, delivery is uncertain
             // even if the write or flush subsequently fails.
             ThrowIfDisposed();
+            ThrowIfWritesRetired();
             cancellationToken.ThrowIfCancellationRequested();
             onSending?.Invoke();
             await _stream.WriteAsync(payload, cancellationToken);
             await _stream.FlushAsync(cancellationToken);
+        } catch when (writingFrame) {
+            _incompleteFrame = true;
+            if (onWriteLocked is not null && !_writesRetired) {
+                // Even a partial prefix makes the next frame undecodable. Seal before releasing the gate.
+                await DisposeAsync();
+            }
+            throw;
         } finally {
             _writeGate.Release();
         }
@@ -83,18 +113,24 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed) {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
             return;
         }
 
-        _disposed = true;
-        _writeGate.Dispose();
+        // Writers may still be unwinding or waiting to observe the closed stream.
         await _stream.DisposeAsync();
     }
 
     private void ThrowIfDisposed()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+    }
+
+    private void ThrowIfWritesRetired()
+    {
+        if (_writesRetired) {
+            throw new IOException("IPC 写端已停止接收请求。");
+        }
     }
 }
 

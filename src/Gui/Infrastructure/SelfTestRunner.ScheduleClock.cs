@@ -6,7 +6,7 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
-    private sealed class ScheduleTestClock : TimeProvider
+    internal sealed class ScheduleTestClock : TimeProvider
     {
         private DateTimeOffset _now = new(2026, 11, 15, 23, 59, 42, TimeSpan.Zero);
         private readonly Dictionary<ScheduleTimer, DateTimeOffset> _deadlines = [];

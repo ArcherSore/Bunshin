@@ -22,6 +22,9 @@ internal static partial class WorkerCoordinatorSelfTest
         ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "configurations.json"));
 
     internal static (string Name, Func<AppLogger, string, string, Task> Body)[] Checks => [
+        (nameof(VerifyStartEvidenceRepliesAsync), VerifyStartEvidenceRepliesAsync),
+        (nameof(VerifyStartEvidenceHistoryAsync), VerifyStartEvidenceHistoryAsync),
+        (nameof(VerifyStartEvidenceFailuresAsync), VerifyStartEvidenceFailuresAsync),
         (nameof(VerifyConnectionLifecycleAsync),
             (logger, directory, _) => VerifyConnectionLifecycleAsync(logger, directory)),
         (nameof(VerifyAdmissionRecoveryAsync), (logger, directory, project) => VerifyAdmissionRecoveryAsync(
@@ -195,7 +198,7 @@ internal static partial class WorkerCoordinatorSelfTest
         string pipeName, WorkerAdmissionRecord record, long lastLogSequence,
         CancellationToken cancellationToken, RunSnapshot? activeRun = null,
         WorkerState initialState = WorkerState.Ready, RunSnapshot? lastRun = null, long stateRevision = 1,
-        Action<Stream>? connected = null)
+        Action<Stream>? connected = null, Func<ProtocolConnection, Task>? beforeSnapshotReply = null)
     {
         var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
@@ -217,6 +220,9 @@ internal static partial class WorkerCoordinatorSelfTest
 
             var snapshotRequest = await ReadRequestAsync(
                 connection, ProtocolOperations.WorkerGetSnapshot, cancellationToken);
+            if (beforeSnapshotReply is not null) {
+                await beforeSnapshotReply(connection);
+            }
             await connection.WriteAsync(
                 WireEnvelope.Response(
                     ProtocolOperations.WorkerGetSnapshot, snapshotRequest.RequestId!.Value,
