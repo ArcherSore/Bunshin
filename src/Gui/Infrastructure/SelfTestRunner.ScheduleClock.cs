@@ -255,12 +255,15 @@ internal static partial class SelfTestRunner
                     var failures = new List<string>();
                     window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                     if (!clockFirst) {
+                        PumpUntil(() => preparations.Contains(boot), "先让登录配置进入准备，再投递定时机会。");
                         clock.Advance(TimeSpan.FromMinutes(1));
                         _ = window.CheckScheduledRunsAsync();
                     }
-                    var skipped = clockFirst ? "登录配置" : "定时配置";
-                    PumpUntil(() => messages.Any(m => m.Contains(skipped)),
-                        $"托盘登录时遇忙的配置 {skipped} 应记明跳过原因。");
+                    PumpUntil(() => clockFirst
+                        ? messages.Any(m => m.Contains("登录配置") && m.Contains("占用"))
+                        : window.LogLines.OfType<LogEntry>().Any(e => e.TaskLabel == "定时"
+                            && e.Message == "跳过「定时配置」：正在运行其他任务"),
+                        "托盘登录时遇忙的配置应记明跳过原因。");
                     Require(preparations.SequenceEqual([clockFirst ? day : boot]) && !window.IsVisible,
                         "托盘登录时先抵达的启动应占用环境。");
                     release.SetResult();

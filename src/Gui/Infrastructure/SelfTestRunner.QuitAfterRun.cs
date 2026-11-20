@@ -76,28 +76,34 @@ internal static partial class SelfTestRunner
         var window = new MainWindow(logger, session, coordinator, new RuntimeEnvironment(logger, session, coordinator),
             () => Task.CompletedTask, () => Task.CompletedTask, _ => Task.CompletedTask, projectRoot,
             prepareEnvironment: Prepare, autostart: InertAutostart(), launchCommand: command, quitAfterRun: quit);
+        var exitRequests = 0;
         Task<WireEnvelope> ReadStart() => WorkerCoordinatorSelfTest.ReadRequestAsync(
             pipe, ProtocolOperations.RunStart, token);
         Task Accept(WireEnvelope request) => pipe.WriteAsync(WireEnvelope.Response(request.Operation,
             request.RequestId!.Value, new RunStartResponse("accepted")), token);
-        RunSnapshot Terminal(WireEnvelope request)
-        {
-            var run = ProtocolJson.Deserialize<RunStartRequest>(request.Data);
-            var active = WorkerCoordinatorSelfTest.CreateActiveRun(new(run.RunId, run.Plan, run.PlanDigest));
-            var ended = DateTime.UtcNow;
-            return active with { State = RunState.Succeeded, EndedAtUtc = ended,
-                CurrentPlanItemId = null, CurrentPlanItemIndex = null, Items = active.Items.Select(item => item with {
-                    State = PlanItemState.Succeeded, EndedAtUtc = ended
-                }).ToArray() };
-        }
         async Task PublishTerminal(RunSnapshot last, long revision)
         {
             var terminal = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with {
                 StateRevision = revision, LastRun = last
             };
-            await pipe.WriteAsync(StateEvent(terminal), token);
-            AwaitWorker(coordinator, view => view.SnapshotFresh && view.WorkerSnapshot?.LastRun?.RunId == last.RunId,
-                "GUI 未收到预期的 Run 终态。");
+            var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void ObserveTerminal(object? sender, WorkerCoordinatorSnapshot view)
+            {
+                if (view.SnapshotFresh && view.WorkerSnapshot is { } worker
+                    && worker.StateRevision == revision && worker.LastRun?.RunId == last.RunId) {
+                    window.ObserveApplicationRun(view, () => exitRequests++);
+                    queued.TrySetResult();
+                }
+            }
+            coordinator.StateChanged += ObserveTerminal;
+            try {
+                await pipe.WriteAsync(StateEvent(terminal), token);
+                await queued.Task.WaitAsync(token);
+                // ObserveApplicationRun posts at Normal. Count only after the queued delivery has run.
+                await Dispatcher.Yield(DispatcherPriority.Background);
+            } finally {
+                coordinator.StateChanged -= ObserveTerminal;
+            }
         }
         async Task CompleteManualRetry(string button, Guid? rejectedRunId = null, int? originalLength = null)
         {
@@ -108,13 +114,13 @@ internal static partial class SelfTestRunner
                 Require(originalLength == JsonSerializer.SerializeToUtf8Bytes(manual, ProtocolJson.Options).Length,
                     "断线前读取的前缀应与重试的 run.start 帧长度一致。");
             }
-            var terminal = Terminal(manual);
+            var terminal = SucceededRun(ProtocolJson.Deserialize<RunStartRequest>(manual.Data));
             Require(rejectedRunId is null || terminal.RunId == rejectedRunId,
                 "重试未改变的计划必须复用已拒绝的 Run ID。");
             await Accept(manual);
             await PublishTerminal(terminal, coordinator.Snapshot.WorkerSnapshot!.StateRevision + 1);
             PumpUntil(() => ConfigurationEditable(window), "手动启动应答后没有释放配置。");
-            Require(!quit.Observe(coordinator.Snapshot), "自动执行没有开始后，手动重试完成不能导致退出。");
+            Require(exitRequests == 0, "自动执行没有开始后，手动重试完成不能导致退出。");
         }
         try {
             InvokeOnboarding(window, "LoadProject");
@@ -175,7 +181,7 @@ internal static partial class SelfTestRunner
                 return;
             }
             var start = await ReadStart();
-            var last = Terminal(start);
+            var last = SucceededRun(ProtocolJson.Deserialize<RunStartRequest>(start.Data));
             if (scenario == "reject") {
                 await pipe.WriteAsync(WireEnvelope.Failure(start.Operation, start.RequestId!.Value,
                     "operation_not_allowed", "scripted refusal"), token);
@@ -204,17 +210,29 @@ internal static partial class SelfTestRunner
                 Require(await launch, "GUI 必须完成已接纳的自动提交。");
             }
             await PublishTerminal(last with { RunId = Guid.NewGuid() }, 2);
-            Require(!quit.Observe(coordinator.Snapshot), "其他 Run 的终态不能触发退出。");
+            Require(exitRequests == 0, "其他 Run 的终态不能触发退出。");
             await PublishTerminal(last, 3);
-            Require(quit.Observe(coordinator.Snapshot), "本次自动执行的 Run 终态必须触发退出。");
+            Require(exitRequests == 1, "本次自动执行的 Run 终态必须触发退出。");
             if (scenario == "fast-terminal") {
                 Require(!launch.IsCompleted, "Worker 应答尚未发出，自动执行提交却已结束。");
                 await Accept(start);
-                Require(await launch && !quit.Observe(coordinator.Snapshot), "迟到的启动应答不能再次触发退出。");
+                Require(await launch, "自动执行应完成此次提交。");
+                await PublishTerminal(last, 4);
+                Require(exitRequests == 1, "迟到的启动应答不能再次触发退出。");
             }
         } finally {
             window.AllowClose();
             window.Close();
         }
+    }
+
+    private static RunSnapshot SucceededRun(RunStartRequest run)
+    {
+        var active = WorkerCoordinatorSelfTest.CreateActiveRun(new(run.RunId, run.Plan, run.PlanDigest));
+        var ended = DateTime.UtcNow;
+        return active with { State = RunState.Succeeded, EndedAtUtc = ended,
+            CurrentPlanItemId = null, CurrentPlanItemIndex = null, Items = active.Items.Select(item => item with {
+                State = PlanItemState.Succeeded, EndedAtUtc = ended
+            }).ToArray() };
     }
 }
