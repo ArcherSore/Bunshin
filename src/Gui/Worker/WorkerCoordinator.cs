@@ -1032,11 +1032,11 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    private static async Task WriteRequestAsync(ProtocolConnection connection, WireEnvelope request,
-        CancellationToken cancellationToken, Action? onSending)
+    private static async Task<bool> WriteRequestAsync(ProtocolConnection connection, WireEnvelope request,
+        CancellationToken cancellationToken, Action? onSending, Func<bool>? canWrite = null)
     {
         try {
-            await connection.WriteAsync(request, cancellationToken, onSending);
+            return await connection.WriteAsync(request, cancellationToken, onSending, canWrite);
         } catch (Exception error) when ((connection.WriteFailure ?? error as IOException) is { } failure) {
             connection.Close(failure);
             throw;

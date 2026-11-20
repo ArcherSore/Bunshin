@@ -326,6 +326,46 @@ internal static partial class WorkerCoordinatorSelfTest
         }
     }
 
+    private static async Task VerifyQueuedStartSnapshotGapAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        await using var peer = await f.ConnectAsync();
+        f.Server.StopAfterBytes = 0;
+        using var releaseWriter = CancellationTokenSource.CreateLinkedTokenSource(f.Token);
+        var held = f.Coordinator.StopRunAsync(f.Run.RunId, releaseWriter.Token);
+        var submission = f.NewSubmission();
+        Task<WorkerObservationBatch> send;
+        var ready = CreateSnapshot(f.Admission, 0) with { StateRevision = 3 };
+        try {
+            await f.Server.Blocked.Task.WaitAsync(f.Token);
+            send = f.Coordinator.SendStartAsync(submission, f.Attempt, f.Token);
+            Require(!send.IsCompleted && f.Coordinator.EvidenceCounts == (1, 1),
+                "启动应通过初检并在管道写锁上排队。");
+
+            await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
+                new StateChangedEvent(f.Run.WorkerInstanceId, 3, ready)), f.Token);
+            Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current?.Resynchronising == true,
+                "持锁期间读线程应发现修订断档并安排完整快照补查。");
+            ready = ready with { StateRevision = 4 };
+            await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
+                new StateChangedEvent(f.Run.WorkerInstanceId, 4, ready)), f.Token);
+            Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current is { FreshReadyToStart: true },
+                "释放写锁前，生产快照应已就绪，完整快照补查仍待返回。");
+        } finally {
+            releaseWriter.Cancel();
+        }
+        await ExpectAsync<OperationCanceledException>(() => held, "持锁请求应在首字节前取消。");
+        var refresh = await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
+        var result = await send.WaitAsync(f.Token);
+        Require(result.Kind == WorkerEvidenceKind.NotSent && result.Request is { WriteSequence: null }
+            && result.Request.Submission == submission && f.WireStarts == 0 && f.Server.PartialFrameBytes == 0
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted && b.Request?.Submission == submission)
+            && f.Coordinator.EvidenceCounts == (0, 0), "排队启动应返回 NotSent，释放写锁供补查使用。");
+        await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value,
+            new GetSnapshotResponse(ready)), f.Token);
+        await f.NextAsync(WorkerEvidenceKind.Snapshot);
+    }
+
     private static async Task VerifyStartEvidenceWritesAsync(AppLogger logger, string directory, string project)
     {
         await using var f = new EvidenceFixture(logger, directory, project);

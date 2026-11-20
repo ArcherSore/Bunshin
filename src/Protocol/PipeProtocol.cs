@@ -61,7 +61,11 @@ public sealed class ProtocolConnection : IAsyncDisposable
     public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken) =>
         WriteAsync(envelope, cancellationToken, null);
 
-    public async Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending)
+    public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending) =>
+        WriteAsync(envelope, cancellationToken, onSending, null);
+
+    public async Task<bool> WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending,
+        Func<bool>? canWrite)
     {
         ThrowIfWriteUnavailable();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
@@ -76,6 +80,9 @@ public sealed class ProtocolConnection : IAsyncDisposable
         var incomplete = false;
         try {
             ThrowIfWriteUnavailable();
+            if (canWrite?.Invoke() == false) {
+                return false;
+            }
             // Stream.WriteAsync returns no byte count on cancellation. A one-byte write
             // distinguishes an untouched stream from a partially written length prefix.
             await _stream.WriteAsync(prefix.AsMemory(0, 1), cancellationToken);
@@ -90,6 +97,7 @@ public sealed class ProtocolConnection : IAsyncDisposable
             await _stream.WriteAsync(payload, cancellationToken);
             incomplete = false;
             await _stream.FlushAsync(cancellationToken);
+            return true;
         } catch (Exception error) when (incomplete) {
             // A second frame would corrupt the wire. Only the owner may close the concurrent reader.
             Volatile.Write(ref _writeFailure, error as IOException ?? new IOException("IPC 帧未写完整。", error));

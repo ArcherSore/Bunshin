@@ -134,12 +134,8 @@ internal sealed partial class WorkerCoordinator
                 if (connection is null || connection != _connection || connection.IsClosed || entry.Identity.Connection is null) {
                     throw new InvalidOperationException("目标 Worker IPC 已失效。");
                 }
-                if (submission is not null && (!_receivedFullSnapshot || _scheduledSnapshotSyncs != 0
-                    || _pending.Values.Any(request => request.Operation == ProtocolOperations.WorkerGetSnapshot))) {
-                    var notSent = new WorkerObservationBatch(_connectionId, WorkerEvidenceKind.NotSent, entry.Identity,
-                        Error: new InvalidOperationException("当前连接正在等待完整 Snapshot。"));
-                    PublishLocked(notSent);
-                    return notSent;
+                if (submission is not null && AwaitingFullSnapshotLocked()) {
+                    return PublishStartNotSentLocked(entry, "当前连接正在等待完整 Snapshot。");
                 }
                 if (attempt is not null && (Snapshot is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
                     || attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
@@ -154,7 +150,14 @@ internal sealed partial class WorkerCoordinator
                 ? WireEnvelope.Request(ProtocolOperations.WorkerGetSnapshot, entry.Identity.RequestId, new GetSnapshotRequest(run.RunId))
                 : WireEnvelope.Request(ProtocolOperations.RunStart, entry.Identity.RequestId,
                     new RunStartRequest(run.RunId, attempt.PlanDigest, attempt.Plan) { RedactionValues = attempt.RedactionValues });
-            await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, token)).WaitAsync(token).ConfigureAwait(false);
+            var written = await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, token),
+                submission is null ? null : () => CanWriteStart(connection, token)).WaitAsync(token).ConfigureAwait(false);
+            if (!written) {
+                lock (_gate) {
+                    _evidenceRequests.Remove(entry.Identity.RequestId);
+                    return PublishStartNotSentLocked(entry, "当前连接尚未完成快照同步或 Worker 未就绪。");
+                }
+            }
             token.ThrowIfCancellationRequested();
             var batch = await reply.WaitAsync(token).ConfigureAwait(false);
             if (batch.Kind == WorkerEvidenceKind.Disconnected) {
@@ -177,6 +180,28 @@ internal sealed partial class WorkerCoordinator
                 throw;
             }
             throw failure;
+        }
+    }
+
+    private bool AwaitingFullSnapshotLocked() => !_receivedFullSnapshot || _scheduledSnapshotSyncs != 0
+        || _pending.Values.Any(request => request.Operation == ProtocolOperations.WorkerGetSnapshot);
+
+    private WorkerObservationBatch PublishStartNotSentLocked(EvidenceRequest entry, string reason)
+    {
+        var batch = new WorkerObservationBatch(entry.Identity.Connection, WorkerEvidenceKind.NotSent, entry.Identity,
+            Error: new InvalidOperationException(reason));
+        PublishLocked(batch);
+        return batch;
+    }
+
+    private bool CanWriteStart(ProtocolConnection connection, CancellationToken token)
+    {
+        lock (_gate) {
+            token.ThrowIfCancellationRequested();
+            if (connection != _connection || connection.IsClosed) {
+                throw new IOException("目标 Worker IPC 已断开。");
+            }
+            return !AwaitingFullSnapshotLocked() && Snapshot.FreshReadyToStart;
         }
     }
 
