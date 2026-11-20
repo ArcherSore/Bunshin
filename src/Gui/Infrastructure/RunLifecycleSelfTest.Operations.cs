@@ -105,12 +105,95 @@ internal static partial class RunLifecycleSelfTest
             f.Step(new ActivityAppended(b.Id));
             f.Step(new Reserved(launch.Id, new(launch.Id, Target)));
             f.Step(new ReadyChecked(launch.Id, Target, launch.Input));
-            f.ExitWorker();
+            if (force) {
+                f.ExitWorker();
+                f.DrainDeliveries();
+                f.CheckSkipped(b, "当前时间已离开本次定时的分钟");
+            } else {
+                f.CompleteChangeover(b);
+                f.CheckSkipped(launch, "另一个启动请求已取得环境闸门");
+            }
+            Check(f.History.OfType<Reserve>().Single(r => r.Intent == b) == new Reserve(b, force, false)
+                && f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == 1
+                && f.History.OfType<SendStart>().Single().Submission.IntentId == (force ? launch.Id : b.Id)
+                && f.Count<CommitConfiguration>() == (force ? 0 : 1) && f.Count<EndReserved>() == (force ? 0 : 1)
+                && f.Items<CompleteScheduled>().Count() == (force ? 0 : 1),
+                "已选中的普通班次跨分钟继续；等待闸门的强制班次过期后释放，开机启动仍可执行");
+        }
+    }
+
+    private static void VerifyRunLifecycleManualPreparationGate()
+    {
+        var f = new Scenario();
+        var manual = Intent(RunSource.Manual) with { Mode = StartMode.PrepareOnly };
+        var b = Intent(RunSource.Scheduled, 2);
+        f.Connect();
+        f.Step(new Start(manual));
+        f.Step(new Reserved(manual.Id, new(manual.Id, Target)));
+        f.PreviewSchedule(b, true);
+        var reserve = f.Only<Reserve>();
+        if (!reserve.Wait) f.Step(new Reserved(b.Id, null, BusyReason: "环境正忙"));
+        f.Now = TimeSpan.FromSeconds(50);
+        f.Step(new Prepared(manual.Id, Target));
+        if (reserve.Wait) f.Step(new Reserved(b.Id, new(b.Id, Target)));
+        f.Step(new CommittedConfiguration(b.Id));
+        f.Step(new ActivityAppended(b.Id));
+        f.CompleteChangeover(b);
+        var manualRelease = new Release(new(manual.Id, Target));
+        var commit = new CommitConfiguration(b, new(b.Id, Target));
+        Check(reserve == new Reserve(b, Wait: true, AllowReplacement: false)
+            && f.History.OfType<PrepareEnvironment>().SequenceEqual([new(manual, true), new(b, false)])
+            && f.History.OfType<CommitConfiguration>().SequenceEqual([commit])
+            && f.History.IndexOf(reserve) < f.History.IndexOf(manualRelease) && f.History.IndexOf(manualRelease) < f.History.IndexOf(commit)
+            && f.Count<Skip>() == 0 && f.Count<ShowCountdown>() == 0 && f.Count<EndReserved>() == 1
+            && f.Count<OperationFinished>() == 2 && f.Count<Release>() == 2 && f.Count<SendStart>() == 1
+            && f.Items<CompleteScheduled>().Single().Intent == b, "手动准备在本分钟释放后，强制 B 应取得预留并执行一次");
+    }
+
+    private static void VerifyRunLifecycleChangeoverSync()
+    {
+        foreach (var force in new[] { true, false })
+        foreach (var atReservation in new[] { true, false }) {
+            var f = new Scenario { Revision = 2 };
+            var b = Intent(RunSource.Scheduled, 2);
+            var c = Intent(RunSource.Scheduled, 3);
+            var ready3 = f.Frame();
+            f.FrameEvent(ready3);
+            f.PreviewSchedule(b, force);
+            if (!atReservation) {
+                f.Step(new Reserved(b.Id, new(b.Id, Target)));
+                f.Step(new CommittedConfiguration(b.Id));
+            }
+            // The pipe reports the gap's Active as evidence, keeps Current at 3, then projects 6 as fresh.
+            f.Revision = 4;
+            var gap5 = f.Frame(active: SnapshotOf(Attempt(9), RunState.Running));
+            f.FrameEvent(gap5, f.State.Current with { SnapshotFresh = false }, awaitingFullSnapshot: true);
+            var ready6 = f.Frame();
+            f.FrameEvent(ready6, awaitingFullSnapshot: true);
+            if (atReservation) {
+                f.Step(new Reserved(b.Id, new(b.Id, Target)));
+                f.Step(new CommittedConfiguration(b.Id));
+            }
+            f.Step(new ActivityAppended(b.Id));
+            f.FrameEvent(gap5, f.State.Current); // The full reply completes sync without rolling Current back from 6.
             f.DrainDeliveries();
-            f.CheckSkipped(b, "当前时间已离开本次定时的分钟");
-            Check(f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == 1
-                && f.History.OfType<SendStart>().Single().Submission.IntentId == launch.Id
-                && f.Count<EndReserved>() == 0, "迟到的预留须释放，过期候选也不能淘汰开机启动");
+            f.Now = TimeSpan.FromMinutes(1);
+            f.Claim([c], force);
+            f.Step(new Previewed(c.Id, c));
+            f.Step(new Reserved(c.Id, new(c.Id, Target)));
+            f.Step(new CommittedConfiguration(c.Id));
+            f.Step(new ActivityAppended(c.Id));
+            f.CompleteChangeover(c);
+            const string reason = "Worker 连接已断开或状态尚未同步";
+            if (atReservation) f.CheckSkipped(b, reason);
+            else Check(f.History.OfType<OperationFinished>().SingleOrDefault(o => o.Intent == b) is { Admitted: true, Error: { } error }
+                && error.Message == reason && f.Items<Present>().Single().Error == error,
+                "写盘后才遇到补查，保留获准事实并交付换场失败");
+            Check(f.History.OfType<CommitConfiguration>().Count(o => o.Intent == b) == (atReservation ? 0 : 1)
+                && f.History.OfType<EndReserved>().Single().Lease.Operation == c.Id
+                && f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == 1
+                && f.Count<SendStart>() == 1 && f.Items<CompleteScheduled>().Single().Intent == c,
+                $"强制={force}，预留内={atReservation}：补查中不能换场，完整回包后下一班可执行");
         }
     }
 

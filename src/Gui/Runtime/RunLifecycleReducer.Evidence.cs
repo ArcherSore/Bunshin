@@ -7,7 +7,7 @@ namespace Gui.Runtime;
 
 internal sealed partial class RunLifecycleReducer
 {
-    private void Observe(WorkerObservationBatch b)
+    private void Observe(WorkerObservationBatch b, string? configurationName)
     {
         if (b.Kind == WorkerEvidenceKind.ProcessExited && b.Connection is { } exited) {
             Disconnect(exited, exited: true);
@@ -53,7 +53,7 @@ internal sealed partial class RunLifecycleReducer
         // Current is the coordinator's monotonic projection. A low revision or a gap on this live
         // connection can still carry a genuine terminal, but cannot make a stale environment ready.
         if (b.Current is { } view && view.WorkerSnapshot?.WorkerInstanceId == id.WorkerInstanceId) {
-            state = state with { Current = view };
+            state = state with { Current = view, AwaitingFullSnapshot = b.AwaitingFullSnapshot };
         }
         var answered = b.Kind == WorkerEvidenceKind.QueryReply && b.Request is { QueryId: not null } answeredRequest
             && state.Runs.TryGetValue(answeredRequest.Run, out var waiting)
@@ -68,7 +68,7 @@ internal sealed partial class RunLifecycleReducer
         }
         if (b.ObservedSnapshot is { } frame && frame.WorkerInstanceId == id.WorkerInstanceId) {
             if (frame.LastRun != null) ObserveRun(frame, frame.LastRun, false);
-            if (frame.ActiveRun != null) ObserveRun(frame, frame.ActiveRun, true);
+            if (frame.ActiveRun != null) ObserveRun(frame, frame.ActiveRun, true, configurationName);
             foreach (var r in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == id.WorkerInstanceId && !r.Settled)) {
                 if (!state.Current.Fresh || r.Conclusion == StartConclusion.Accepted && !CurrentShowsActive(r))
                     Save(r with { NeedQuery = true });
@@ -84,7 +84,7 @@ internal sealed partial class RunLifecycleReducer
     {
         var current = state.Connection;
         if (current == id || exited && state.Current.WorkerSnapshot?.WorkerInstanceId == id.WorkerInstanceId) {
-            state = state with { Connection = null, Current = exited
+            state = state with { Connection = null, AwaitingFullSnapshot = false, Current = exited
                 ? new(WorkerObservation.WorkerExited, false, null, "Worker 已退出")
                 : state.Current with { Observation = WorkerObservation.IpcDisconnected, SnapshotFresh = false,
                     Detail = error?.Message ?? "Worker IPC 已断开" } };
@@ -152,7 +152,7 @@ internal sealed partial class RunLifecycleReducer
         }
     }
 
-    private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active)
+    private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active, string? configurationName = null)
     {
         var key = new RunKey(frame.WorkerInstanceId, snapshot.RunId);
         var r = state.Runs.GetValueOrDefault(key);
@@ -160,7 +160,7 @@ internal sealed partial class RunLifecycleReducer
             // A historical Last observed on takeover never acquires notification eligibility.
             if (!active || state.Current.WorkerSnapshot?.ActiveRun?.RunId != key.RunId || !state.Current.Fresh) return;
             r = new(key, snapshot.PlanDigest, new(frame.ChildSessionId, key.WorkerInstanceId), null,
-                ImmutableDictionary<Guid, SendRecord>.Empty);
+                ImmutableDictionary<Guid, SendRecord>.Empty) { TakeoverConfigurationName = configurationName };
         }
         if (r.Settled || r.Digest != snapshot.PlanDigest) return;
         if (r.AwaitingReconnectQuery && r.ReconnectEvidence?.LastRun is { } terminal

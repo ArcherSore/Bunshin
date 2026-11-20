@@ -591,15 +591,25 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleObservedRuns()
     {
-        var f = new Scenario();
         var external = Attempt(8);
-        f.FrameEvent(f.Frame(last: SnapshotOf(external, RunState.Succeeded)));
-        f.Expect();
-        f.FrameEvent(f.Frame(active: SnapshotOf(external, RunState.Running)));
-        f.FrameEvent(f.Frame(last: SnapshotOf(external, RunState.Succeeded)));
-        f.Ack();
-        Check(f.Items<Present>().Single().Intent == null && !f.Items<CompleteScheduled>().Any()
-            && !f.Items<RequestQuit>().Any(), "接管后实际观察过 Active 才有通知资格");
+        foreach (var status in new[] { RunState.Succeeded, RunState.Failed }) {
+            var f = new Scenario { ConfigurationName = "历史配置" };
+            f.FrameEvent(f.Frame(last: SnapshotOf(external, RunState.Succeeded)));
+            f.ConfigurationName = "周常";
+            var active = SnapshotOf(external, RunState.Running);
+            f.FrameEvent(f.Frame(active: active));
+            f.ConfigurationName = "另一配置";
+            f.FrameEvent(f.Frame(active: active));
+            var terminal = f.Frame(last: SnapshotOf(external, status));
+            f.FrameEvent(terminal);
+            f.DrainDeliveries();
+            f.FrameEvent(terminal);
+            f.DrainDeliveries();
+            Check(f.Items<Present>().Single() is { Intent: null, Channel: PresentationChannel.Tray } notice
+                && notice.Terminal == terminal.LastRun && notice.Operation == (status == RunState.Failed ? "「周常」运行失败" : "「周常」已完成")
+                && !f.Items<CompleteScheduled>().Any() && !f.Items<RequestQuit>().Any(),
+                "接管时冻结首次 Active 的配置名；切换配置、历史 Last 和重复终态均不改变通知");
+        }
 
         var g = new Scenario();
         g.Begin(Intent(RunSource.Launch));

@@ -25,11 +25,11 @@ internal abstract record LifecycleEvent
     internal sealed record PlanResolved(Guid Id, RunStartAttempt? Attempt, Exception? Error = null) : LifecycleEvent;
     internal sealed record CountdownDue(Guid Id) : LifecycleEvent;
     internal sealed record CancelCountdown(Guid Id) : LifecycleEvent;
-    internal sealed record Observed(WorkerObservationBatch Batch) : LifecycleEvent;
+    internal sealed record Observed(WorkerObservationBatch Batch, string? ConfigurationName) : LifecycleEvent;
     internal sealed record RetryDue(RunKey Key, long Token) : LifecycleEvent;
-    internal sealed record Stop(Guid Id, RunKey Target) : LifecycleEvent;
+    internal sealed record Stop(Guid Id, RunKey Target, bool Foreground = true) : LifecycleEvent;
     internal sealed record StopGateAcquired(Guid Id) : LifecycleEvent;
-    internal sealed record StopReturned(Guid Id, StopResult Result) : LifecycleEvent;
+    internal sealed record StopReturned(Guid Id, StopResult Result, Exception? Error = null) : LifecycleEvent;
     internal sealed record BeginClosing(Guid Id, ClosingKind Kind, RunKey? QuitRun = null) : LifecycleEvent;
     internal sealed record ClosingConfirmed(Guid Id, bool Proceed) : LifecycleEvent;
     internal sealed record ClosingEndReturned(Guid Id, bool Ended, EnvironmentTarget? EndedTarget = null,

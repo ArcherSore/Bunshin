@@ -70,9 +70,14 @@ internal sealed partial class RunLifecycleReducer
         Save(r);
     }
 
-    private static Present TerminalNotice(TrackedRun r, RunSnapshot terminal) => new(r.Key, r.Owner,
-        terminal.State == RunState.Succeeded ? NoticeKind.Succeeded : NoticeKind.Failed,
-        PresentationChannel.Tray, "任务运行", Terminal: terminal);
+    private static Present TerminalNotice(TrackedRun r, RunSnapshot terminal)
+    {
+        var name = r.Owner?.ConfigurationName ?? r.TakeoverConfigurationName;
+        var subject = string.IsNullOrWhiteSpace(name) ? "任务" : $"「{name}」";
+        var succeeded = terminal.State == RunState.Succeeded;
+        return new(r.Key, r.Owner, succeeded ? NoticeKind.Succeeded : NoticeKind.Failed,
+            PresentationChannel.Tray, subject + (succeeded ? "已完成" : "运行失败"), Terminal: terminal);
+    }
 
     private void Dispatch()
     {
@@ -180,7 +185,7 @@ internal sealed partial class RunLifecycleReducer
         if (state.Deliveries.Find(d => d.Id == id && d.InFlight) is not { } d || d.Payload is Cleanup) return;
         state = state with { Deliveries = state.Deliveries.Remove(d) };
         if (d.Payload.Key is { } key && state.Runs.TryGetValue(key, out var r)) {
-            if (d.Payload is Present && r.Notification == NotificationSlot.Claimed)
+            if (d.Payload is Present { Kind: not NoticeKind.StopFailed } && r.Notification == NotificationSlot.Claimed)
                 Save(r with { Notification = NotificationSlot.Delivered });
             else if (d.Payload is CompleteScheduled) Save(r with { CompletionDelivered = true });
         }
@@ -208,7 +213,7 @@ internal sealed partial class RunLifecycleReducer
         if (state.Closing != null || state.Stop != null || !state.Runs.TryGetValue(e.Target, out var r)
             || r.Settled || r.ManualStop != null) return;
         Save(r with { ManualStop = e.Id, StopProgress = StopProgress.WaitingForGate });
-        state = state with { Stop = new(e.Id, e.Target) };
+        state = state with { Stop = new(e.Id, e.Target, e.Foreground) };
         effects.Add(new AcquireStopGate(e.Id, e.Target));
     }
 
@@ -229,6 +234,9 @@ internal sealed partial class RunLifecycleReducer
     private void FinishStop(StopReturned e)
     {
         if (state.Stop is not { } stop || stop.Id != e.Id) return;
+        if (stop.Sent && e.Result == StopResult.Rejected)
+            Queue(new Present(stop.Target, null, NoticeKind.StopFailed,
+                stop.Foreground ? PresentationChannel.ForegroundError : PresentationChannel.Tray, "停止任务失败", e.Error));
         if (state.Runs.GetValueOrDefault(stop.Target) is { } r && r.ManualStop == e.Id) {
             if (e.Result == StopResult.Rejected) {
                 r = r with { ManualStop = null, StopProgress = null };

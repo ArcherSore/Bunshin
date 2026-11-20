@@ -19,7 +19,7 @@ internal enum StopResult { Requested, TimedOut, Rejected }
 internal enum StopProgress { WaitingForGate, AwaitingReply, AwaitingConfirmation, Requested, Stopping }
 internal enum CleanupResult { Ended, Disconnected, TargetChanged, Failed }
 internal enum PresentationChannel { ForegroundError, Tray }
-internal enum NoticeKind { NotStarted, StartUnknown, EndUnconfirmed, Faulted, Succeeded, Failed, CleanupFailed }
+internal enum NoticeKind { NotStarted, StartUnknown, EndUnconfirmed, Faulted, Succeeded, Failed, CleanupFailed, StopFailed }
 
 internal sealed record InputVersion(Guid ConfigurationId, long ProjectVersion, long EditVersion);
 internal sealed record RunIntent(Guid Id, RunSource Source, StartMode Mode, string Entry, string OperationName,
@@ -38,6 +38,7 @@ internal sealed record Confirmation(QueryId? InFlight = null, int Failures = 0, 
 internal sealed record TrackedRun(RunKey Key, string Digest, EnvironmentTarget Environment, RunIntent? Owner,
     ImmutableDictionary<Guid, SendRecord> Sends)
 {
+    internal string? TakeoverConfigurationName { get; init; }
     internal StartConclusion? Conclusion { get; init; }
     internal bool Settled => Terminal != null || Conclusion is StartConclusion.NotStarted or StartConclusion.StartUnknown
         or StartConclusion.EndUnconfirmed;
@@ -62,7 +63,7 @@ internal sealed record TrackedRun(RunKey Key, string Digest, EnvironmentTarget E
 }
 internal sealed record ClosingOperation(Guid Id, ClosingKind Kind, ClosingStage Stage, RunKey? QuitRun = null,
     RunKey? DeferredQuit = null);
-internal sealed record StopOperation(Guid Id, RunKey Target, bool Sent = false);
+internal sealed record StopOperation(Guid Id, RunKey Target, bool Foreground, bool Sent = false);
 internal sealed record Delivery(long Id, LifecycleEffect.Payload Payload, bool InFlight = false,
     WorkerConnectionId? DispatchedOn = null);
 
@@ -74,6 +75,7 @@ internal sealed record RunLifecycleState
     // Failures before a RunKey exists need only a lightweight presentation tombstone.
     internal ImmutableHashSet<Guid> FailedLocalIntents { get; init; } = [];
     internal WorkerCoordinatorSnapshot Current { get; init; } = WorkerCoordinatorSnapshot.Empty;
+    internal bool AwaitingFullSnapshot { get; init; }
     internal WorkerConnectionId? Connection { get; init; }
     internal long LastGeneration { get; init; }
     internal long Sequence { get; init; }

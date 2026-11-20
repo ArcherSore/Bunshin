@@ -324,12 +324,20 @@ internal static partial class RunLifecycleSelfTest
         g.Step(new ActivityAppended(replacement.Id));
         g.Terminal(RunState.Succeeded);
         g.Ack();
-        Check(g.DeliveredItem<CompleteScheduled>().Run == g.Key, "先交付旧定时结果");
-        g.Ack();
-        Check(g.Run.Cleanup == CleanupStage.Claimed && !g.Items<Cleanup>().Any(), "换场持有预留时不能再次等待同一闸门");
+        var completion = g.Only<Deliver>();
+        g.ExitWorker();
         g.Step(new OldEnvironmentEnded(replacement.Id, true));
-        g.Expect(typeof(ScheduleActivity), typeof(PrepareEnvironment));
-        Check(g.Only<PrepareEnvironment>().Intent == replacement && !g.Items<Cleanup>().Any(), "结束已确认，消化旧收尾再准备");
+        var beforeCompletionReceipt = g.History.Count;
+        g.Step(new Delivered(completion.Id));
+        g.Step(new Delivered(completion.Id));
+        g.Step(new Prepared(replacement.Id, null, new InvalidOperationException("准备失败")));
+        g.DrainDeliveries();
+        var prepare = new PrepareEnvironment(replacement, false);
+        Check(completion.Item is CompleteScheduled result && result.Run == g.Key
+            && g.History.IndexOf(prepare) >= beforeCompletionReceipt && g.History.Count(e => e == prepare) == 1
+            && g.History.OfType<Release>().Count(r => r.Lease.Operation == replacement.Id) == 1
+            && g.Items<CompleteScheduled>().Count() == 1 && !g.Items<Cleanup>().Any(),
+            "定时完成仍须等待回执；重复回执不重复准备，已完成的换场消化旧收尾");
 
         foreach (var stopped in new[] { true, false })
         foreach (var atReservation in new[] { false, true }) {
@@ -362,6 +370,48 @@ internal static partial class RunLifecycleSelfTest
                 f.DrainDeliveries();
             }
             Check(f.Items<RequestQuit>().Single().Run == f.Key, "开机终态独立交付一次退出请求");
+        }
+    }
+
+    private static void VerifyRunLifecycleModalChangeover()
+    {
+        foreach (var earlierDialog in new[] { false, true }) {
+            var f = new Scenario();
+            if (earlierDialog)
+                f.Step(new Start(Intent(RunSource.Manual, 9), new InvalidOperationException("前一次操作失败")));
+            f.Begin(Intent(RunSource.Manual));
+            f.Body();
+            f.Active();
+            var old = f.Key;
+            var b = Intent(RunSource.Scheduled, 2);
+            var c = Intent(RunSource.Scheduled, 3);
+            f.PreviewSchedule(b, true);
+            f.Now = TimeSpan.FromSeconds(10);
+            f.Step(new CountdownDue(b.Id));
+            f.Step(new Reserved(b.Id, new(b.Id, Target)));
+            f.Step(new CommittedConfiguration(b.Id));
+            f.Step(new ActivityAppended(b.Id));
+            f.ExitWorker();
+            f.Step(new OldEnvironmentEnded(b.Id, true));
+            f.Now = TimeSpan.FromMinutes(1);
+            f.Claim([c], true);
+            if (f.History.OfType<PrepareEnvironment>().Any(p => p.Intent == b))
+                f.Step(new Prepared(b.Id, null, new InvalidOperationException("B 准备失败")));
+            f.Step(new Previewed(c.Id, c));
+            f.Step(new Reserved(c.Id, new(c.Id, null)));
+            f.Step(new CommittedConfiguration(c.Id));
+            f.Step(new ActivityAppended(c.Id));
+            var beforeDismissal = f.History.ToArray();
+            f.CompleteChangeover(c);
+            var modal = beforeDismissal.OfType<Deliver>().Single().Item as Present;
+            Check(modal?.Channel == PresentationChannel.ForegroundError && (earlierDialog || modal.Kind == NoticeKind.EndUnconfirmed)
+                && beforeDismissal.OfType<PrepareEnvironment>().Count(p => p.Intent == b) == (earlierDialog ? 0 : 1)
+                && beforeDismissal.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == 1
+                && beforeDismissal.OfType<EndReserved>().Select(e => e.Lease.Operation).SequenceEqual([b.Id, c.Id])
+                && f.History.OfType<OperationFinished>().Count(o => o.Intent == b && o.Admitted) == 1
+                && f.Items<Present>().Count(p => p.Run == old && p.Kind == NoticeKind.EndUnconfirmed) == 1
+                && f.Items<CompleteScheduled>().Single().Intent == c && f.Count<Skip>() == 0,
+                "旧结论已发出就准备 B；若它排在另一弹框后则释放 B，C 在弹框回执前独立获准");
         }
     }
 
@@ -536,10 +586,46 @@ internal static partial class RunLifecycleSelfTest
         Check(f.Run.ManualStop == Id(13) && f.Run.StopProgress == StopProgress.Stopping && !f.Run.Settled,
             "超时和 Stopping 均不能合成终态");
         f.Terminal(RunState.Succeeded);
-        f.Ack();
-        f.Ack();
+        f.DrainDeliveries();
         Check(f.Items<CompleteScheduled>().Single().Terminal.State == RunState.Succeeded && !f.Items<Cleanup>().Any(),
             "手停针对原 Run，即使抵达真实成功也保留现场");
+        Check(f.History.OfType<SendStop>().Select(s => s.Id).SequenceEqual([Id(12), Id(13)])
+            && f.History.OfType<ReleaseStopGate>().Select(s => s.Id).SequenceEqual([stop, Id(12), Id(13)])
+            && f.Items<Present>().Select(p => p.Kind).SequenceEqual([NoticeKind.StopFailed, NoticeKind.Succeeded]),
+            "换目标和超时均不产生停止失败，只有已发送的拒绝交付一次");
+    }
+
+    private static void VerifyRunLifecycleStopRejection()
+    {
+        foreach (var foreground in new[] { true, false }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Scheduled));
+            f.Body();
+            f.Active();
+            var key = f.Key;
+            var stop = Id(12);
+            f.Step(new Stop(stop, key, Foreground: foreground));
+            f.Step(new StopGateAcquired(stop));
+            var error = new WorkerProtocolErrorException("worker_faulted", "Worker 已进入故障状态");
+            var rejected = new StopReturned(stop, StopResult.Rejected, error);
+            // A late rejection still belongs to the stop click, even if its Run has already retired.
+            if (!foreground) {
+                f.Terminal(RunState.Failed);
+                f.ExitWorker();
+                f.DrainDeliveries();
+            }
+            f.Step(rejected);
+            if (foreground) f.Terminal(RunState.Failed);
+            f.DrainDeliveries();
+            f.Step(rejected);
+            f.DrainDeliveries();
+            var notice = f.Items<Present>().SingleOrDefault(p => p.Kind == NoticeKind.StopFailed);
+            Check(notice is { Operation: "停止任务失败" } && notice.Run == key && ReferenceEquals(notice.Error, error)
+                && notice.Detail == error.Message && notice.Channel == (foreground ? PresentationChannel.ForegroundError : PresentationChannel.Tray)
+                && f.History.OfType<SendStop>().SequenceEqual([new(stop, key)]) && f.Count<ReleaseStopGate>() == 1
+                && f.Items<Present>().Count() == 2 && f.Items<CompleteScheduled>().Single().Run == key,
+                "Worker 明确拒绝时按本次停止渠道交付原错一次，Run 的终态和定时完成仍各自交付");
+        }
     }
 }
 

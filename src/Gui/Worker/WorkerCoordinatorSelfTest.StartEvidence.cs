@@ -292,17 +292,23 @@ internal static partial class WorkerCoordinatorSelfTest
         await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
             new StateChangedEvent(f.Run.WorkerInstanceId, 5, gap)), f.Token);
         var refresh = await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
-        Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current?.Resynchronising == true,
+        var gapBatch = await f.NextAsync(WorkerEvidenceKind.Snapshot);
+        Require(gapBatch.Current?.Resynchronising == true,
             "修订从 3 跳到 5 应触发完整快照补查。");
         ready = ready with { StateRevision = 6 };
         await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
             new StateChangedEvent(f.Run.WorkerInstanceId, 6, ready)), f.Token);
-        Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 6 },
+        var idle = await f.NextAsync(WorkerEvidenceKind.Snapshot);
+        Require(idle.Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 6 },
             "补查回包前的 Ready/Idle 事件应照常更新生产快照。");
         await RequireNotSentAsync();
         await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value, new GetSnapshotResponse(gap)), f.Token);
-        await f.NextAsync(WorkerEvidenceKind.Snapshot);
+        var full = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         await RequireStartAcceptedAsync();
+        Require(latest.AwaitingFullSnapshot && !older.AwaitingFullSnapshot && gapBatch.AwaitingFullSnapshot
+            && idle.AwaitingFullSnapshot && !full.AwaitingFullSnapshot && full.Current == idle.Current
+            && full.ObservedSnapshot?.StateRevision == 5,
+            "同一连接的初始同步与断档补查都以完整回包为界；较旧回包解除屏障并保留最新就绪投影。");
 
         async Task RequireNotSentAsync()
         {

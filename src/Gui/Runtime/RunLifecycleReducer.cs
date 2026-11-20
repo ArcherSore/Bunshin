@@ -47,7 +47,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             case CancelCountdown e when At(e.Id, OperationStage.Countdown) is { } op:
                 CancelWarning(op);
                 Finish(op); break;
-            case Observed e: Observe(e.Batch); break;
+            case Observed e: Observe(e.Batch, e.ConfigurationName); break;
             case RetryDue e when state.Runs.TryGetValue(e.Key, out var run)
                     && run.Confirmation.Timer == e.Token && state.Now >= run.Confirmation.Due:
                 Save(run with { Confirmation = run.Confirmation with { Timer = 0, Due = null } }); break;
@@ -134,7 +134,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             return;
         }
         op = op with { Lease = e.Lease };
-        if (MissedMinute(op) is { } expired) {
+        if (op.Force && MissedMinute(op) is { } expired) {
             SkipOperation(op, expired);
             return;
         }

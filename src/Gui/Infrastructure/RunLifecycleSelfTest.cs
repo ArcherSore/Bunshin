@@ -27,7 +27,9 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleStoppedOffline, VerifyRunLifecycleReconnectFault, VerifyRunLifecycleCancelledPreparation,
         VerifyRunLifecycleClosingPreview, VerifyRunLifecycleSimultaneousNames, VerifyRunLifecycleMidnightRollback,
         VerifyRunLifecycleLateReservation, VerifyRunLifecycleReplacementReview, VerifyRunLifecycleClosingCountdown,
-        VerifyRunLifecycleCancelledWriterRace, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleUnsettledAfterEnd
+        VerifyRunLifecycleCancelledWriterRace, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleUnsettledAfterEnd,
+        VerifyRunLifecycleChangeoverSync, VerifyRunLifecycleManualPreparationGate, VerifyRunLifecycleModalChangeover,
+        VerifyRunLifecycleStopRejection
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
@@ -72,6 +74,7 @@ internal static partial class RunLifecycleSelfTest
         internal WorkerConnectionId Connection = new(Target.WorkerId!.Value, 1);
         internal long Revision;
         internal long Sequence;
+        internal string? ConfigurationName;
         internal SendStart Send => History.OfType<SendStart>().Last();
         internal RunKey Key => Send.Submission.Run;
         internal TrackedRun Run => State.Runs[Key];
@@ -124,9 +127,10 @@ internal static partial class RunLifecycleSelfTest
                 active, last, 0, 0);
         }
 
-        internal void FrameEvent(WorkerSnapshot observed, WorkerCoordinatorSnapshot? current = null) =>
+        internal void FrameEvent(WorkerSnapshot observed, WorkerCoordinatorSnapshot? current = null, bool awaitingFullSnapshot = false) =>
             Evidence(new(Connection, WorkerEvidenceKind.Snapshot,
-                Current: current ?? new(WorkerObservation.Connected, true, observed, ""), ObservedSnapshot: observed));
+                Current: current ?? new(WorkerObservation.Connected, true, observed, ""), ObservedSnapshot: observed,
+                AwaitingFullSnapshot: awaitingFullSnapshot));
         internal void Connect() => FrameEvent(Frame());
         internal void Reconnect()
         {
@@ -136,7 +140,7 @@ internal static partial class RunLifecycleSelfTest
         }
         internal void Active() => FrameEvent(Frame(active: SnapshotOf(Send.Attempt, RunState.Running)));
         internal void Terminal(RunState status) => FrameEvent(Frame(last: SnapshotOf(Send.Attempt, status)));
-        internal void Evidence(WorkerObservationBatch b) => Step(new Observed(b));
+        internal void Evidence(WorkerObservationBatch b) => Step(new Observed(b, ConfigurationName));
         internal void Eof(Exception? error = null) => Evidence(new(Connection, WorkerEvidenceKind.Disconnected, Error: error));
         internal void ExitWorker() => Evidence(new(Connection, WorkerEvidenceKind.ProcessExited));
 
@@ -180,6 +184,25 @@ internal static partial class RunLifecycleSelfTest
             Expect(typeof(RegisterPlan), typeof(SendStart));
             Check(Send.Submission.IntentId == intent.Id && Send.Submission.PlanDigest == Send.Attempt.PlanDigest,
                 "必须先登记和脱敏，再发送该意图的冻结计划");
+        }
+
+        // Drive the remaining receipts after EndReserved, including the new Worker's terminal delivery.
+        internal void CompleteChangeover(RunIntent intent)
+        {
+            ExitWorker();
+            Step(new OldEnvironmentEnded(intent.Id, true));
+            Connection = new(Id(101), Connection.Generation + 1);
+            var target = Target with { WorkerId = Connection.WorkerInstanceId };
+            Connect();
+            Step(new Prepared(intent.Id, target));
+            Step(new ReadyChecked(intent.Id, target, intent.Input));
+            if (History.OfType<SendStart>().Any(s => s.Submission.IntentId == intent.Id)) {
+                var wire = Body();
+                Active();
+                Reply(wire, StartReplyKind.Accepted, "accepted");
+                Terminal(RunState.Cancelled);
+            }
+            DrainDeliveries();
         }
 
         internal WorkerRequestEvidence Writer(SendStart? start = null)

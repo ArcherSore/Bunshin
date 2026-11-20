@@ -107,12 +107,12 @@ internal sealed partial class RunLifecycleReducer
     private string? ChangeoverBlocker(StartOperation op)
     {
         var current = state.Current;
+        if (op.Force && state.Runs.Values.Any(r => !r.Settled && r.Owner?.Source == RunSource.Launch && r.ManualStop != null))
+            return "正在等待开机任务停止并退出";
+        if (!current.NoLiveAdmission && (state.AwaitingFullSnapshot || !current.Fresh || state.Connection is not { } live
+            || live.WorkerInstanceId != current.WorkerSnapshot?.WorkerInstanceId))
+            return "Worker 连接已断开或状态尚未同步";
         if (op.Force) {
-            if (state.Runs.Values.Any(r => !r.Settled && r.Owner?.Source == RunSource.Launch && r.ManualStop != null))
-                return "正在等待开机任务停止并退出";
-            if (!current.NoLiveAdmission && (!current.Fresh || state.Connection is not { } live
-                || live.WorkerInstanceId != current.WorkerSnapshot?.WorkerInstanceId))
-                return "Worker 连接已断开或状态尚未同步";
             foreach (var r in state.Runs.Values.Where(r => !r.Settled && (r.Key == op.Replacement || r.Owner?.Source == RunSource.Launch))) {
                 if (r.AwaitingReconnectQuery || r.NeedQuery || r.Confirmation.InFlight != null || r.Conclusion != StartConclusion.Accepted)
                     return r.Owner?.Source == RunSource.Launch ? "开机任务的运行证据尚未确认" : "原任务的运行证据尚未确认";
@@ -192,8 +192,13 @@ internal sealed partial class RunLifecycleReducer
     {
         foreach (var op in state.Operations.Values.Where(o => o.Stage == OperationStage.DrainOld)) {
             var key = op.Replacement!.Value;
-            if (state.Deliveries.Any(d => d.Payload.Key == key)) continue;
-            BeginPrepare(op);
+            var dialog = state.Deliveries.Find(d => d.InFlight && d.Payload is Present { Channel: PresentationChannel.ForegroundError });
+            if (!state.Deliveries.Any(d => d.Payload.Key == key && d.Id != dialog?.Id)) {
+                BeginPrepare(op);
+            } else if (dialog != null) {
+                // A queued old result cannot be dispatched until the open dialog returns. Give up this lease.
+                Fail(op, new InvalidOperationException("旧任务的结果仍在等待交付"));
+            }
         }
     }
 }
