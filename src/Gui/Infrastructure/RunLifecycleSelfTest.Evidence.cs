@@ -8,6 +8,94 @@ namespace Gui.Infrastructure;
 
 internal static partial class RunLifecycleSelfTest
 {
+    private static void VerifyRunLifecycleSendFailure()
+    {
+        foreach (var exits in new[] { false, true }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Manual));
+            var writer = f.Writer();
+            f.Evidence(new(f.Connection, WorkerEvidenceKind.BeforeBody, writer));
+            var failure = new System.IO.IOException("正文前写入失败");
+            if (exits) f.ExitWorker();
+            else {
+                f.Eof(new System.IO.IOException("读端断开"));
+                f.Evidence(new(writer.Connection, WorkerEvidenceKind.NotSent, writer, Error: failure));
+            }
+            f.DrainDeliveries();
+            var result = f.History.OfType<OperationFinished>().Single();
+            Check(result.Run == f.Key && result.Error != null && (exits || result.Error == failure)
+                && f.Items<Present>().Single() is { Kind: NoticeKind.NotStarted, Error: var error }
+                && error == result.Error && f.Count<Release>() == 1, "未能启动不能回报空错误，写前失败保留原异常");
+        }
+    }
+
+    private static void VerifyRunLifecycleStaleActiveBackoff()
+    {
+        var f = new Scenario();
+        f.Begin(Intent(RunSource.Manual));
+        f.Body();
+        var old = f.Frame(active: SnapshotOf(f.Send.Attempt, RunState.Running));
+        f.FrameEvent(old);
+        f.FrameEvent(f.Frame(active: SnapshotOf(Attempt(8), RunState.Running)));
+        foreach (var seconds in new[] { 1, 2, 4 }) {
+            var count = f.Count<QueryRun>();
+            f.Timeout(f.QueryWire());
+            var timer = f.Only<ArmRetry>();
+            Check(timer.Due == f.Now + TimeSpan.FromSeconds(seconds), "历史 Active 不能重置退避次数");
+            f.Now = timer.Due - TimeSpan.FromTicks(1);
+            f.FrameEvent(old, f.State.Current);
+            f.FrameEvent(old, f.State.Current);
+            Check(f.Count<QueryRun>() == count && f.Count<CancelRetry>() == 0, "低修订 Active 到期前不能再查询");
+            f.Now = timer.Due;
+            f.Step(new RetryDue(f.Key, timer.Token));
+            Check(f.Count<QueryRun>() == count + 1 && f.Count<SendStart>() == 1, "到期只发一次定向查询");
+        }
+    }
+
+    private static void VerifyRunLifecycleRejectedRetry()
+    {
+        foreach (var code in new[] { "invalid_run_plan", "invalid_request", "run_id_conflict", "worker_busy",
+            "worker_not_ready", "operation_not_allowed", "worker_faulted", "protocol_version_mismatch" }) {
+            var f = new Scenario();
+            var a = Intent(RunSource.Manual);
+            if (code == "invalid_run_plan") {
+                var attempt = a.Attempt!;
+                var item = attempt.Plan.Items.Single();
+                a = a with { Attempt = attempt with { Plan = attempt.Plan with { Items = [item, item] } } };
+            }
+            f.Begin(a);
+            var error = new InvalidOperationException(code);
+            f.Reply(f.Body(), StartReplyKind.RejectedBeforeRegistration, code, error);
+            f.Ack();
+            var retry = Intent(RunSource.Manual, 2) with { Mode = StartMode.Retry, RetryOf = f.Key, Attempt = null };
+            f.Step(new Start(retry));
+            f.Step(new Reserved(retry.Id, new(retry.Id, Target)));
+            f.Step(new ReadyChecked(retry.Id, Target, retry.Input));
+            f.DrainDeliveries();
+            if (code is "invalid_run_plan" or "invalid_request" or "run_id_conflict") {
+                Check(f.Count<SendStart>() == 1 && f.Items<Present>().Last() is { Intent: var intent, Error: var actual }
+                    && intent?.Id == retry.Id && actual == error, $"{code} 必须向本次点击显示原错，不重发");
+            } else {
+                Check(f.Count<SendStart>() == 2 && ReferenceEquals(f.Send.Attempt, a.Attempt)
+                    && f.Send.Submission.IntentId == retry.Id, $"{code} 在同 Worker 已 Ready 后允许复用原计划");
+            }
+        }
+    }
+
+    private static void VerifyRunLifecycleFaultedTakeover()
+    {
+        var f = new Scenario();
+        var external = Attempt(8);
+        var frame = f.Frame(active: SnapshotOf(external, RunState.Running), worker: WorkerState.Faulted);
+        f.FrameEvent(frame);
+        f.FrameEvent(frame);
+        f.DrainDeliveries();
+        Check(!f.Items<Present>().Any(), "重复接管时已故障的外部 Active 不能补故障提醒");
+        f.FrameEvent(f.Frame(last: SnapshotOf(external, RunState.Failed)));
+        f.DrainDeliveries();
+        Check(f.Items<Present>().Single().Kind == NoticeKind.Failed, "仍能通知观察期间收到的真实终态");
+    }
+
     private static void VerifyRunLifecycleSourceConclusions()
     {
         foreach (var source in Enum.GetValues<RunSource>())
@@ -30,17 +118,23 @@ internal static partial class RunLifecycleSelfTest
             if (conclusion == StartConclusion.Accepted) {
                 Check(!f.Items<Present>().Any(), "接纳不能单独弹出通知");
                 f.Terminal(RunState.Succeeded);
+                f.DrainDeliveries();
                 Check(f.Items<Present>().Single().Kind == NoticeKind.Succeeded, "已接纳应跟随真实终态");
+                Check(f.Items<RequestQuit>().Count() == (source == RunSource.Launch ? 1 : 0)
+                    && f.Items<CompleteScheduled>().Count() == (source == RunSource.Scheduled ? 1 : 0)
+                    && f.Items<Cleanup>().Count() == (source == RunSource.Scheduled ? 1 : 0), "成功只交付给本次来源");
             } else {
                 var kind = conclusion switch {
                     StartConclusion.NotStarted => NoticeKind.NotStarted,
                     StartConclusion.StartUnknown => NoticeKind.StartUnknown,
                     _ => NoticeKind.EndUnconfirmed
                 };
+                f.DrainDeliveries();
                 var notice = f.Items<Present>().Single();
                 Check(notice.Kind == kind && notice.Channel == (source == RunSource.Manual
                     ? PresentationChannel.ForegroundError : PresentationChannel.Tray) && notice.Intent?.ConfigurationName == "第一班"
-                    && !f.Items<RequestQuit>().Any() && !f.Items<CompleteScheduled>().Any(), "来源、呈现或消费者错误");
+                    && !f.Items<RequestQuit>().Any() && !f.Items<CompleteScheduled>().Any() && !f.Items<Cleanup>().Any(),
+                    "来源、呈现或消费者错误");
             }
         }
     }
@@ -106,9 +200,10 @@ internal static partial class RunLifecycleSelfTest
         Check(f.Run.Conclusion == StartConclusion.NotStarted && f.State.Current.WorkerSnapshot?.ActiveRun == b,
             "清除 A 待确认和发布 B 的 Running 必须是同一转换");
         var only = Intent(RunSource.Scheduled, 3);
-        f.Step(new ScheduleClaimed([only], TimeSpan.FromMinutes(1)));
+        f.Claim([only]);
         f.Expect(typeof(Skip), typeof(OperationFinished));
-        Check(f.Only<Skip>().Intent == only && f.Count<SendStop>() == 0 && f.Count<EndReserved>() == 0, "不能顶替 B");
+        Check(f.Only<Skip>() is { Intent: var skipped, Reason: "正在运行其他任务" } && skipped == only
+            && f.Count<SendStop>() == 0 && f.Count<EndReserved>() == 0, "唯一候选应记下 B 正在运行的跳过原因");
 
         var g = new Scenario();
         g.Connect();
@@ -284,7 +379,7 @@ internal static partial class RunLifecycleSelfTest
         f.Begin(Intent(RunSource.Scheduled));
         var sent = f.Body();
         f.Eof();
-        f.Step(new ScheduleClaimed([Intent(RunSource.Scheduled, 2)], TimeSpan.FromMinutes(1)));
+        f.Claim([Intent(RunSource.Scheduled, 2)]);
         f.Expect(typeof(Skip), typeof(OperationFinished));
         f.Evidence(new(f.Connection, WorkerEvidenceKind.AdmissionRemoved));
         f.Reconnect();
@@ -293,13 +388,15 @@ internal static partial class RunLifecycleSelfTest
         Check(q.WriteSequence == sent.WriteSequence && !q.Covers(sent) && !f.Items<Present>().Any(),
             "重连后的普通空闲快照与跨代写序均不能排除发送");
         f.QueryResult(q, false);
+        Check(f.DeliveredItem<Present>().Kind == NoticeKind.NotStarted, "有序否定应交付未能启动");
         f.Ack();
         f.QueryResult(q, false);
         var next = Intent(RunSource.Scheduled, 3);
+        f.Now += TimeSpan.FromMinutes(1);
         f.PreviewSchedule(next);
         f.Step(new Reserved(next.Id, new(next.Id, Target)));
         f.Step(new CommittedConfiguration(next.Id));
-        Check(f.State.Operations[next.Id].Admitted && f.Items<Present>().Count() == 1
+        Check(f.Only<PublishConfiguration>().Intent == next && f.Only<AppendStart>().Intent == next && f.Items<Present>().Count() == 1
             && f.Count<SendStart>() == 1 && !f.Items<Cleanup>().Any(), "仅有序 false 结算，现场保留，下一机会获准");
     }
 
@@ -337,17 +434,17 @@ internal static partial class RunLifecycleSelfTest
             f.QueryResult(f.QueryWire(), true, f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Succeeded)));
             Check(f.Items<Present>().Single().Kind == NoticeKind.Succeeded && f.Count<SendStart>() == 1, "重连后定向恢复");
         }
-        // A v8 connection.open is explicitly refused before admission by #131. It emits no
-        // observation batch. Drive the outstanding Ready wait to its deadline without a handshake.
-        var oldPeer = new Scenario();
+        // VerifyConnectionOpenRejectionAsync exercises the old-version handshake on the pipe.
+        // The reducer receives only the result of its Ready wait.
+        var waiting = new Scenario();
         var launch = Intent(RunSource.Launch) with { Mode = StartMode.PrepareAndStart };
-        oldPeer.Step(new Start(launch));
-        oldPeer.Step(new Reserved(launch.Id, new(launch.Id, null)));
-        oldPeer.Step(new Prepared(launch.Id, Target));
-        oldPeer.Now += oldPeer.Only<CheckReady>().Timeout;
-        oldPeer.Step(new ReadyChecked(launch.Id, null, Input, new TimeoutException("未能接纳兼容的 Worker")));
-        Check(oldPeer.DeliveredItem<Present>().Kind == NoticeKind.NotStarted && oldPeer.State.Runs.Count == 0
-            && oldPeer.Count<SendStart>() == 0 && oldPeer.Count<QueryRun>() == 0, "被拒的旧版握手不能建立待登记 Run");
+        waiting.Step(new Start(launch));
+        waiting.Step(new Reserved(launch.Id, new(launch.Id, null)));
+        waiting.Step(new Prepared(launch.Id, Target));
+        waiting.Now += waiting.Only<CheckReady>().Timeout;
+        waiting.Step(new ReadyChecked(launch.Id, null, Input, new TimeoutException()));
+        waiting.DrainDeliveries();
+        Check(waiting.Count<SendStart>() == 0, "Ready 未达成时不得发送启动请求");
     }
 
     private static void VerifyRunLifecycleBootAttribution()

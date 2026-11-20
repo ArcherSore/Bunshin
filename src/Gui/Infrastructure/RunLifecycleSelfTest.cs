@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using Gui.Runtime;
 using Gui.Worker;
@@ -19,7 +20,10 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleCleanupCollision, VerifyRunLifecycleCleanupReconnect,
         VerifyRunLifecycleCountdown, VerifyRunLifecycleReplacement, VerifyRunLifecycleExitBuffer,
         VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleStopTarget, VerifyRunLifecycleReconnectBarrier,
-        VerifyRunLifecycleObservedRuns
+        VerifyRunLifecycleObservedRuns, VerifyRunLifecycleCountdownEvidence, VerifyRunLifecycleClosingReceipts,
+        VerifyRunLifecycleSendFailure, VerifyRunLifecycleMinuteWinner, VerifyRunLifecycleExpiredSelection,
+        VerifyRunLifecycleLogonGate, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRejectedRetry,
+        VerifyRunLifecycleFaultedTakeover
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
@@ -90,6 +94,15 @@ internal static partial class RunLifecycleSelfTest
             Step(new Delivered(next.Id));
         }
 
+        internal void DrainDeliveries()
+        {
+            while (State.Deliveries.Count != 0) {
+                if (State.Deliveries.Single(d => d.InFlight) is { Payload: Cleanup } cleanup)
+                    Step(new CleanupReturned(cleanup.Id, CleanupResult.Ended));
+                else Ack();
+            }
+        }
+
         internal WorkerSnapshot Frame(RunSnapshot? active = null, RunSnapshot? last = null, WorkerState worker = WorkerState.Ready)
         {
             var dependency = new DependencyCheck(true, null, null);
@@ -115,9 +128,15 @@ internal static partial class RunLifecycleSelfTest
         internal void Eof(Exception? error = null) => Evidence(new(Connection, WorkerEvidenceKind.Disconnected, Error: error));
         internal void ExitWorker() => Evidence(new(Connection, WorkerEvidenceKind.ProcessExited));
 
+        internal void Claim(ImmutableArray<RunIntent> candidates, bool force = false)
+        {
+            var minute = TimeSpan.FromMinutes(Math.Floor(Now.TotalMinutes));
+            Step(new ScheduleClaimed(candidates, Epoch.Date.AddHours(8) + minute, minute + TimeSpan.FromMinutes(1), force));
+        }
+
         internal void PreviewSchedule(RunIntent intent, bool force = false, params RunIntent[] more)
         {
-            Step(new ScheduleClaimed([intent, .. more], Now + TimeSpan.FromMinutes(1), force));
+            Claim([intent, .. more], force);
             Expect(typeof(Preview));
             Step(new Previewed(intent.Id, intent));
         }

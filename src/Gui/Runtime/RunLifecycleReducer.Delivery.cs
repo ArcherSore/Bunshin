@@ -74,6 +74,11 @@ internal sealed partial class RunLifecycleReducer
     private void Dispatch()
     {
         if (state.Closing?.Stage == ClosingStage.Committed) return;
+        if (state.Closing is { Stage: ClosingStage.WaitingForOperations } closing && state.Operations.IsEmpty) {
+            state = state with { Closing = closing with { Stage = ClosingStage.End } };
+            effects.Add(new EndForClosing(state.Closing));
+        }
+        ReviewCountdowns();
         DispatchQueries();
         RecheckCleanups();
         if (state.Closing == null) {
@@ -242,15 +247,15 @@ internal sealed partial class RunLifecycleReducer
         state = state with { Closing = closing };
         effects.Add(new SetClosing(true));
         foreach (var op in state.Operations.Values.OrderBy(op => op.Intent.Id)) {
-            if (op.Stage == OperationStage.EndOld) {
-                // The outcome of an already authorized changeover decides its suspended -q binding.
+            if (op.Stage is OperationStage.Commit or OperationStage.Activity or OperationStage.EndOld
+                or OperationStage.Prepare or OperationStage.Sending) {
+                // These effects already own the lease. Their receipts settle the physical work.
                 Save(op with { Cancelled = true });
                 continue;
             }
             if (op.Stage == OperationStage.Countdown) effects.Add(new HideCountdown(op.Intent.Id));
             effects.Add(new CancelOperation(op.Intent.Id, op.Lease));
-            var run = op.Stage == OperationStage.Sending ? state.Runs.Values.FirstOrDefault(r => r.Owner?.Id == op.Intent.Id) : null;
-            effects.Add(new OperationFinished(op.Intent, op.Admitted, run?.Key, new OperationCanceledException("操作已取消")));
+            effects.Add(new OperationFinished(op.Intent, op.Admitted, null, new OperationCanceledException("操作已取消")));
             RestoreBinding(op);
             SkipRemainder(op, "应用正在退出");
             state = state with { Operations = state.Operations.Remove(op.Intent.Id) };

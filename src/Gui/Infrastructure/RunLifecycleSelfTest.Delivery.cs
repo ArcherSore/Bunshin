@@ -8,6 +8,106 @@ namespace Gui.Infrastructure;
 
 internal static partial class RunLifecycleSelfTest
 {
+    private static void VerifyRunLifecycleCountdownEvidence()
+    {
+        foreach (var outcome in new[] { "terminal-query", "terminal-exit", "idle-negative", "active" }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Launch));
+            f.Body();
+            f.Eof();
+            var next = Intent(RunSource.Scheduled, 2);
+            f.PreviewSchedule(next, true);
+            var deadline = f.Only<ShowCountdown>().Deadline;
+            f.Connection = f.Connection with { Generation = 2 };
+            var last = outcome.StartsWith("terminal", StringComparison.Ordinal)
+                ? SnapshotOf(f.Send.Attempt, RunState.Succeeded) : null;
+            f.FrameEvent(f.Frame(last: last));
+            var query = f.QueryWire();
+            f.Now = deadline;
+            f.Step(new CountdownDue(next.Id));
+            f.Step(new CountdownDue(next.Id));
+            Check(f.History.OfType<Reserve>().All(r => r.Intent != next) && f.Count<CommitConfiguration>() == 0,
+                "到期先等待开机归属，不能授权换场");
+            if (outcome == "terminal-exit") f.ExitWorker();
+            else f.QueryResult(query, outcome != "idle-negative",
+                f.Frame(active: outcome == "active" ? SnapshotOf(f.Send.Attempt, RunState.Running) : null));
+            f.DrainDeliveries();
+            if (last != null) {
+                Check(f.Items<Present>().Single().Terminal == last && f.Items<RequestQuit>().Single().Run == f.Key
+                    && f.Count<EndReserved>() == 0 && f.Count<PrepareEnvironment>() == 0
+                    && f.History.OfType<Skip>().Single().Intent == next, "先到的成功须触发开机退出，消费替换机会");
+            } else {
+                Check(f.History.OfType<Reserve>().Count(r => r.Intent == next) == 1, "查询消除归属疑问后继续复核");
+                f.Step(new Reserved(next.Id, new(next.Id, Target)));
+                f.Step(new CommittedConfiguration(next.Id));
+                f.Step(new ActivityAppended(next.Id));
+                Check(f.Only<EndReserved>().Replace == (outcome == "active" ? f.Key : null)
+                    && !f.Items<RequestQuit>().Any(), "只顶替查询确认仍在运行的原目标");
+            }
+        }
+        var scheduled = new Scenario();
+        scheduled.Begin(Intent(RunSource.Scheduled));
+        scheduled.Body();
+        scheduled.Eof();
+        scheduled.Now += TimeSpan.FromMinutes(1);
+        var replacement = Intent(RunSource.Scheduled, 3);
+        scheduled.PreviewSchedule(replacement, true);
+        var due = scheduled.Only<ShowCountdown>().Deadline;
+        scheduled.Connection = scheduled.Connection with { Generation = 2 };
+        scheduled.Terminal(RunState.Succeeded);
+        scheduled.Now = due;
+        scheduled.Step(new CountdownDue(replacement.Id));
+        scheduled.QueryResult(scheduled.QueryWire(), true, scheduled.Frame(last: SnapshotOf(scheduled.Send.Attempt, RunState.Succeeded)));
+        scheduled.DrainDeliveries();
+        Check(scheduled.History.OfType<Reserve>().All(r => r.Intent != replacement)
+            && scheduled.Items<CompleteScheduled>().Single().Run == scheduled.Key && scheduled.Items<Cleanup>().Count() == 1,
+            "已收到的定时终态也要在到期复核中先结算");
+    }
+
+    private static void VerifyRunLifecycleClosingReceipts()
+    {
+        foreach (var stage in new[] { "commit", "activity", "end", "prepare" })
+        foreach (var decision in new[] { "resume-first", "confirm-first", "receipt-first" })
+        foreach (var success in new[] { true, false }) {
+            var f = new Scenario();
+            f.Connect();
+            var a = Intent(RunSource.Scheduled);
+            f.PreviewSchedule(a);
+            f.Step(new Reserved(a.Id, new(a.Id, Target)));
+            if (stage != "commit") f.Step(new CommittedConfiguration(a.Id));
+            if (stage is "end" or "prepare") f.Step(new ActivityAppended(a.Id));
+            if (stage == "prepare") f.Step(new OldEnvironmentEnded(a.Id, true));
+            var exit = Id(19);
+            f.Step(new BeginClosing(exit, ClosingKind.Exit));
+            var proceed = decision == "confirm-first";
+            if (decision != "receipt-first") f.Step(new ClosingConfirmed(exit, proceed));
+            Check(f.Count<OperationFinished>() == 0 && f.Count<Release>() == 0 && f.Count<EndForClosing>() == 0,
+                $"退出决定不能提前结算在途 {stage}");
+            var error = success ? null : new InvalidOperationException("物理操作失败");
+            if (stage == "commit") f.Step(new CommittedConfiguration(a.Id, error));
+            if (stage == "activity" || stage == "commit" && success) f.Step(new ActivityAppended(a.Id));
+            if (stage == "end") f.Step(new OldEnvironmentEnded(a.Id, success, error));
+            if (stage == "prepare") f.Step(new Prepared(a.Id, success ? Target : null, error));
+            var admitted = stage != "commit" || success;
+            var result = f.History.OfType<OperationFinished>().Single();
+            Check(result.Admitted == admitted && result.Intent == a && f.Count<Release>() == 1
+                && (success || stage == "activity" || result.Error == error)
+                && f.Count<PublishConfiguration>() == (admitted ? 1 : 0) && f.Count<AppendStart>() == (admitted ? 1 : 0)
+                && f.Count<EndReserved>() == (stage is "end" or "prepare" ? 1 : 0)
+                && f.Count<ScheduleActivity>() == (stage == "prepare" || stage == "end" && success ? 1 : 0)
+                && f.Count<PrepareEnvironment>() == (stage == "prepare" ? 1 : 0) && f.Count<CheckReady>() == 0,
+                $"{stage} 按物理结果记账，退出后的撤销也不能继续换场");
+            if (proceed) {
+                Check(f.Count<EndForClosing>() == 1, "物理操作完成后退出可以取得环境闸门");
+                f.Step(new ClosingEndReturned(exit, true));
+                f.Expect(typeof(CommitExit));
+            } else {
+                if (decision == "receipt-first") f.Step(new ClosingConfirmed(exit, false));
+                f.DrainDeliveries();
+            }
+        }
+    }
+
     private static void VerifyRunLifecycleReplacement()
     {
         foreach (var ended in new[] { false, true }) {
@@ -46,6 +146,7 @@ internal static partial class RunLifecycleSelfTest
         g.Body();
         g.Active();
         var replacement = Intent(RunSource.Scheduled, 3);
+        g.Now += TimeSpan.FromMinutes(1);
         g.PreviewSchedule(replacement, true);
         g.Now = g.Only<ShowCountdown>().Deadline;
         g.Step(new CountdownDue(replacement.Id));
@@ -119,6 +220,7 @@ internal static partial class RunLifecycleSelfTest
                 f.Step(new Start(Intent(RunSource.Manual, 9)));
                 f.Expect();
                 Check(f.State.Closing?.Stage == ClosingStage.Committed && f.State.Deliveries.Count == 0
+                    && f.Items<Present>().Count() == (terminalFirst ? 1 : 0)
                     && !f.Items<CompleteScheduled>().Any() && !f.Items<Cleanup>().Any(), "真正退出零补发");
                 continue;
             }

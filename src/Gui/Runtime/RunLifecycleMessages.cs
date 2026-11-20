@@ -12,7 +12,8 @@ internal abstract record LifecycleEvent
     internal TimeSpan At { get; init; }
     internal sealed record Start(RunIntent Intent, Exception? ValidationError = null) : LifecycleEvent;
     // ScheduleClock has claimed these candidates in configuration order.
-    internal sealed record ScheduleClaimed(ImmutableArray<RunIntent> Candidates, TimeSpan MinuteEnd, bool Force = false) : LifecycleEvent;
+    internal sealed record ScheduleClaimed(ImmutableArray<RunIntent> Candidates, DateTime LocalMinute, TimeSpan MinuteEnd,
+        bool Force = false) : LifecycleEvent;
     internal sealed record Previewed(Guid Id, RunIntent? Candidate, Exception? Error = null, bool BatchFailure = false) : LifecycleEvent;
     // A successful receipt includes the input revalidated under the lease (also after a countdown).
     internal sealed record Reserved(Guid Id, Reservation? Lease, RunIntent? Validated = null, string? BusyReason = null) : LifecycleEvent;

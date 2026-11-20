@@ -8,6 +8,102 @@ namespace Gui.Infrastructure;
 
 internal static partial class RunLifecycleSelfTest
 {
+    private static void VerifyRunLifecycleMinuteWinner()
+    {
+        var a = Intent(RunSource.Scheduled);
+        var b = Intent(RunSource.Scheduled, 2) with { Input = Input with { ConfigurationId = Id(201) } };
+        foreach (var force in new[] { false, true }) {
+            var f = new Scenario();
+            f.Connect();
+            if (force) f.FrameEvent(f.Frame(active: SnapshotOf(Attempt(9), RunState.Running)));
+            f.PreviewSchedule(a, force);
+            if (!force) {
+                f.Step(new Reserved(a.Id, new(a.Id, Target)));
+                f.Step(new CommittedConfiguration(a.Id));
+                f.Step(new ActivityAppended(a.Id));
+                f.Step(new OldEnvironmentEnded(a.Id, true));
+                f.Step(new Prepared(a.Id, null, new InvalidOperationException("准备失败")));
+                f.DrainDeliveries();
+            }
+            f.Now += TimeSpan.FromSeconds(10);
+            // The focus recheck has the same wall-clock minute even if its elapsed deadline shifted.
+            f.Step(new ScheduleClaimed([b], Epoch.Date.AddHours(8), TimeSpan.FromSeconds(61), force));
+            Check(f.Last.OfType<Skip>().SingleOrDefault() is { Intent: var skipped, Reason.Length: > 0 } && skipped == b,
+                "同分钟后认领的另一个配置也必须记录跳过");
+            if (force) {
+                f.Step(new CancelCountdown(a.Id));
+                f.Claim([b], true);
+                Check(f.Only<Skip>().Intent == b, "取消强制倒计时也消费该分钟");
+            }
+            Check(f.Count<ShowCountdown>() == (force ? 1 : 0) && f.Count<CommitConfiguration>() == (force ? 0 : 1)
+                && f.Count<AppendStart>() == (force ? 0 : 1), "同分钟只能有一次倒计时或配置获准");
+            f.Now = TimeSpan.FromMinutes(1);
+            f.PreviewSchedule(b, force);
+            Check(force ? f.Only<ShowCountdown>().Intent == b : f.Only<Reserve>().Intent == b, "下一分钟可以选择新候选");
+            if (force) {
+                f.Step(new CancelCountdown(b.Id));
+                f.Step(new ScheduleClaimed([Intent(RunSource.Scheduled, 3)], Epoch.Date.AddHours(8),
+                    f.Now + TimeSpan.FromMinutes(1), true));
+                Check(f.Last.OfType<Skip>().Any(), "本地时钟回拨到已消费分钟也不能选择第三个配置");
+            }
+        }
+    }
+
+    private static void VerifyRunLifecycleExpiredSelection()
+    {
+        var f = new Scenario { Now = TimeSpan.FromSeconds(59) };
+        var a = Intent(RunSource.Scheduled);
+        var b = Intent(RunSource.Scheduled, 2);
+        f.Claim([a, b]);
+        f.Now = TimeSpan.FromMinutes(1);
+        f.Step(new Previewed(a.Id, null, new InvalidOperationException("空计划")));
+        f.Step(new Previewed(b.Id, b));
+        f.Step(new Reserved(b.Id, new(b.Id, null)));
+        f.Step(new CommittedConfiguration(b.Id));
+        f.DrainDeliveries();
+        Check(f.Count<Preview>() == 1 && f.History.OfType<Skip>().Single() is { Intent: var skipped, Reason.Length: > 0 }
+            && skipped == b && f.Count<CommitConfiguration>() == 0 && f.Count<AppendStart>() == 0, "过期的 B 只跳过一次");
+    }
+
+    private static void VerifyRunLifecycleLogonGate()
+    {
+        var a = Intent(RunSource.Scheduled);
+        var b = Intent(RunSource.Launch, 2);
+        foreach (var order in new[] { "invalid-preview", "launch-first", "schedule-first" }) {
+            var f = new Scenario();
+            f.Connect();
+            if (order == "schedule-first") f.Step(new Start(b));
+            f.Claim([a]);
+            if (order != "schedule-first") f.Step(new Start(b));
+            Check(f.History.OfType<Reserve>().Any(r => r.Intent == b) && f.History.OfType<Preview>().Any(p => p.Intent == a),
+                "预览与尚未取得闸门的请求均不能淘汰对方");
+            var launchWins = order != "schedule-first";
+            if (launchWins) f.Step(new Reserved(b.Id, new(b.Id, Target)));
+            f.Step(new Previewed(a.Id, order == "invalid-preview" ? null : a));
+            if (order != "invalid-preview") {
+                f.Step(new Reserved(a.Id, launchWins ? null : new(a.Id, Target), BusyReason: "另一个操作已取得闸门"));
+            }
+            if (launchWins) {
+                f.Step(new ReadyChecked(b.Id, Target, b.Input));
+                Check(f.Send.Submission.IntentId == b.Id && f.Count<CommitConfiguration>() == 0, "开机先取闸门即可启动");
+            } else {
+                f.Step(new Reserved(b.Id, null, BusyReason: "定时已取得闸门"));
+                f.Step(new CommittedConfiguration(a.Id));
+                Check(f.Only<AppendStart>().Intent == a && f.History.OfType<Skip>().Single().Intent == b
+                    && f.Count<SendStart>() == 0, "普通定时先取闸门才占用，开机只跳过一次");
+            }
+        }
+        var delayed = new Scenario();
+        delayed.Connect();
+        delayed.Claim([a]);
+        delayed.Step(new Start(b));
+        delayed.Step(new Reserved(b.Id, new(b.Id, Target)));
+        delayed.Step(new ReadyChecked(b.Id, null, b.Input, new TimeoutException()));
+        delayed.Step(new Previewed(a.Id, a));
+        Check(delayed.History.OfType<Skip>().Any(s => s.Intent == a && s.Reason.Length > 0)
+            && delayed.History.OfType<Reserve>().All(r => r.Intent != a), "开机先取闸门又失败，未返回的定时预览也不能补跑");
+    }
+
     private static void VerifyRunLifecyclePreparation()
     {
         var f = new Scenario();
@@ -64,7 +160,8 @@ internal static partial class RunLifecycleSelfTest
         f.Step(new Reserved(a.Id, null, BusyReason: "预留前已变忙"));
         f.Expect(typeof(Skip), typeof(Skip), typeof(OperationFinished));
         Check(f.History.OfType<Skip>().Select(s => (s.Intent, s.Reason)).SequenceEqual(new[] { (a, "预留前已变忙"), (b, "预留前已变忙") })
-            && f.Count<CommitConfiguration>() == 0 && f.Count<AppendStart>() == 0 && f.Count<EndReserved>() == 0
+            && f.Count<CommitConfiguration>() == 0 && f.Count<PublishConfiguration>() == 0
+            && f.Count<AppendStart>() == 0 && f.Count<EndReserved>() == 0
             && !f.Items<Present>().Any(), "首个和后续忙候选均应留下具体跳过原因");
 
         var g = new Scenario();
@@ -82,7 +179,7 @@ internal static partial class RunLifecycleSelfTest
 
         var h = new Scenario();
         h.Connect();
-        h.Step(new ScheduleClaimed([a, b], TimeSpan.FromMinutes(1)));
+        h.Claim([a, b]);
         h.Step(new Previewed(a.Id, null, new InvalidOperationException("空计划")));
         Check(h.Only<Preview>().Intent == b, "无效首候选让位下一项");
         h.Step(new Previewed(b.Id, b));
@@ -118,7 +215,7 @@ internal static partial class RunLifecycleSelfTest
             void Busy()
             {
                 var before = f.Items<Present>().Count();
-                f.Step(new ScheduleClaimed([Intent(RunSource.Scheduled, 2)], TimeSpan.FromMinutes(1)));
+                f.Claim([Intent(RunSource.Scheduled, 2)]);
                 f.Expect(typeof(Skip), typeof(OperationFinished));
                 Check(!string.IsNullOrEmpty(f.Only<Skip>().Reason) && f.Items<Present>().Count() == before, "忙候选只记原因");
             }
@@ -139,14 +236,25 @@ internal static partial class RunLifecycleSelfTest
             }
             Busy();
             f.Terminal(status);
+            f.Terminal(status); // duplicate on the still-live worker, before any physical cleanup
+            var next = Intent(RunSource.Scheduled, 3);
+            if (status == RunState.Failed) {
+                f.Now += TimeSpan.FromMinutes(1);
+                f.PreviewSchedule(next);
+                f.Step(new Reserved(next.Id, new(next.Id, Target)));
+                f.Step(new CommittedConfiguration(next.Id));
+                f.Step(new ActivityAppended(next.Id));
+                Check(f.Only<EndReserved>().Lease.Expected == Target && f.Items<Present>().Single().Intent == scheduled
+                    && !f.Items<CompleteScheduled>().Any(), "失败提醒尚未回执时，下一次换场已经开始");
+            }
             if (status != RunState.Cancelled) {
-                var n = f.DeliveredItem<Present>();
+                var n = f.Items<Present>().Single();
                 Check(n.Intent!.ConfigurationName == "第一班" && n.Terminal!.State == status
                     && (status != RunState.Failed || n.Detail.Contains("失败任务：巡逻", StringComparison.Ordinal)),
                     "交付须冻结配置名与失败项标签");
                 f.Ack();
             }
-            var completed = f.DeliveredItem<CompleteScheduled>();
+            var completed = f.Items<CompleteScheduled>().Single();
             Check(completed.Run == f.Key && completed.Terminal.State == status, "完成必须对应真实终态");
             f.Ack();
             if (status == RunState.Succeeded) {
@@ -154,22 +262,16 @@ internal static partial class RunLifecycleSelfTest
                 f.Step(new CleanupReturned(f.Only<Deliver>().Id, CleanupResult.Ended));
                 Check(f.Only<ScheduleActivity>().Message == "全部完成，已关闭桌面分身", "成功收尾应留下完成动态");
             }
-            f.Terminal(status);
-            f.Expect();
+            if (status == RunState.Failed) {
+                f.Step(new OldEnvironmentEnded(next.Id, true));
+                f.Expect(typeof(ScheduleActivity), typeof(PrepareEnvironment));
+                Check(f.Only<ScheduleActivity>().Message == "已关闭旧的桌面分身", "换场和成功收尾是不同活动");
+            }
             Check(f.Run.CompletionDelivered && f.Items<CompleteScheduled>().Count() == 1 && !f.Items<RequestQuit>().Any()
                 && f.Items<Present>().Count() == (status == RunState.Cancelled ? 0 : 1)
                 && f.Items<Cleanup>().Count() == (status == RunState.Succeeded ? 1 : 0), "三个消费者独立去重");
-            // A failed terminal arriving immediately before the next tick must survive the next changeover.
-            var next = Intent(RunSource.Scheduled, 3);
-            f.PreviewSchedule(next);
-            f.Step(new Reserved(next.Id, new(next.Id, Target)));
-            f.Step(new CommittedConfiguration(next.Id));
-            f.Step(new ActivityAppended(next.Id));
-            Check(f.Only<EndReserved>().Lease.Expected == Target && f.State.Operations[next.Id].Admitted,
-                "已知终态后的机会可换场");
-            f.Step(new OldEnvironmentEnded(next.Id, true));
-            f.Expect(typeof(ScheduleActivity), typeof(PrepareEnvironment));
-            Check(f.Only<ScheduleActivity>().Message == "已关闭旧的桌面分身", "换场和成功收尾是不同活动");
+            Check(f.History.OfType<EndReserved>().Count(e => e.Lease.Expected == Target)
+                == (status == RunState.Failed ? 1 : 0), "同一旧环境只允许一次物理结束");
         }
     }
 
@@ -185,7 +287,7 @@ internal static partial class RunLifecycleSelfTest
             f.Terminal(RunState.Succeeded);
             Check(f.Run.Cleanup == CleanupStage.Claimed && !f.Items<Cleanup>().Any(), "收到成功就占位，先于等待闸门");
             if (!trayFirst) f.Step(new BeginClosing(tray, ClosingKind.EndEnvironment));
-            f.Step(new ScheduleClaimed([Intent(RunSource.Scheduled, 3)], TimeSpan.FromMinutes(1)));
+            f.Claim([Intent(RunSource.Scheduled, 3)]);
             f.Expect(typeof(Skip), typeof(OperationFinished));
             f.Step(new ClosingConfirmed(tray, false));
             if (!trayFirst) Check(f.Items<Present>().Count() == 1, "解除暂停不重入已经交付的通知");
@@ -193,7 +295,7 @@ internal static partial class RunLifecycleSelfTest
             f.Ack();
             var cleanup = f.Only<Deliver>().Id;
             f.Terminal(RunState.Succeeded);
-            f.Step(new ScheduleClaimed([Intent(RunSource.Scheduled, 4)], TimeSpan.FromMinutes(1)));
+            f.Claim([Intent(RunSource.Scheduled, 4)]);
             f.Expect(typeof(Skip), typeof(OperationFinished));
             var failure = new InvalidOperationException("收尾检查抛错");
             f.Step(new CleanupReturned(cleanup, CleanupResult.Failed, failure));
@@ -203,7 +305,7 @@ internal static partial class RunLifecycleSelfTest
             f.Expect();
             f.Ack();
             f.Terminal(RunState.Succeeded);
-            f.Step(new ScheduleClaimed([Intent(RunSource.Scheduled, 5)], TimeSpan.FromMinutes(1)));
+            f.Claim([Intent(RunSource.Scheduled, 5)]);
             Check(f.Items<CompleteScheduled>().Count() == 1 && f.Items<Cleanup>().Count() == 1
                 && f.Items<Present>().Count(n => n.Kind == NoticeKind.CleanupFailed) == 1 && f.Count<EndReserved>() == 1,
                 "遇忙立即跳过；收尾失败不能再排注销");
@@ -243,7 +345,7 @@ internal static partial class RunLifecycleSelfTest
         f.FrameEvent(f.Frame(active: SnapshotOf(Attempt(9), RunState.Running)));
         var next = Intent(RunSource.Scheduled, 2);
         f.Now = TimeSpan.FromSeconds(55);
-        f.Step(new ScheduleClaimed([next], TimeSpan.FromMinutes(1), true));
+        f.Claim([next], true);
         f.Step(new Previewed(next.Id, next));
         var end = f.Only<ShowCountdown>().Deadline;
         Check(end == TimeSpan.FromSeconds(65) && f.Count<Reserve>() == 0, "跨分钟的完整 10 秒倒计时不占闸门");
@@ -267,7 +369,7 @@ internal static partial class RunLifecycleSelfTest
 
         var g = new Scenario();
         g.FrameEvent(g.Frame(active: SnapshotOf(Attempt(9), RunState.Running)));
-        g.Step(new ScheduleClaimed([next], TimeSpan.FromMinutes(1), true));
+        g.Claim([next], true);
         g.Now = TimeSpan.FromMinutes(1);
         g.Step(new Previewed(next.Id, next));
         Check(g.Count<ShowCountdown>() == 0 && g.Count<EndReserved>() == 0 && g.Only<Skip>().Intent == next,

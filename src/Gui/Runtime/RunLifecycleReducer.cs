@@ -27,7 +27,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
         switch (input) {
             case Start e: StartRequested(e); break;
             case ScheduleClaimed e when !e.Candidates.IsDefaultOrEmpty:
-                SelectCandidate(e.Candidates, e.MinuteEnd, e.Force); break;
+                SelectCandidate(e.Candidates, e.LocalMinute, e.MinuteEnd, e.Force); break;
             case Previewed e when At(e.Id, OperationStage.Preview) is { } op: PreviewResult(op, e); break;
             case Reserved e: ReservationResult(e); break;
             case CommittedConfiguration e when At(e.Id, OperationStage.Commit) is { } op: ConfigResult(op, e); break;
@@ -41,8 +41,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                 break;
             case CountdownDue e when At(e.Id, OperationStage.Countdown) is { } op && state.Now >= op.CountdownEnd:
                 effects.Add(new HideCountdown(e.Id));
-                if (Blocked(force: true) is { } blocker) SkipOperation(op, blocker);
-                else AskReservation(op);
+                Save(op with { Stage = OperationStage.ReviewCountdown });
                 break;
             case CancelCountdown e when At(e.Id, OperationStage.Countdown) is { } op:
                 effects.Add(new HideCountdown(e.Id));
@@ -58,10 +57,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             case BeginClosing e: Pause(e); break;
             case ClosingConfirmed e when ClosingAt(e.Id, ClosingStage.Confirm) is { } closing:
                 if (!e.Proceed) Resume(closing);
-                else {
-                    state = state with { Closing = closing with { Stage = ClosingStage.End } };
-                    effects.Add(new EndForClosing(state.Closing));
-                }
+                else state = state with { Closing = closing with { Stage = ClosingStage.WaitingForOperations } };
                 break;
             case ClosingEndReturned e when ClosingAt(e.Id, ClosingStage.End) is { } closing: ClosingEnded(closing, e); break;
             case HandoffReturned e when ClosingAt(e.Id, ClosingStage.Handoff) is { } closing:
@@ -109,7 +105,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
         if (e.Intent is { Mode: StartMode.Retry, RetryOf: { } retry } && state.Runs.GetValueOrDefault(retry)?.Owner is { } previous)
             op = op with { Intent = op.Intent with { PreviousIntent = previous.Id } };
         var reason = Blocked();
-        if (reason != null || state.Operations.Values.Any(o => o.Stage != OperationStage.Countdown)) {
+        if (reason != null || state.Operations.Values.Any(o => o.Lease != null)) {
             SkipOperation(op, reason ?? "正在运行其他操作");
         } else if (e.ValidationError != null) {
             Fail(op, e.ValidationError);
@@ -133,6 +129,14 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             return;
         }
         op = op with { Lease = e.Lease };
+        if (!op.Force && op.Intent.Source is RunSource.Launch or RunSource.Scheduled) {
+            var otherSource = op.Intent.Source == RunSource.Launch ? RunSource.Scheduled : RunSource.Launch;
+            foreach (var other in state.Operations.Values.Where(o => o.Intent.Source == otherSource && !o.Force
+                && o.Stage is OperationStage.Preview or OperationStage.Reserve).OrderBy(o => o.Intent.Id)) {
+                if (other.Stage == OperationStage.Reserve) effects.Add(new CancelOperation(other.Intent.Id, null));
+                SkipOperation(other, "另一个启动请求已取得环境闸门");
+            }
+        }
         if (e.Validated is { } validated) {
             if (validated.Id != e.Id || validated.Input.ConfigurationId != op.Intent.Input.ConfigurationId) {
                 SkipOperation(op, "目标配置已变化");
@@ -167,7 +171,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             return;
         }
         state = state with { PreparationFailure = null };
-        if (op.Intent.Mode == StartMode.PrepareOnly) Finish(op);
+        if (op.Cancelled || op.Intent.Mode == StartMode.PrepareOnly) Finish(op);
         else WaitReady(op, e.Target);
     }
 
@@ -195,9 +199,12 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             && state.Runs.TryGetValue(oldKey, out var old) && old.Owner is { } owner
             && oldKey.WorkerInstanceId == e.Target!.WorkerId && owner.Input == e.Input
             && old.Conclusion == StartConclusion.NotStarted && owner.Attempt != null) {
-            var conflict = old.Sends.Values.FirstOrDefault(s => s.ReplyCode == "run_id_conflict");
-            if (conflict != null) {
-                Fail(op, conflict.ReplyError ?? conflict.Error ?? new InvalidOperationException("Run ID 与已登记的计划冲突"));
+            var denied = old.Sends.Values.FirstOrDefault(s => s.ReplyCode == "run_id_conflict"
+                || s.Intent.Id == owner.Id && s.Reply == StartReplyKind.RejectedBeforeRegistration
+                && s.ReplyCode is not ("worker_busy" or "worker_not_ready" or "worker_faulted"
+                    or "operation_not_allowed" or "protocol_version_mismatch"));
+            if (denied != null) {
+                Fail(op, denied.ReplyError ?? denied.Error ?? new InvalidOperationException($"Worker 拒绝启动：{denied.ReplyCode}"));
                 return;
             }
             AuthorizeStart(op with { Intent = op.Intent with { PreviousIntent = owner.Id } }, owner.Attempt);

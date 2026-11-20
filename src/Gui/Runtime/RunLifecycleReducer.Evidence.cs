@@ -19,7 +19,11 @@ internal sealed partial class RunLifecycleReducer
                     var conclusion = retired.Conclusion == StartConclusion.Accepted ? StartConclusion.EndUnconfirmed
                         : retired.Sends.Values.Any(s => s.Boundary == SendBoundary.PossiblySent) ? StartConclusion.StartUnknown
                         : StartConclusion.NotStarted;
-                    Settle(retired, conclusion, LastError(retired));
+                    Settle(retired, conclusion, LastError(retired) ?? new InvalidOperationException(conclusion switch {
+                        StartConclusion.NotStarted => "Worker 在发送启动正文前已退出",
+                        StartConclusion.StartUnknown => "Worker 已退出，启动结果未知",
+                        _ => "Worker 已退出，运行结果未确认"
+                    }));
                 }
             }
             return;
@@ -91,7 +95,6 @@ internal sealed partial class RunLifecycleReducer
             CancelTimer(r);
             if (r.Confirmation.InFlight is { } query) effects.Add(new CancelQuery(r.Key, query));
             Save(r with { NeedQuery = true, Confirmation = new(), AwaitingReconnectQuery = true });
-            if (!exited) EndSending(r);
         }
     }
 
@@ -167,15 +170,19 @@ internal sealed partial class RunLifecycleReducer
                 Save(r with { ReconnectEvidence = frame });
             return;
         }
-        CancelTimer(r);
-        r = r with { Conclusion = StartConclusion.Accepted, NeedQuery = false,
-            Confirmation = r.Confirmation with { Failures = 0, Due = null, Timer = 0 } };
+        r = r with { Conclusion = StartConclusion.Accepted };
+        if (!active || CurrentShowsActive(r)) {
+            CancelTimer(r);
+            r = r with { NeedQuery = false, Confirmation = r.Confirmation with { Failures = 0, Due = null, Timer = 0 } };
+        }
         if (active) {
-            if (r.SeenActive && frame.WorkerState == WorkerState.Faulted && r.Notification == NotificationSlot.Open) {
+            var faulted = frame.WorkerState == WorkerState.Faulted;
+            if (r.SeenActive && faulted && !r.SeenFaulted && r.Notification == NotificationSlot.Open) {
                 Queue(new Present(key, r.Owner, NoticeKind.Faulted, PresentationChannel.Tray, "任务未能确认结束"));
                 r = r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
             }
-            Save(r with { SeenActive = true, StopProgress = r.ManualStop != null && snapshot.State == RunState.Stopping
+            Save(r with { SeenActive = true, SeenFaulted = r.SeenFaulted || faulted,
+                StopProgress = r.ManualStop != null && snapshot.State == RunState.Stopping
                 ? StopProgress.Stopping : r.StopProgress });
             EndSending(r);
         } else {

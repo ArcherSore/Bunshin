@@ -44,6 +44,15 @@ internal static partial class WorkerCoordinatorSelfTest
             ["launchToken"] = record.LaunchToken,
             ["runtimeProfileDigest"] = record.RuntimeProfileDigest
         };
+        await using (var pipe = await ConnectRawAsync(pipeName, timeout.Token)) {
+            var id = Guid.NewGuid();
+            var request = WireEnvelope.Request(ProtocolOperations.ConnectionOpen, id, OpenData());
+            await pipe.WriteAsync(request with { ProtocolVersion = ProtocolConstants.ProtocolVersion - 1 }, timeout.Token);
+            var response = await pipe.ReadAsync(timeout.Token);
+            Require(response is { Success: false, Error.Code: "protocol_version_mismatch" } && response.RequestId == id,
+                "old-version：旧版握手必须返回关联的版本拒绝。");
+        }
+        await RequireNoEffectAsync("old-version");
         var unknownField = OpenData();
         unknownField["unexpected"] = 1;
         var wrongType = OpenData();

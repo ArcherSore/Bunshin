@@ -12,9 +12,9 @@ internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
 internal enum CleanupStage { None, Claimed, WaitingForReconnect, Ended, Superseded, Failed }
 internal enum QuitStage { None, Bound, Suspended, Pending, AwaitingRecovery }
-internal enum OperationStage { Preview, Reserve, Countdown, Commit, Activity, EndOld, DrainOld, Prepare, Ready, Resolve, Sending }
+internal enum OperationStage { Preview, Reserve, Countdown, ReviewCountdown, Commit, Activity, EndOld, DrainOld, Prepare, Ready, Resolve, Sending }
 internal enum ClosingKind { Exit, Update, EndEnvironment }
-internal enum ClosingStage { Confirm, End, Handoff, Committed }
+internal enum ClosingStage { Confirm, WaitingForOperations, End, Handoff, Committed }
 internal enum StopResult { Requested, TimedOut, Rejected }
 internal enum StopProgress { WaitingForGate, AwaitingReply, AwaitingConfirmation, Requested, Stopping }
 internal enum CleanupResult { Ended, Disconnected, TargetChanged, Failed }
@@ -28,7 +28,7 @@ internal sealed record RunIntent(Guid Id, RunSource Source, StartMode Mode, stri
 internal sealed record EnvironmentTarget(uint SessionId, Guid? WorkerId);
 internal sealed record Reservation(Guid Operation, EnvironmentTarget? Expected);
 internal sealed record StartOperation(RunIntent Intent, OperationStage Stage, Reservation? Lease = null,
-    ImmutableArray<RunIntent> Remaining = default, bool Force = false, TimeSpan MinuteEnd = default,
+    ImmutableArray<RunIntent> Remaining = default, bool Force = false, DateTime LocalMinute = default, TimeSpan MinuteEnd = default,
     TimeSpan? CountdownEnd = null, bool Admitted = false, EnvironmentTarget? Prepared = null,
     RunKey? Replacement = null, bool Cancelled = false);
 internal sealed record SendRecord(Submission Identity, RunIntent Intent, SendBoundary Boundary,
@@ -42,6 +42,7 @@ internal sealed record TrackedRun(RunKey Key, string Digest, EnvironmentTarget E
     internal bool Settled => Terminal != null || Conclusion is StartConclusion.NotStarted or StartConclusion.StartUnknown
         or StartConclusion.EndUnconfirmed;
     internal bool SeenActive { get; init; }
+    internal bool SeenFaulted { get; init; }
     internal bool NeedQuery { get; init; }
     internal bool AwaitingReconnectQuery { get; init; }
     internal WorkerSnapshot? ReconnectEvidence { get; init; }
@@ -75,6 +76,7 @@ internal sealed record RunLifecycleState
     internal long LastGeneration { get; init; }
     internal long Sequence { get; init; }
     internal TimeSpan Now { get; init; }
+    internal ImmutableDictionary<DateTime, string> MinuteWinners { get; init; } = ImmutableDictionary<DateTime, string>.Empty;
     internal ClosingOperation? Closing { get; init; }
     internal StopOperation? Stop { get; init; }
     internal Exception? PreparationFailure { get; init; }
