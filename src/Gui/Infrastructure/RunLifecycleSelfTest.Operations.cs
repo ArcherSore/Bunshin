@@ -65,6 +65,182 @@ internal static partial class RunLifecycleSelfTest
             && skipped == b && f.Count<CommitConfiguration>() == 0 && f.Count<AppendStart>() == 0, "过期的 B 只跳过一次");
     }
 
+    private static void VerifyRunLifecycleSimultaneousNames()
+    {
+        foreach (var force in new[] { false, true }) {
+            var f = new Scenario();
+            f.Connect();
+            if (force) f.FrameEvent(f.Frame(active: SnapshotOf(Attempt(9), RunState.Running)));
+            var a = Intent(RunSource.Scheduled);
+            var b = Intent(RunSource.Scheduled, 2) with { ConfigurationName = "第二班" };
+            var winner = a with { ConfigurationName = "最新配置名" };
+            f.Claim([a, b], force);
+            f.Step(new Previewed(a.Id, winner));
+            if (force) f.Step(new CancelCountdown(a.Id));
+            else {
+                f.Step(new Reserved(a.Id, new(a.Id, Target), winner));
+                f.Step(new CommittedConfiguration(a.Id));
+                f.Step(new ActivityAppended(a.Id));
+                f.Step(new OldEnvironmentEnded(a.Id, false));
+            }
+            f.DrainDeliveries();
+            Check(f.History.OfType<Skip>().SingleOrDefault() == new Skip(b, $"与「{winner.ConfigurationName}」同时到点")
+                && f.Count<OperationFinished>() == 1 && f.Count<ShowCountdown>() == (force ? 1 : 0)
+                && f.Count<PublishConfiguration>() == (force ? 0 : 1), "同批落选动态须指明实际胜出配置");
+        }
+    }
+
+    private static void VerifyRunLifecycleMidnightRollback()
+    {
+        var f = new Scenario();
+        f.FrameEvent(f.Frame(active: SnapshotOf(Attempt(9), RunState.Running)));
+        var midnight = Epoch.AddDays(1);
+        void Visit(int n, DateTime minute, TimeSpan at)
+        {
+            var a = Intent(RunSource.Scheduled, n) with { ConfigurationName = $"班次{n}" };
+            f.Now = at;
+            f.Step(new ScheduleClaimed([a], minute, f.Now + TimeSpan.FromMinutes(1), true));
+            if (f.Last.OfType<Preview>().Any()) f.Step(new Previewed(a.Id, a));
+            f.Step(new CancelCountdown(a.Id));
+        }
+        Visit(1, midnight.AddMinutes(-1), TimeSpan.Zero);
+        Visit(2, midnight, TimeSpan.FromMinutes(1));
+        Visit(3, midnight.AddMinutes(-1), TimeSpan.FromHours(2) - TimeSpan.FromTicks(1));
+        Visit(4, midnight.AddMinutes(-1), TimeSpan.FromHours(2));
+        f.DrainDeliveries();
+        Check(f.History.OfType<ShowCountdown>().Select(s => s.Intent.Id).SequenceEqual([Id(1), Id(2), Id(4)])
+            && f.History.OfType<Skip>().SingleOrDefault() is { Intent.ConfigurationName: "班次3", Reason: "与「班次1」同时到点" }
+            && f.Count<OperationFinished>() == 4 && f.Count<Reserve>() == 0, "跨日回拨到昨天 23:59 须在两小时窗口内保留胜者");
+    }
+
+    private static void VerifyRunLifecycleAdjacentMinutes()
+    {
+        foreach (var arrival in new[] { "countdown", "prepare", "expired", "cleanup" }) {
+            var f = new Scenario();
+            var cleanup = arrival == "cleanup";
+            f.Begin(Intent(cleanup ? RunSource.Scheduled : RunSource.Launch));
+            f.Body();
+            f.Active();
+            var aKey = f.Key;
+            var b = Intent(RunSource.Scheduled, 2);
+            var c = Intent(RunSource.Scheduled, 3);
+            f.Now = TimeSpan.FromSeconds(115);
+            f.PreviewSchedule(b, true);
+            void PreviewCIfRequested()
+            {
+                if (f.Last.OfType<Preview>().Any(p => p.Intent == c)) f.Step(new Previewed(c.Id, c));
+            }
+            f.Now = TimeSpan.FromMinutes(2);
+            if (arrival == "countdown" || cleanup) {
+                f.Claim([c], true);
+                PreviewCIfRequested();
+            }
+            f.Now += TimeSpan.FromSeconds(5);
+            f.Step(new CountdownDue(b.Id));
+            f.Step(new Reserved(b.Id, new(b.Id, Target)));
+            f.Step(new CommittedConfiguration(b.Id));
+            f.Step(new ActivityAppended(b.Id));
+            f.Terminal(cleanup ? RunState.Succeeded : RunState.Cancelled);
+            f.ExitWorker();
+            f.Step(new OldEnvironmentEnded(b.Id, true));
+            f.DrainDeliveries();
+            if (arrival is "prepare" or "expired") {
+                f.Claim([c], true);
+                PreviewCIfRequested();
+            }
+            var newTarget = Target with { WorkerId = Id(101) };
+            f.Connection = new(newTarget.WorkerId!.Value, 2);
+            f.Connect();
+            f.Now = TimeSpan.FromSeconds(arrival == "expired" ? 180 : 135);
+            var beforePrepared = f.History.Count;
+            f.Step(new Prepared(b.Id, newTarget));
+            PreviewCIfRequested();
+            f.Step(new ReadyChecked(b.Id, newTarget, b.Input));
+            PreviewCIfRequested();
+            var wire = f.Body();
+            PreviewCIfRequested();
+            f.Active();
+            PreviewCIfRequested();
+            f.Reply(wire, StartReplyKind.Accepted, "accepted");
+            PreviewCIfRequested();
+            var expectedEnd = f.Now + TimeSpan.FromSeconds(10);
+            f.Now = expectedEnd - TimeSpan.FromTicks(1);
+            f.Step(new CountdownDue(c.Id));
+            // A premature timer would already have requested the gate. Return its actual receipt.
+            if (f.History.OfType<Reserve>().Any(r => r.Intent == c)) {
+                f.Step(new Reserved(c.Id, new(c.Id, newTarget)));
+                f.Step(new CommittedConfiguration(c.Id));
+                f.Step(new ActivityAppended(c.Id));
+            }
+            f.Step(new CancelCountdown(c.Id));
+            f.Now = expectedEnd;
+            f.Step(new CountdownDue(c.Id));
+            f.DrainDeliveries();
+            var warnings = f.History.OfType<ShowCountdown>().ToArray();
+            var expired = arrival == "expired";
+            Check(warnings.Length == (expired ? 1 : 2) && warnings[0] == new ShowCountdown(b, TimeSpan.FromSeconds(125))
+                && !f.History.Take(beforePrepared).OfType<Preview>().Any(p => p.Intent == c)
+                && (expired ? f.History.OfType<Skip>().SingleOrDefault() == new Skip(c, "当前时间已离开本次定时的分钟")
+                    : warnings[1] == new ShowCountdown(c, expectedEnd))
+                && f.History.OfType<EndReserved>().Count(e => e.Replace == aKey) == 1 && f.Count<EndReserved>() == (cleanup ? 2 : 1)
+                && f.Count<PrepareEnvironment>() == (cleanup ? 2 : 1)
+                && f.Items<CompleteScheduled>().Count() == (cleanup ? 1 : 0) && !f.Items<Cleanup>().Any()
+                && f.History.OfType<OperationFinished>().Count(o => o.Intent == c) == 1
+                && f.History.OfType<Reserve>().All(r => r.Intent != c) && f.Key.RunId == b.Attempt!.RunId
+                && f.Count<SendStart>() == 2 && !f.Items<RequestQuit>().Any(), $"相邻分钟 {arrival}：B 准备后才判断 C，过期跳过");
+        }
+    }
+
+    private static void VerifyRunLifecycleCountdownTarget()
+    {
+        var f = new Scenario();
+        var original = Attempt(8);
+        f.FrameEvent(f.Frame(active: SnapshotOf(original, RunState.Running)));
+        var c = Intent(RunSource.Scheduled, 3);
+        f.PreviewSchedule(c, true);
+        f.Now += TimeSpan.FromSeconds(10);
+        f.Step(new CountdownDue(c.Id));
+        var successor = Attempt(9);
+        f.FrameEvent(f.Frame(active: SnapshotOf(successor, RunState.Running), last: SnapshotOf(original, RunState.Cancelled)));
+        f.Step(new Reserved(c.Id, new(c.Id, Target)));
+        f.Step(new CancelCountdown(c.Id));
+        f.Step(new CommittedConfiguration(c.Id));
+        f.Step(new ActivityAppended(c.Id));
+        f.DrainDeliveries();
+        Check(f.History.OfType<ShowCountdown>().Select(s => s.Deadline).SequenceEqual([TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20)])
+            && f.Count<Release>() == 1 && f.Count<EndReserved>() == 0 && f.Count<OperationFinished>() == 1,
+            "取闸门时 Run 已换，旧倒计时不能授权结束后继");
+    }
+
+    private static void VerifyRunLifecycleDeferredPreview()
+    {
+        foreach (var expired in new[] { false, true }) {
+            var f = new Scenario { Now = TimeSpan.FromSeconds(55) };
+            var original = Attempt(8);
+            f.FrameEvent(f.Frame(active: SnapshotOf(original, RunState.Running)));
+            var b = Intent(RunSource.Scheduled, 2);
+            var c = Intent(RunSource.Scheduled, 3);
+            f.PreviewSchedule(b, true);
+            f.Now = TimeSpan.FromMinutes(1);
+            f.Claim([c], true);
+            f.Step(new CancelCountdown(b.Id));
+            if (expired) {
+                f.FrameEvent(f.Frame(last: SnapshotOf(original, RunState.Cancelled)));
+                f.Now = TimeSpan.FromMinutes(2);
+            }
+            f.Step(new Previewed(c.Id, c));
+            if (f.Last.OfType<Reserve>().Any()) f.Step(new Reserved(c.Id, null, BusyReason: "环境正忙"));
+            f.Step(new CancelCountdown(c.Id));
+            f.DrainDeliveries();
+            var warnings = f.History.OfType<ShowCountdown>().ToArray();
+            Check(f.History.OfType<Preview>().Count(p => p.Intent == c) == 1 && f.Count<OperationFinished>() == 2
+                && f.Count<Reserve>() == 0 && f.Count<EndReserved>() == 0 && (expired
+                    ? warnings.Length == 1 && f.History.OfType<Skip>().SingleOrDefault() == new Skip(c, "当前时间已离开本次定时的分钟")
+                    : warnings.Length == 2 && warnings[1] == new ShowCountdown(c, TimeSpan.FromSeconds(70))),
+                "前班取消后释放下一班；预览回执跨分钟且旧目标已结束也不能补跑");
+        }
+    }
+
     private static void VerifyRunLifecycleLogonGate()
     {
         var a = Intent(RunSource.Scheduled);
@@ -295,8 +471,10 @@ internal static partial class RunLifecycleSelfTest
             f.Ack();
             var cleanup = f.Only<Deliver>().Id;
             f.Terminal(RunState.Succeeded);
-            f.Claim([Intent(RunSource.Scheduled, 4)]);
-            f.Expect(typeof(Skip), typeof(OperationFinished));
+            var b = Intent(RunSource.Scheduled, 4);
+            var c = Intent(RunSource.Scheduled, 5);
+            f.Now += TimeSpan.FromMinutes(1);
+            f.Claim([b]);
             var failure = new InvalidOperationException("收尾检查抛错");
             f.Step(new CleanupReturned(cleanup, CleanupResult.Failed, failure));
             Check(f.DeliveredItem<Present>() is { Kind: NoticeKind.CleanupFailed, Error: var error } && error == failure,
@@ -305,8 +483,13 @@ internal static partial class RunLifecycleSelfTest
             f.Expect();
             f.Ack();
             f.Terminal(RunState.Succeeded);
-            f.Claim([Intent(RunSource.Scheduled, 5)]);
-            Check(f.Items<CompleteScheduled>().Count() == 1 && f.Items<Cleanup>().Count() == 1
+            f.Now += TimeSpan.FromMinutes(1);
+            f.Claim([c]);
+            f.DrainDeliveries();
+            Check(f.History.OfType<Skip>().Where(s => s.Intent == b || s.Intent == c).Select(s => (s.Intent, s.Reason))
+                    .SequenceEqual([(b, "正在收尾"), (c, "旧的桌面分身未能关闭")])
+                && f.History.OfType<OperationFinished>().Count(o => o.Intent == b || o.Intent == c) == 2
+                && f.Count<Preview>() == 1 && f.Items<CompleteScheduled>().Count() == 1 && f.Items<Cleanup>().Count() == 1
                 && f.Items<Present>().Count(n => n.Kind == NoticeKind.CleanupFailed) == 1 && f.Count<EndReserved>() == 1,
                 "遇忙立即跳过；收尾失败不能再排注销");
         }

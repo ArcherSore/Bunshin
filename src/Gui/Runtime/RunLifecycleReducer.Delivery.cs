@@ -84,6 +84,9 @@ internal sealed partial class RunLifecycleReducer
         if (state.Closing == null) {
             DispatchDelivery();
             DrainReplacements();
+            foreach (var op in state.Operations.Values.Where(o => o.Stage == OperationStage.WaitingForPrevious)
+                .OrderBy(o => o.MinuteEnd))
+                SelectCandidate(op);
         }
         foreach (var r in state.Runs.Values.Where(r => r.Retired && r.Quit == QuitStage.None
             && r.Cleanup is not (CleanupStage.Claimed or CleanupStage.WaitingForReconnect)
@@ -255,9 +258,11 @@ internal sealed partial class RunLifecycleReducer
             }
             if (op.Stage == OperationStage.Countdown) effects.Add(new HideCountdown(op.Intent.Id));
             effects.Add(new CancelOperation(op.Intent.Id, op.Lease));
+            if (op.Intent.Source == RunSource.Scheduled && !op.Admitted && !op.CountdownEnd.HasValue)
+                effects.Add(new Skip(op.Intent, "应用正在退出"));
+            SkipRemainder(op, "应用正在退出");
             effects.Add(new OperationFinished(op.Intent, op.Admitted, null, new OperationCanceledException("操作已取消")));
             RestoreBinding(op);
-            SkipRemainder(op, "应用正在退出");
             state = state with { Operations = state.Operations.Remove(op.Intent.Id) };
         }
         effects.Add(new ConfirmClosing(closing));

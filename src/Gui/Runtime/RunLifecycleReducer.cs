@@ -57,7 +57,12 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             case BeginClosing e: Pause(e); break;
             case ClosingConfirmed e when ClosingAt(e.Id, ClosingStage.Confirm) is { } closing:
                 if (!e.Proceed) Resume(closing);
-                else state = state with { Closing = closing with { Stage = ClosingStage.WaitingForOperations } };
+                else {
+                    foreach (var send in state.Runs.Values.SelectMany(r => r.Sends.Values)
+                        .Where(s => s.Boundary == SendBoundary.BeforeBody && At(s.Intent.Id, OperationStage.Sending) != null))
+                        effects.Add(new CancelSend(send.Identity));
+                    state = state with { Closing = closing with { Stage = ClosingStage.WaitingForOperations } };
+                }
                 break;
             case ClosingEndReturned e when ClosingAt(e.Id, ClosingStage.End) is { } closing: ClosingEnded(closing, e); break;
             case HandoffReturned e when ClosingAt(e.Id, ClosingStage.Handoff) is { } closing:
@@ -245,6 +250,8 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
 
     private void Finish(StartOperation op, RunKey? key = null, Exception? error = null)
     {
+        if (key == null && op.Cancelled && op.Intent.Mode == StartMode.PrepareAndStart)
+            error ??= new OperationCanceledException("启动已取消");
         state = state with { Operations = state.Operations.Remove(op.Intent.Id) };
         if (op.Lease != null) effects.Add(new Release(op.Lease));
         effects.Add(new OperationFinished(op.Intent, op.Admitted, key, error));

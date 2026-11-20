@@ -96,6 +96,35 @@ internal static partial class RunLifecycleSelfTest
         Check(f.Items<Present>().Single().Kind == NoticeKind.Failed, "仍能通知观察期间收到的真实终态");
     }
 
+    private static void VerifyRunLifecycleReconnectFault()
+    {
+        foreach (var outcome in new[] { "still-faulted", "terminal", "process-exit", "faulted-first" }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Launch));
+            f.Body();
+            f.Eof();
+            f.Connection = f.Connection with { Generation = 2 };
+            var active = SnapshotOf(f.Send.Attempt, RunState.Running);
+            if (outcome != "faulted-first") f.FrameEvent(f.Frame(active));
+            var fault = f.Frame(active, worker: WorkerState.Faulted);
+            f.FrameEvent(fault);
+            f.FrameEvent(fault);
+            if (outcome == "terminal") f.Terminal(RunState.Succeeded);
+            var beforeConfirmation = f.History.Count;
+            if (outcome == "process-exit") f.ExitWorker();
+            else f.QueryResult(f.QueryWire(), true, outcome == "terminal"
+                ? f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Succeeded)) : fault);
+            f.DrainDeliveries();
+            var notices = f.Items<Present>().ToArray();
+            Check((outcome == "faulted-first" ? notices.Length == 0
+                    : notices.Length == 1 && notices[0].Kind == NoticeKind.Faulted && notices[0].Run == f.Key)
+                && !f.History.Take(beforeConfirmation).OfType<Deliver>().Any()
+                && f.Count<OperationFinished>() == 1 && f.Count<Release>() == 1 && f.Count<QueryRun>() == 1
+                && f.Items<RequestQuit>().Count() == (outcome == "terminal" ? 1 : 0),
+                $"重连 {outcome} 应保留实际观察到的故障转变，并独立结算终态");
+        }
+    }
+
     private static void VerifyRunLifecycleSourceConclusions()
     {
         foreach (var source in Enum.GetValues<RunSource>())

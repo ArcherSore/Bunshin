@@ -62,6 +62,8 @@ internal abstract record LifecycleEffect
     internal sealed record CancelOperation(Guid Id, Reservation? Lease) : LifecycleEffect;
     internal sealed record RegisterPlan(Submission Submission, RunStartAttempt Attempt) : LifecycleEffect;
     internal sealed record SendStart(Submission Submission, RunStartAttempt Attempt) : LifecycleEffect;
+    // Cancel this SendStartAsync token only. Its writer still reports the actual body boundary and outcome.
+    internal sealed record CancelSend(Submission Submission) : LifecycleEffect;
     internal sealed record QueryRun(RunKey Key, QueryId Id, WorkerConnectionId Connection) : LifecycleEffect;
     internal sealed record CancelQuery(RunKey Key, QueryId Id) : LifecycleEffect;
     internal sealed record ArmRetry(RunKey Key, long Token, TimeSpan Due) : LifecycleEffect;

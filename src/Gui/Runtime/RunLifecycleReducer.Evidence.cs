@@ -163,11 +163,20 @@ internal sealed partial class RunLifecycleReducer
                 ImmutableDictionary<Guid, SendRecord>.Empty);
         }
         if (r.Settled || r.Digest != snapshot.PlanDigest) return;
+        if (r.AwaitingReconnectQuery && r.ReconnectEvidence?.LastRun is { } terminal
+            && terminal.RunId == key.RunId && terminal.PlanDigest == r.Digest) return;
+        if (active) {
+            var faulted = frame.WorkerState == WorkerState.Faulted;
+            if (r.SeenActive && faulted && !r.SeenFaulted && r.Notification == NotificationSlot.Open)
+                r = r.AwaitingReconnectQuery ? r with { ReconnectFaultPending = true } : NotifyFault(r);
+            r = r with { SeenActive = true, SeenFaulted = r.SeenFaulted || faulted,
+                StopProgress = r.ManualStop != null && snapshot.State == RunState.Stopping
+                    ? StopProgress.Stopping : r.StopProgress };
+        }
         if (r.AwaitingReconnectQuery) {
             // On the new live connection keep genuine positive evidence, but let the ordered
             // targeted read resolve the disconnect. An ordinary idle frame is never a negative.
-            if (r.ReconnectEvidence?.LastRun?.RunId != key.RunId)
-                Save(r with { ReconnectEvidence = frame });
+            Save(r with { ReconnectEvidence = frame });
             return;
         }
         r = r with { Conclusion = StartConclusion.Accepted };
@@ -176,26 +185,26 @@ internal sealed partial class RunLifecycleReducer
             r = r with { NeedQuery = false, Confirmation = r.Confirmation with { Failures = 0, Due = null, Timer = 0 } };
         }
         if (active) {
-            var faulted = frame.WorkerState == WorkerState.Faulted;
-            if (r.SeenActive && faulted && !r.SeenFaulted && r.Notification == NotificationSlot.Open) {
-                Queue(new Present(key, r.Owner, NoticeKind.Faulted, PresentationChannel.Tray, "任务未能确认结束"));
-                r = r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
-            }
-            Save(r with { SeenActive = true, SeenFaulted = r.SeenFaulted || faulted,
-                StopProgress = r.ManualStop != null && snapshot.State == RunState.Stopping
-                ? StopProgress.Stopping : r.StopProgress });
+            Save(r);
             EndSending(r);
         } else {
             Terminal(r, snapshot);
         }
     }
 
+    private TrackedRun NotifyFault(TrackedRun r)
+    {
+        Queue(new Present(r.Key, r.Owner, NoticeKind.Faulted, PresentationChannel.Tray, "任务未能确认结束"));
+        return r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
+    }
+
     private void ApplyReconnectEvidence(TrackedRun r)
     {
         if (!r.AwaitingReconnectQuery) return;
-        Save(r with { AwaitingReconnectQuery = false, ReconnectEvidence = null });
+        if (r.ReconnectFaultPending) r = NotifyFault(r);
+        Save(r with { AwaitingReconnectQuery = false, ReconnectEvidence = null, ReconnectFaultPending = false });
         if (r.ReconnectEvidence is not { } frame) return;
-        if (frame.LastRun is { } last && last.RunId == r.Key.RunId) ObserveRun(frame, last, false);
+        if (frame.LastRun is { } last && last.RunId == r.Key.RunId && last.PlanDigest == r.Digest) ObserveRun(frame, last, false);
         else if (frame.ActiveRun is { } active && active.RunId == r.Key.RunId) ObserveRun(frame, active, true);
     }
 

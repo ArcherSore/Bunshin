@@ -66,9 +66,13 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleClosingReceipts()
     {
-        foreach (var stage in new[] { "commit", "activity", "end", "prepare" })
+        foreach (var stage in new[] { "sending", "commit", "activity", "end", "prepare" })
         foreach (var decision in new[] { "resume-first", "confirm-first", "receipt-first" })
         foreach (var success in new[] { true, false }) {
+            if (stage == "sending") {
+                VerifyClosingWriter(decision, bodyStarted: success);
+                continue;
+            }
             var f = new Scenario();
             f.Connect();
             var a = Intent(RunSource.Scheduled);
@@ -91,7 +95,7 @@ internal static partial class RunLifecycleSelfTest
             var admitted = stage != "commit" || success;
             var result = f.History.OfType<OperationFinished>().Single();
             Check(result.Admitted == admitted && result.Intent == a && f.Count<Release>() == 1
-                && (success || stage == "activity" || result.Error == error)
+                && (success || stage == "activity" ? result.Error is OperationCanceledException : result.Error == error)
                 && f.Count<PublishConfiguration>() == (admitted ? 1 : 0) && f.Count<AppendStart>() == (admitted ? 1 : 0)
                 && f.Count<EndReserved>() == (stage is "end" or "prepare" ? 1 : 0)
                 && f.Count<ScheduleActivity>() == (stage == "prepare" || stage == "end" && success ? 1 : 0)
@@ -106,6 +110,120 @@ internal static partial class RunLifecycleSelfTest
                 f.DrainDeliveries();
             }
         }
+    }
+
+    private static void VerifyClosingWriter(string decision, bool bodyStarted)
+    {
+        var f = new Scenario();
+        var a = Intent(RunSource.Scheduled);
+        f.Begin(a);
+        var wire = f.Writer();
+        f.Evidence(new(f.Connection, WorkerEvidenceKind.BeforeBody, wire));
+        var exit = Id(19);
+        f.Step(new BeginClosing(exit, ClosingKind.Exit));
+        void StartBody()
+        {
+            wire = wire with { WriteSequence = ++f.Sequence };
+            f.Evidence(new(f.Connection, WorkerEvidenceKind.BodyStarted, wire));
+        }
+        if (bodyStarted) StartBody(); // The writer crossed the boundary while the dialog was open.
+        var confirm = decision != "resume-first";
+        if (decision != "receipt-first") f.Step(new ClosingConfirmed(exit, confirm));
+        var cancelled = f.History.OfType<CancelSend>().Any(c => c.Submission == f.Send.Submission);
+        var error = new OperationCanceledException("写锁内确认取消");
+        if (cancelled && !bodyStarted) {
+            f.Evidence(new(f.Connection, WorkerEvidenceKind.NotSent, wire, Error: error));
+        } else {
+            if (!bodyStarted) StartBody();
+            f.Reply(wire, StartReplyKind.Accepted, "accepted");
+            f.Terminal(RunState.Failed);
+        }
+        if (decision == "receipt-first") f.Step(new ClosingConfirmed(exit, true));
+        f.Step(new ClosingConfirmed(exit, confirm)); // duplicate decision
+        // Ending failed: deliver everything that had been buffered behind the dialog.
+        if (confirm) f.Step(new ClosingEndReturned(exit, false));
+        f.DrainDeliveries();
+        var prevent = decision == "confirm-first" && !bodyStarted;
+        var result = f.History.OfType<OperationFinished>().Single();
+        Check(cancelled == prevent && f.Count<CancelSend>() == (prevent ? 1 : 0)
+            && result.Run == f.Key && result.Admitted && result.Error == (prevent ? error : null)
+            && f.Count<Release>() == 1 && f.Count<SendStart>() == 1 && f.Count<EndForClosing>() == (confirm ? 1 : 0)
+            && (!confirm || f.History.IndexOf(result) < f.History.FindIndex(e => e is EndForClosing))
+            && f.Items<Present>().Single().Kind == (prevent ? NoticeKind.NotStarted : NoticeKind.Failed)
+            && f.Items<CompleteScheduled>().Count() == (prevent ? 0 : 1) && !f.Items<Cleanup>().Any(),
+            $"Sending/{decision}/正文已开始={bodyStarted}：只取消确认时仍在正文前的发送，按实际回执释放并交付一次");
+    }
+
+    private static void VerifyRunLifecycleCancelledPreparation()
+    {
+        foreach (var mode in new[] { StartMode.PrepareAndStart, StartMode.PrepareOnly }) {
+            var f = new Scenario();
+            var a = Intent(RunSource.Manual) with { Mode = mode };
+            f.Step(new Start(a));
+            f.Step(new Reserved(a.Id, new(a.Id, Target)));
+            f.Step(new BeginClosing(Id(19), ClosingKind.Exit));
+            f.Step(new ClosingConfirmed(Id(19), false));
+            f.Step(new Prepared(a.Id, Target));
+            f.Step(new Prepared(a.Id, Target));
+            f.DrainDeliveries();
+            var result = f.History.OfType<OperationFinished>().Single();
+            Check(result.Intent == a && result.Run == null
+                && (mode == StartMode.PrepareOnly ? result.Error == null : result.Error is OperationCanceledException)
+                && f.Count<Release>() == 1 && f.Count<CheckReady>() == 0 && f.Count<SendStart>() == 0
+                && !f.Items<Present>().Any(), $"退出打断 {mode} 后须按请求的操作回报");
+        }
+    }
+
+    private static void VerifyRunLifecycleClosingPreview()
+    {
+        var a = Intent(RunSource.Scheduled);
+        var b = Intent(RunSource.Scheduled, 2);
+        var f = new Scenario();
+        f.Claim([a, b]);
+        f.Step(new BeginClosing(Id(19), ClosingKind.Exit));
+        f.Step(new ClosingConfirmed(Id(19), false));
+        f.Step(new Previewed(a.Id, a));
+        f.DrainDeliveries();
+        Check(f.History.OfType<Skip>().Select(s => (s.Intent, s.Reason)).SequenceEqual([(a, "应用正在退出"), (b, "应用正在退出")])
+            && f.History.OfType<OperationFinished>().Single() is { Intent: var first, Error: OperationCanceledException }
+            && first == a && f.Count<Reserve>() == 0 && f.Count<AppendStart>() == 0, "退出打断预览，首项与余项均跳过一次");
+    }
+
+    private static void VerifyRunLifecycleStoppedOffline()
+    {
+        foreach (var disconnectBeforeDue in new[] { true, false }) CheckStoppedOffline(disconnectBeforeDue);
+    }
+
+    private static void CheckStoppedOffline(bool disconnectBeforeDue)
+    {
+        var f = new Scenario();
+        f.Begin(Intent(RunSource.Launch));
+        f.Body();
+        f.Active();
+        var b = Intent(RunSource.Scheduled, 2);
+        f.PreviewSchedule(b, true);
+        f.Step(new Stop(Id(8), f.Key));
+        f.Step(new StopGateAcquired(Id(8)));
+        f.Step(new StopReturned(Id(8), StopResult.TimedOut));
+        if (disconnectBeforeDue) f.Eof();
+        f.Now += TimeSpan.FromSeconds(10);
+        f.Step(new CountdownDue(b.Id));
+        if (!disconnectBeforeDue) {
+            f.Eof();
+            f.Step(new Reserved(b.Id, new(b.Id, Target)));
+        }
+        f.Step(new CountdownDue(b.Id));
+        var beforeReconnect = f.History.Count;
+        f.Reconnect();
+        f.QueryResult(f.QueryWire(), true, f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Cancelled)));
+        f.DrainDeliveries();
+        var skipped = f.History.OfType<Skip>().SingleOrDefault();
+        var finished = f.History.OfType<OperationFinished>().Where(o => o.Intent == b).ToArray();
+        Check(skipped == new Skip(b, "正在等待开机任务停止并退出") && f.History.IndexOf(skipped) < beforeReconnect
+            && finished.Length == 1 && f.History.IndexOf(finished[0]) < beforeReconnect && f.Count<HideCountdown>() == 1
+            && f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == (disconnectBeforeDue ? 0 : 1)
+            && f.Items<RequestQuit>().Single().Run == f.Key && f.Count<QueryRun>() == 1
+            && f.Count<EndReserved>() == 0 && f.Count<CommitConfiguration>() == 0, "失联手停时 B 到期即跳过，A 独立等待终态后退出");
     }
 
     private static void VerifyRunLifecycleReplacement()

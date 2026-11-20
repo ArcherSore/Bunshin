@@ -12,7 +12,7 @@ internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
 internal enum CleanupStage { None, Claimed, WaitingForReconnect, Ended, Superseded, Failed }
 internal enum QuitStage { None, Bound, Suspended, Pending, AwaitingRecovery }
-internal enum OperationStage { Preview, Reserve, Countdown, ReviewCountdown, Commit, Activity, EndOld, DrainOld, Prepare, Ready, Resolve, Sending }
+internal enum OperationStage { WaitingForPrevious, Preview, Reserve, Countdown, ReviewCountdown, Commit, Activity, EndOld, DrainOld, Prepare, Ready, Resolve, Sending }
 internal enum ClosingKind { Exit, Update, EndEnvironment }
 internal enum ClosingStage { Confirm, WaitingForOperations, End, Handoff, Committed }
 internal enum StopResult { Requested, TimedOut, Rejected }
@@ -46,6 +46,8 @@ internal sealed record TrackedRun(RunKey Key, string Digest, EnvironmentTarget E
     internal bool NeedQuery { get; init; }
     internal bool AwaitingReconnectQuery { get; init; }
     internal WorkerSnapshot? ReconnectEvidence { get; init; }
+    // Running -> Faulted -> Last before the ordered query: replay the fault notice before the terminal consumers.
+    internal bool ReconnectFaultPending { get; init; }
     internal Confirmation Confirmation { get; init; } = new();
     internal RunSnapshot? Terminal { get; init; }
     internal NotificationSlot Notification { get; init; }
@@ -76,7 +78,9 @@ internal sealed record RunLifecycleState
     internal long LastGeneration { get; init; }
     internal long Sequence { get; init; }
     internal TimeSpan Now { get; init; }
-    internal ImmutableDictionary<DateTime, string> MinuteWinners { get; init; } = ImmutableDictionary<DateTime, string>.Empty;
+    // Elapsed award time keeps 23:59 across midnight and subsequent local-clock rollback.
+    internal ImmutableDictionary<DateTime, (string Name, TimeSpan AwardedAt)> MinuteWinners { get; init; }
+        = ImmutableDictionary<DateTime, (string, TimeSpan)>.Empty;
     internal ClosingOperation? Closing { get; init; }
     internal StopOperation? Stop { get; init; }
     internal Exception? PreparationFailure { get; init; }

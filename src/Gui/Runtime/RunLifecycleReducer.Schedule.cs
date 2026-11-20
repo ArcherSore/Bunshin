@@ -12,19 +12,34 @@ internal sealed partial class RunLifecycleReducer
         var op = new StartOperation(candidates[0], OperationStage.Preview, Remaining: candidates.RemoveAt(0),
             Force: force, LocalMinute: minute, MinuteEnd: minuteEnd);
         if (state.Operations.ContainsKey(op.Intent.Id) || state.FailedLocalIntents.Contains(op.Intent.Id)) return;
-        if (Blocked(force) is { } reason) {
+        SelectCandidate(op);
+    }
+
+    private void SelectCandidate(StartOperation op)
+    {
+        var waitForPrevious = op.Force && state.Operations.Values.Any(o => o.LocalMinute != op.LocalMinute && SelectingSchedule(o));
+        if ((!waitForPrevious || state.Closing != null) && Blocked(op.Force) is { } reason) {
             SkipOperation(op, reason);
-        } else if (state.Now >= minuteEnd) {
+        } else if (state.Now >= op.MinuteEnd) {
             SkipOperation(op, "当前时间已离开本次定时的分钟");
-        } else if (state.MinuteWinners.TryGetValue(minute, out var winner)) {
-            SkipOperation(op, $"与「{winner}」同时到点");
-        } else if (state.Operations.Values.Any(o => o.Intent.Source == RunSource.Scheduled && o.LocalMinute == minute
-            || !force && o.Lease != null)) {
+        } else if (state.MinuteWinners.TryGetValue(op.LocalMinute, out var winner) && state.Now - winner.AwardedAt < WinnerWindow) {
+            SkipOperation(op, $"与「{winner.Name}」同时到点");
+        } else if (state.Operations.Values.Any(o => (o.Intent.Id != op.Intent.Id && o.Intent.Source == RunSource.Scheduled
+            && o.LocalMinute == op.LocalMinute) || (!op.Force && o.Lease != null))) {
             SkipOperation(op, "正在运行其他操作");
+        } else if (waitForPrevious) {
+            if (op.Stage != OperationStage.WaitingForPrevious) Save(op with { Stage = OperationStage.WaitingForPrevious });
         } else {
-            Save(op);
+            Save(op with { Stage = OperationStage.Preview });
             effects.Add(new Preview(op.Intent));
         }
+    }
+
+    private bool SelectingSchedule(StartOperation op)
+    {
+        if (op.Intent.Source != RunSource.Scheduled || op.Stage == OperationStage.WaitingForPrevious) return false;
+        // Once its own send is at risk, this Run can receive a warning even before the send receipt.
+        return op.Stage != OperationStage.Sending || AtRisk() is not { } risk || state.Runs.GetValueOrDefault(risk)?.Owner?.Id != op.Intent.Id;
     }
 
     private void SkipRemainder(StartOperation op, string reason)
@@ -45,7 +60,8 @@ internal sealed partial class RunLifecycleReducer
         if (e.Candidate.Id != op.Intent.Id || e.Candidate.Input.ConfigurationId != op.Intent.Input.ConfigurationId) return;
         op = op with { Intent = op.Intent with { Input = e.Candidate.Input, ConfigurationName = e.Candidate.ConfigurationName,
             Attempt = e.Candidate.Attempt } };
-        if (op.Force && AtRisk() != null) BeginCountdown(op);
+        if (op.Force && state.Now >= op.MinuteEnd) SkipOperation(op, "当前时间已离开本次定时的分钟");
+        else if (op.Force && AtRisk() is { } risk) BeginCountdown(op, risk);
         else AskReservation(op);
     }
 
@@ -57,7 +73,7 @@ internal sealed partial class RunLifecycleReducer
             || r.Sends.Values.Any(s => s.Boundary == SendBoundary.PossiblySent)))?.Key;
     }
 
-    private void BeginCountdown(StartOperation op)
+    private void BeginCountdown(StartOperation op, RunKey target)
     {
         if (state.Now >= op.MinuteEnd) {
             SkipOperation(op, "当前时间已离开本次定时的分钟");
@@ -66,17 +82,19 @@ internal sealed partial class RunLifecycleReducer
         if (op.Lease != null) effects.Add(new Release(op.Lease));
         RecordMinuteWinner(op);
         var deadline = state.Now + TimeSpan.FromSeconds(10);
-        SkipRemainder(op, "已有强制定时机会");
-        Save(op with { Lease = null, Stage = OperationStage.Countdown, CountdownEnd = deadline, Remaining = [] });
+        SkipRemainder(op, $"与「{op.Intent.ConfigurationName}」同时到点");
+        Save(op with { Lease = null, Stage = OperationStage.Countdown, Replacement = target, CountdownEnd = deadline, Remaining = [] });
         effects.Add(new ShowCountdown(op.Intent, deadline));
     }
 
+    // Two elapsed hours cover a one-hour DST rollback and the repeated hour, including midnight.
+    private static readonly TimeSpan WinnerWindow = TimeSpan.FromHours(2);
+
     private void RecordMinuteWinner(StartOperation op)
     {
-        // Keep local minutes through a clock rollback, as ScheduleClock does for claimed configurations.
         var winners = state.MinuteWinners;
-        state = state with { MinuteWinners = winners.RemoveRange(winners.Keys.Where(m => m.Date < op.LocalMinute.Date))
-            .SetItem(op.LocalMinute, op.Intent.ConfigurationName) };
+        state = state with { MinuteWinners = winners.RemoveRange(winners.Where(w => state.Now - w.Value.AwardedAt >= WinnerWindow)
+            .Select(w => w.Key)).SetItem(op.LocalMinute, (op.Intent.ConfigurationName, state.Now)) };
     }
 
     private TrackedRun? PendingReplacementEvidence() => state.Runs.Values.FirstOrDefault(r => !r.Settled
@@ -87,6 +105,9 @@ internal sealed partial class RunLifecycleReducer
     {
         foreach (var op in state.Operations.Values.Where(o => o.Stage == OperationStage.ReviewCountdown)) {
             if (Blocked(force: true) is { } reason) SkipOperation(op, reason);
+            else if (state.Runs.Values.Any(r => r is { Quit: QuitStage.Bound, ManualStop: not null }
+                && state.Connection?.WorkerInstanceId != r.Key.WorkerInstanceId))
+                SkipOperation(op, "正在等待开机任务停止并退出");
             else if (PendingReplacementEvidence() is { } run) Save(run with { NeedQuery = true });
             else AskReservation(op);
         }
@@ -100,8 +121,8 @@ internal sealed partial class RunLifecycleReducer
             return;
         }
         var risk = AtRisk();
-        if (op.Force && risk != null && !op.CountdownEnd.HasValue) {
-            BeginCountdown(op);
+        if (op.Force && risk is { } targetAtRisk && targetAtRisk != op.Replacement) {
+            BeginCountdown(op, targetAtRisk);
             return;
         }
         var expected = op.Lease!.Expected;
@@ -132,7 +153,7 @@ internal sealed partial class RunLifecycleReducer
         if (!op.CountdownEnd.HasValue) RecordMinuteWinner(op);
         effects.Add(new PublishConfiguration(op.Intent));
         effects.Add(new AppendStart(op.Intent));
-        SkipRemainder(op, "本分钟已有获准的配置");
+        SkipRemainder(op, $"与「{op.Intent.ConfigurationName}」同时到点");
     }
 
     private void ChangeEnvironment(StartOperation op)

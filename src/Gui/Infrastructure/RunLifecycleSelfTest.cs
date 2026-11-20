@@ -23,7 +23,9 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleObservedRuns, VerifyRunLifecycleCountdownEvidence, VerifyRunLifecycleClosingReceipts,
         VerifyRunLifecycleSendFailure, VerifyRunLifecycleMinuteWinner, VerifyRunLifecycleExpiredSelection,
         VerifyRunLifecycleLogonGate, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRejectedRetry,
-        VerifyRunLifecycleFaultedTakeover
+        VerifyRunLifecycleFaultedTakeover, VerifyRunLifecycleAdjacentMinutes, VerifyRunLifecycleCountdownTarget, VerifyRunLifecycleDeferredPreview,
+        VerifyRunLifecycleStoppedOffline, VerifyRunLifecycleReconnectFault, VerifyRunLifecycleCancelledPreparation,
+        VerifyRunLifecycleClosingPreview, VerifyRunLifecycleSimultaneousNames, VerifyRunLifecycleMidnightRollback
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
