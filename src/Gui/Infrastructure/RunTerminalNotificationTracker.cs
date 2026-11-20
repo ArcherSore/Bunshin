@@ -17,7 +17,7 @@ internal sealed class RunTerminalNotificationTracker
 
     internal RunTerminalNotification? Observe(WorkerCoordinatorSnapshot observation, string? activeName = null)
     {
-        if (!observation.SnapshotFresh || observation.WorkerSnapshot is not { } snapshot) {
+        if (!observation.Fresh || observation.WorkerSnapshot is not { } snapshot) {
             return null;
         }
         if (snapshot.ActiveRun is { } active && !_completedRuns.Contains(active.RunId)) {

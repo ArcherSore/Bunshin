@@ -44,8 +44,8 @@ internal sealed record WorkerCoordinatorSnapshot(
     internal bool FreshReadyToStart => FreshIdle && WorkerSnapshot is { WorkerState: WorkerState.Ready };
 
     // Scheduled cleanup needs a settled Worker and can proceed with unavailable dependencies.
-    internal bool FreshIdleForEnvironmentEnd => Fresh && WorkerSnapshot is {
-        ActiveRun: null, WorkerState: WorkerState.Ready or WorkerState.NotReady
+    internal bool FreshIdleForEnvironmentEnd => FreshIdle && WorkerSnapshot is {
+        WorkerState: WorkerState.Ready or WorkerState.NotReady
     };
 
     internal bool NoLiveAdmission => Observation is WorkerObservation.WorkerNotStarted
@@ -174,7 +174,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                     $"无法读取 Worker Admission Record，为避免重复启动 Worker 已停止准备。{EndChildSessionHint}");
             }
             if (_connection is not null) {
-                throw new InvalidOperationException(Snapshot.SnapshotFresh
+                throw new InvalidOperationException(Snapshot.Fresh
                     ? $"当前 Worker 使用的项目与已加载的项目不一致。{EndChildSessionHint}"
                     : "Worker 正在同步状态，请稍后重试。");
             }
@@ -859,7 +859,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             if (state.StateRevision <= currentRevision) {
                 return;
             }
-            if (Snapshot.SnapshotFresh && state.StateRevision != currentRevision + 1) {
+            if (Snapshot.Fresh && state.StateRevision != currentRevision + 1) {
                 UpdateSnapshotLocked(Snapshot with {
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
@@ -1204,7 +1204,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     private void UpdateSnapshotLocked(WorkerCoordinatorSnapshot snapshot)
     {
         if (snapshot.Observation is WorkerObservation.WorkerExited or WorkerObservation.ChildSessionEnded
-            || snapshot.SnapshotFresh && _startAwaitingObservation is Guid id
+            || snapshot.Fresh && _startAwaitingObservation is Guid id
                 && (snapshot.WorkerSnapshot?.ActiveRun?.RunId == id || snapshot.WorkerSnapshot?.LastRun?.RunId == id)) {
             _startAwaitingObservation = null;
         }

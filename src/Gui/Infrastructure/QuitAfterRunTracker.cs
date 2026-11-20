@@ -13,7 +13,7 @@ internal sealed class QuitAfterRunTracker
 
     internal bool Observe(WorkerCoordinatorSnapshot observation)
     {
-        if (observation.SnapshotFresh && observation.WorkerSnapshot?.LastRun is { } run && run.RunId == _runId
+        if (observation.Fresh && observation.WorkerSnapshot?.LastRun is { } run && run.RunId == _runId
             && run.State is RunState.Succeeded or RunState.Failed or RunState.Cancelled) {
             _runId = null;
             return true;

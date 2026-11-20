@@ -225,7 +225,7 @@ public partial class MainWindow
             }
         }
         var replacesBootRun = countdownElapsed && atRisk is Guid id && _quitAfterRun?.IsWaitingFor(id) == true;
-        if (current is { SnapshotFresh: true, WorkerSnapshot.LastRun: { } last }
+        if (current is { Fresh: true, WorkerSnapshot.LastRun: { } last }
             && _quitAfterRun?.IsWaitingFor(last.RunId) == true) {
             return new(ScheduledRunDisposition.Busy, Reason: "开机任务已结束，正在退出");
         }
