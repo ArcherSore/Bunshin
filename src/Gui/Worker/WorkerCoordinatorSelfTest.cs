@@ -22,6 +22,15 @@ internal static partial class WorkerCoordinatorSelfTest
         ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "configurations.json"));
 
     internal static (string Name, Func<AppLogger, string, string, Task> Body)[] Checks => [
+        (nameof(VerifyStartEvidenceSyncReconnectAsync), VerifyStartEvidenceSyncReconnectAsync),
+        (nameof(VerifyInitialSnapshotBeforeEofAsync), VerifyInitialSnapshotBeforeEofAsync),
+        (nameof(VerifyInitialLogPageBeforeEofAsync), VerifyInitialLogPageBeforeEofAsync),
+        (nameof(VerifyLiveLogPageBeforeInitialSyncEofAsync), VerifyLiveLogPageBeforeInitialSyncEofAsync),
+        (nameof(VerifyStartEvidenceRevisionOrderAsync), VerifyStartEvidenceRevisionOrderAsync),
+        (nameof(VerifyQueuedStartSnapshotGapAsync), VerifyQueuedStartSnapshotGapAsync),
+        (nameof(VerifyStartEvidenceWritesAsync), VerifyStartEvidenceWritesAsync),
+        (nameof(VerifyStartEvidenceRepliesAsync), VerifyStartEvidenceRepliesAsync),
+        (nameof(VerifyStartEvidenceQueryAsync), VerifyStartEvidenceQueryAsync),
         (nameof(VerifyConnectionLifecycleAsync),
             (logger, directory, _) => VerifyConnectionLifecycleAsync(logger, directory)),
         (nameof(VerifyAdmissionRecoveryAsync), (logger, directory, project) => VerifyAdmissionRecoveryAsync(
@@ -151,9 +160,11 @@ internal static partial class WorkerCoordinatorSelfTest
         await pipe.WriteAsync(CreateLogEvent(record.WorkerInstanceId, stranded), cancellationToken);
         var recoveryRequest = await ReadRequestAsync(pipe, ProtocolOperations.LogGetSince, cancellationToken);
         coordinator.ChildSessionEnded();
+        Require(await pipe.ReadAsync(cancellationToken) is null, "摘除 Admission 应立即关闭仍有日志查询在途的管道。");
         var missing = CreateEntry(9, ProtocolConstants.RunLogSource, "also-hidden", timestamp);
-        await WriteLogPageAsync(pipe, recoveryRequest, [missing, stranded], lastSequence: 10, cancellationToken);
-        await Task.Delay(200, cancellationToken);
+        await ExpectAsync<IOException>(
+            () => WriteLogPageAsync(pipe, recoveryRequest, [missing, stranded], lastSequence: 10, cancellationToken),
+            "旧 Worker 不能再通过已关闭的管道写回日志页。");
         if (received.Count != 7 || received.Last().Sequence != 8) {
             throw new InvalidOperationException("失效 Worker 的在途 recovery 结果仍被发布。 ");
         }

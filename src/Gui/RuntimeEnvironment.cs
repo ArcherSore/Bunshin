@@ -176,7 +176,8 @@ internal sealed class RuntimeEnvironment
         var failure = "无法确认 Worker 已退出。";
         try {
             // Capture the already verified Worker before WTS teardown, so a reused PID cannot pass for its exit.
-            var workerExit = _coordinator.TrackedWorkerPid is int pid ? _waitForWorkerExit(pid, exitWait.Token) : null;
+            var tracked = _coordinator.TrackedAdmission;
+            var workerExit = tracked?.WorkerPid is int pid ? _waitForWorkerExit(pid, exitWait.Token) : null;
             _logger.Info("开始结束桌面分身：先停止任务，随后注销 Child Session。");
             using (_logger.Scope("停止 Active Run")) {
                 await StopActiveRunAsync();
@@ -195,7 +196,7 @@ internal sealed class RuntimeEnvironment
                 }
             }
             failure = "丢弃 Worker Admission 失败。";
-            _coordinator.ChildSessionEnded();
+            _coordinator.ChildSessionEnded(workerExit is null ? null : tracked);
         } catch (Exception exception) {
             return Unconfirmed(failure, exception);
         } finally {
