@@ -132,8 +132,8 @@ internal static partial class SelfTestRunner
                             PumpUntil(() => single.IsCompleted, "下一分钟仅第一班到点时也应立即跳过。");
                             single.GetAwaiter().GetResult();
                             var activity = window.LogLines.OfType<LogEntry>()
-                                .Where(e => e.TaskLabel == "定时" && e.Timestamp == clock.GetLocalNow());
-                            Require(activity.Select(e => e.Message).SequenceEqual(["跳过「第一班」：正在运行其他任务"])
+                                .Where(e => e.TaskLabel == "定时" && e.Timestamp == clock.GetLocalNow()).ToArray();
+                            Require(activity is [var skip] && IsScheduledBusySkip(skip.Message, "第一班")
                                 && notices.Count == 0 && wts.LogoffAttempts.Count == 0,
                                 "已有任务运行时，唯一候选的忙原因也应进入当分钟的运行动态。");
                         }

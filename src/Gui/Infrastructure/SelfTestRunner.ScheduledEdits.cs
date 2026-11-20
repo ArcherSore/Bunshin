@@ -32,7 +32,8 @@ internal static partial class SelfTestRunner
             PumpUntil(() => start.IsCompleted, "配置替换失败后应结束本次定时启动。");
             start.GetAwaiter().GetResult();
             var activity = window.LogLines.OfType<LogEntry>().Where(e => e.TaskLabel == "定时").ToList();
-            Require(activity.Count(e => e.Level == LogLevel.Error) == 1
+            Require(activity.Where(e => e.Level == LogLevel.Error).ToArray() is [var failure]
+                && failure.Message.Contains(target.Name)
                 && !activity.Any(e => e.Message.StartsWith("启动「")),
                 "配置替换失败时，运行动态应显示一次目标配置失败且没有启动记录。");
             Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession
@@ -40,7 +41,8 @@ internal static partial class SelfTestRunner
                     { Tag: Guid selected } && selected == original && project.ActiveConfigurationId == original
                 && saved.SequenceEqual(File.ReadAllBytes(path)),
                 "配置替换失败必须保留当前标签和配置文件，且不注销旧分身。");
-        }, session: session, prepareEnvironment: (_, _, _) => throw new InvalidOperationException("不应准备新环境"));
+        }, session: session, captureProcesses: () => [],
+            prepareEnvironment: (_, _, _) => throw new InvalidOperationException("不应准备新环境"));
     }
 
     private static void VerifyScheduledEdits(AppLogger logger, string directory)

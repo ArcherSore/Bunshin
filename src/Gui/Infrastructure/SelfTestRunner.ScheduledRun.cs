@@ -213,10 +213,10 @@ internal static partial class SelfTestRunner
                     PumpUntil(() => connected.IsCompleted && coordinator.Snapshot.SnapshotFresh, "模拟 Worker 应重连。");
                     pipe = connected.Result;
                     if (terminal == RunState.Idle) {
-                        // 迁移至 VerifyRunLifecycle / 未接纳
+                        // 迁移至 VerifyRunLifecycle / 普通重连空闲快照后仍待确认，此时失败通知应为零（#124）。
                         PumpUntil(() => failures.Count > 0, "重连后确认未接纳应通知启动失败。");
                         PumpOnboarding();
-                        // 迁移至 VerifyRunLifecycle / 未接纳
+                        // 收到覆盖本次发送的有序查询结果 runRegistered=false 后，才报告一次启动失败并保留分身。
                         Require(failures.Count == 1 && failures[0].Contains(name) && session.HasChildSession,
                             "启动未被接纳时应保留分身且只报告一次。");
                         return;
@@ -265,11 +265,11 @@ internal static partial class SelfTestRunner
                         wts.DuringEnumeration = null;
                         var active = snapshot with { StateRevision = 3, ActiveRun = own, RunState = RunState.Running };
                         Task.Run(() => pipe.WriteAsync(StateEvent(active), token)).GetAwaiter().GetResult();
-                        // 迁移至 VerifyRunLifecycle / 预留前变忙
+                        // 迁移至 VerifyRunLifecycle / own 已获 accepted，另一机会在 WTS 枚举期间观察到同一 Run 进入 Running。
                         AwaitWorker(coordinator, s => s.WorkerSnapshot?.ActiveRun?.RunId == own.RunId,
                             "Worker 应在 WTS 查询期间报告 Active Run。");
                     };
-                    // 迁移至 VerifyRunLifecycle / 预留前变忙
+                    // 迁移后仍须断言：从提交待观察转为已在运行，另一机会始终返回 Busy。
                     ExpectBusy();
                     Publish(done, 4);
                 } else if (tickBeforeDispatch) {
