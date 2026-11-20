@@ -132,7 +132,16 @@ internal static partial class SelfTestRunner
     {
         var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7] };
         using var session = wts.CreateManager(logger);
-        WithFakeWorker(logger, Path.Combine(directory, "worker-exit"), (coordinator, _, _) => {
+        WithFakeWorker(logger, Path.Combine(directory, "worker-exit"), (coordinator, record, pipeName) => {
+            var evidence = new System.Collections.Concurrent.ConcurrentQueue<WorkerObservationBatch>();
+            coordinator.ObservationReceived += (_, batch) => evidence.Enqueue(batch);
+            using var watchdog = new CancellationTokenSource(OnPoolLimit);
+            var pipe = OnPool(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, watchdog.Token));
+            AwaitWorker(coordinator, state => state.Fresh, "Worker 首次同步失败。");
+            pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            AwaitWorker(coordinator, state => state.Observation == WorkerObservation.IpcDisconnected,
+                "PID 仍在时断管应进入等待重连。");
+            var generation = evidence.Single(batch => batch.Kind == WorkerEvidenceKind.ReaderDrained).Connection;
             var exited = false;
             var waitEnded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var environment = CreateEnvironment(logger, session, coordinator, async (_, token) => {
@@ -148,12 +157,20 @@ internal static partial class SelfTestRunner
                 && waitEnded.Task.Wait(WaitLimitMilliseconds) && waitEnded.Task.Result,
                 "Worker 未在上限内退出时，结束应未确认、保留 Admission 并停止等待。");
 
+            Require(!evidence.Any(batch => batch.Kind == WorkerEvidenceKind.ProcessExited),
+                "环境等待超时不能证明 Worker 已退出。");
             exited = true;
             var asked = false;
             var second = OnPool(() => environment.EndAsync(() => asked = true));
             Require(second == EnvironmentEndResult.Ended && asked && AdmissionDiscarded(coordinator)
                 && !environment.EndUnconfirmed && wts.LogoffAttempts.SequenceEqual([7u]),
                 "再次结束应确认 Worker 退出后丢弃 Admission，并清除未确认。");
+            var retirement = evidence.Where(batch => batch.Kind is WorkerEvidenceKind.ProcessExited
+                or WorkerEvidenceKind.AdmissionRemoved).ToArray();
+            Require(retirement.Select(batch => batch.Kind).SequenceEqual(
+                    [WorkerEvidenceKind.ProcessExited, WorkerEvidenceKind.AdmissionRemoved])
+                && retirement.All(batch => batch.Connection == generation) && generation?.WorkerInstanceId == record.WorkerInstanceId,
+                "断管后环境确认 PID 退出时，应给已排空的同一代发布退出凭据再移除 Admission。");
         });
     }
 

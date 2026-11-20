@@ -150,15 +150,17 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     internal Func<bool>? TelemetryEnabled { get; set; }
     internal Func<ProjectPlanModule, TelemetryOptions?>? TelemetryOptions { get; set; }
 
-    internal int? TrackedWorkerPid
+    internal WorkerAdmissionRecord? TrackedAdmission
     {
         get
         {
             lock (_gate) {
-                return _admission?.WorkerPid;
+                return _admission;
             }
         }
     }
+
+    internal int? TrackedWorkerPid => TrackedAdmission?.WorkerPid;
 
     internal Task WaitForServerReadyAsync(CancellationToken cancellationToken) =>
         _serverReady.Task.WaitAsync(cancellationToken);
@@ -527,7 +529,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    internal void ChildSessionEnded()
+    internal void ChildSessionEnded(WorkerAdmissionRecord? confirmedExit = null)
     {
         WorkerAdmissionRecord? record;
         lock (_logRecovery.DispatchGate) {
@@ -543,6 +545,10 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 _awaitedFreshSnapshot = null;
                 _logRecovery.InvalidateConnectionLocked();
                 if (record is not null) {
+                    if (record == confirmedExit && record.WorkerPid.HasValue
+                        && Snapshot.Observation != WorkerObservation.WorkerExited) {
+                        ObserveAdmissionLocked(record, WorkerEvidenceKind.ProcessExited);
+                    }
                     ObserveAdmissionLocked(record, WorkerEvidenceKind.AdmissionRemoved);
                 }
                 UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
@@ -627,7 +633,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
         RaiseStateChanged();
 
-        using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var reader = ReadAndDrainAsync(evidence, logRecoveryGeneration, connectionLifetime);
         try {
             var response = await SendRequestAsync<object, GetSnapshotResponse>(
@@ -639,36 +645,43 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 response.Snapshot.LastLogSequence, connectionLifetime.Token);
             await reader;
         } finally {
-            bool retired;
-            lock (_gate) {
-                retired = ObservingEvidence && _connection != connection;
-            }
-            if (!retired) {
-                connectionLifetime.Cancel();
-            }
-            // A failed initial sync can finish before its reader. Do not dispose the pipe or admit
-            // another generation while the old reader is still dispatching a validated frame.
-            try {
-                await reader;
-            } catch when (reader.IsFaulted || reader.IsCanceled) {
-                // The failing operation in the try above owns the connection error.
-            }
             WorkerAdmissionRecord? detached = null;
             lock (_logRecovery.DispatchGate) {
                 lock (_gate) {
                     if (ReferenceEquals(_connection, connection)) {
+                        connection.RetireWrites();
                         _connection = null;
                         _logRecovery.InvalidateConnectionLocked();
                         detached = _admission;
                     }
+                    if (!evidence.ReadEnded) {
+                        foreach (var entry in evidence.Requests.Values) {
+                            entry.Waiter?.TrySetCanceled();
+                        }
+                    }
                 }
             }
             CancelPendingRequests();
+            connectionLifetime.Cancel();
+            // An admitted reader normally runs to EOF above, including after Admission removal.
+            // A failed initial sync releases the server even if its reader is still in a callback.
+            _ = FinishReaderAsync(reader, connectionLifetime);
             // A killed Worker ends the pipe with a plain EOF, so every end of an admitted connection is observed here.
             // It runs after detaching so ClassifyAdmission inspects the recorded PID instead of trusting the pipe.
             if (detached is not null && !cancellationToken.IsCancellationRequested) {
                 MarkDisconnected(detached);
             }
+        }
+    }
+
+    private static async Task FinishReaderAsync(Task reader, CancellationTokenSource lifetime)
+    {
+        try {
+            await reader.ConfigureAwait(false);
+        } catch when (reader.IsCanceled || reader.IsFaulted) {
+            // ServeConnectionAsync reports the operation that ended the connection.
+        } finally {
+            lifetime.Dispose();
         }
     }
 
@@ -893,7 +906,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         WorkerAdmissionRecord admission;
         long? revisionGapFrom = null;
         lock (_gate) {
-            if (connection != _connection && ObservingEvidence) {
+            if (connection != _connection) {
                 return;
             }
             admission = _admission
@@ -982,7 +995,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
         try {
             await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
-            var response = await completion.Task.WaitAsync(RequestTimeout, cancellationToken);
+            var response = await completion.Task.WaitAsync(RequestTimeout, _requestClock, cancellationToken);
             if (response.Success != true) {
                 throw new WorkerProtocolErrorException(
                     response.Error?.Code ?? "internal_error", response.Error?.Message ?? "Worker 返回未知错误。 ");

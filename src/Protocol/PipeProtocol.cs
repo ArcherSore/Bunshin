@@ -13,9 +13,11 @@ public sealed class ProtocolConnection : IAsyncDisposable
     private readonly Stream _stream;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private long _writeSequence;
-    private bool _incompleteFrame;
     private volatile bool _writesRetired;
-    private int _disposed;
+    private int _closeReason;
+    private const int Disposed = 1;
+    private const int BrokenFrame = 2;
+    private const string BrokenPipeMessage = "IPC 连接因未完成的帧已关闭。";
 
     public ProtocolConnection(Stream stream)
     {
@@ -24,21 +26,27 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
     public async Task<WireEnvelope?> ReadAsync(CancellationToken cancellationToken)
     {
-        ThrowIfDisposed();
-        var prefix = new byte[sizeof(uint)];
-        var prefixBytesRead = await _stream.ReadAsync(prefix, cancellationToken);
-        if (prefixBytesRead == 0) {
-            return null;
-        }
-        await _stream.ReadExactlyAsync(prefix.AsMemory(prefixBytesRead), cancellationToken);
+        ThrowIfClosed();
+        byte[] payload;
+        try {
+            var prefix = new byte[sizeof(uint)];
+            var prefixBytesRead = await _stream.ReadAsync(prefix, cancellationToken);
+            if (prefixBytesRead == 0) {
+                return null;
+            }
+            await _stream.ReadExactlyAsync(prefix.AsMemory(prefixBytesRead), cancellationToken);
 
-        var payloadLength = BinaryPrimitives.ReadUInt32LittleEndian(prefix);
-        if (payloadLength == 0 || payloadLength > ProtocolConstants.MaximumFramePayloadBytes) {
-            throw new ProtocolException($"非法 IPC frame 长度：{payloadLength}。 ");
-        }
+            var payloadLength = BinaryPrimitives.ReadUInt32LittleEndian(prefix);
+            if (payloadLength == 0 || payloadLength > ProtocolConstants.MaximumFramePayloadBytes) {
+                throw new ProtocolException($"非法 IPC frame 长度：{payloadLength}。 ");
+            }
 
-        var payload = GC.AllocateUninitializedArray<byte>((int)payloadLength);
-        await _stream.ReadExactlyAsync(payload, cancellationToken);
+            payload = GC.AllocateUninitializedArray<byte>((int)payloadLength);
+            await _stream.ReadExactlyAsync(payload, cancellationToken);
+        } catch (Exception error) when (Volatile.Read(ref _closeReason) == BrokenFrame && !cancellationToken.IsCancellationRequested
+            && error is ObjectDisposedException or OperationCanceledException) {
+            throw new IOException(BrokenPipeMessage, error);
+        }
 
         string json;
         try {
@@ -68,7 +76,7 @@ public sealed class ProtocolConnection : IAsyncDisposable
     public async Task WriteFrameAsync(WireEnvelope envelope, CancellationToken cancellationToken,
         Action<long>? onWriteLocked, Action? onSending)
     {
-        ThrowIfDisposed();
+        ThrowIfClosed();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
         if (payload.Length == 0 || payload.Length > ProtocolConstants.MaximumFramePayloadBytes) {
             throw new ProtocolException($"IPC frame payload 越界：{payload.Length} bytes。 ");
@@ -80,30 +88,24 @@ public sealed class ProtocolConnection : IAsyncDisposable
         await _writeGate.WaitAsync(cancellationToken);
         var writingFrame = false;
         try {
-            ThrowIfDisposed();
+            ThrowIfClosed();
             ThrowIfWritesRetired();
-            if (onWriteLocked is not null && _incompleteFrame) {
-                // A legacy writer may have failed before the first ordered request on this pipe.
-                await DisposeAsync();
-                throw new IOException("IPC 写端已有不完整的帧。");
-            }
             _writeSequence++;
             onWriteLocked?.Invoke(_writeSequence);
             writingFrame = true;
             await _stream.WriteAsync(prefix, cancellationToken);
             // A length prefix alone cannot deliver a request. Once the payload write starts, delivery is uncertain
             // even if the write or flush subsequently fails.
-            ThrowIfDisposed();
+            ThrowIfClosed();
             ThrowIfWritesRetired();
             cancellationToken.ThrowIfCancellationRequested();
             onSending?.Invoke();
             await _stream.WriteAsync(payload, cancellationToken);
             await _stream.FlushAsync(cancellationToken);
         } catch when (writingFrame) {
-            _incompleteFrame = true;
-            if (onWriteLocked is not null && !_writesRetired) {
+            if (!_writesRetired) {
                 // Even a partial prefix makes the next frame undecodable. Seal before releasing the gate.
-                await DisposeAsync();
+                await CloseAsync(BrokenFrame);
             }
             throw;
         } finally {
@@ -111,19 +113,25 @@ public sealed class ProtocolConnection : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => CloseAsync(Disposed);
+
+    private ValueTask CloseAsync(int reason)
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
-            return;
+        if (Interlocked.CompareExchange(ref _closeReason, reason, 0) != 0) {
+            return ValueTask.CompletedTask;
         }
 
         // Writers may still be unwinding or waiting to observe the closed stream.
-        await _stream.DisposeAsync();
+        return _stream.DisposeAsync();
     }
 
-    private void ThrowIfDisposed()
+    private void ThrowIfClosed()
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        var reason = Volatile.Read(ref _closeReason);
+        if (reason == BrokenFrame) {
+            throw new IOException(BrokenPipeMessage);
+        }
+        ObjectDisposedException.ThrowIf(reason == Disposed, this);
     }
 
     private void ThrowIfWritesRetired()

@@ -10,6 +10,10 @@ internal static partial class SelfTestRunner
     {
         private DateTimeOffset _now = new(2026, 11, 15, 23, 59, 42, TimeSpan.Zero);
         private readonly Dictionary<ScheduleTimer, DateTimeOffset> _deadlines = [];
+        internal int PendingTimers
+        {
+            get { lock (_deadlines) { return _deadlines.Count; } }
+        }
         public override TimeZoneInfo LocalTimeZone { get; } =
             TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
         public override DateTimeOffset GetUtcNow() => _now;

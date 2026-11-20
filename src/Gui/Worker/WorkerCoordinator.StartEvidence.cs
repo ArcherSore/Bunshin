@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using ProjectModel;
@@ -14,7 +15,7 @@ internal readonly record struct WorkerConnectionId(Guid WorkerInstanceId, long G
 internal sealed record WorkerRequestEvidence(Guid RequestId, RunKey Run, Submission? Submission, QueryId? QueryId,
     WorkerConnectionId? Connection, long? WriteSequence = null)
 {
-    // The server drains and seals each admitted pipe before admitting the next. The same Worker
+    // The server seals each old write side before admitting the next. The same Worker
     // services requests serially, including across its reconnect. Only compare body-started sends.
     internal bool Covers(WorkerRequestEvidence send) =>
         QueryId.HasValue && send.Submission is not null && Run == send.Run
@@ -39,6 +40,8 @@ internal sealed record WorkerObservationBatch(WorkerConnectionId? Connection, Wo
 
 internal sealed partial class WorkerCoordinator
 {
+    // Without a usable barrier (or with only unresolved starts), resync on a new pipe.
+    internal const int MaxAbandonedEvidenceRequests = 128;
     // Only the read loop owns drain. Removing an Admission invalidates writes but leaves this
     // reader's verified identity and request associations intact until its last frame is consumed.
     private sealed class EvidenceConnection(ProtocolConnection pipe, WorkerAdmissionRecord admission, long generation)
@@ -49,12 +52,32 @@ internal sealed partial class WorkerCoordinator
         internal Dictionary<Guid, EvidencePending> Requests { get; } = [];
         internal bool Fresh;
         internal bool ReadEnded;
+
+        // The prefix identifies this pipe's targeted queries after a newer barrier has
+        // superseded their individual associations. Ordinary/foreign request IDs still fail.
+        private readonly byte[] _queryPrefix = Guid.NewGuid().ToByteArray();
+        private long _issuedQueries;
+
+        internal Guid IssueQueryId()
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(_queryPrefix.AsSpan(8), checked(++_issuedQueries));
+            return new Guid(_queryPrefix);
+        }
+
+        internal bool IsIssuedQuery(Guid id)
+        {
+            Span<byte> bytes = stackalloc byte[16];
+            id.TryWriteBytes(bytes);
+            var number = BinaryPrimitives.ReadInt64LittleEndian(bytes[8..]);
+            return bytes[..8].SequenceEqual(_queryPrefix.AsSpan(0, 8)) && number > 0 && number <= _issuedQueries;
+        }
     }
 
     private sealed class EvidencePending(WorkerRequestEvidence request)
     {
         internal WorkerRequestEvidence Request = request;
         internal bool BodyStarted;
+        internal bool FailureReported;
         internal TaskCompletionSource<WorkerObservationBatch>? Waiter =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -76,6 +99,15 @@ internal sealed partial class WorkerCoordinator
         get {
             lock (_gate) {
                 return _evidenceConnection?.Requests.Values.Count(entry => entry.Waiter is not null) ?? 0;
+            }
+        }
+    }
+
+    internal int EvidenceRequestCount
+    {
+        get {
+            lock (_gate) {
+                return _evidenceConnection?.Requests.Count ?? 0;
             }
         }
     }
@@ -120,26 +152,21 @@ internal sealed partial class WorkerCoordinator
             _evidenceRequested = true;
             source = _evidenceConnection;
             var id = source?.Id.WorkerInstanceId == run.WorkerInstanceId ? source.Id : (WorkerConnectionId?)null;
-            entry = new(new(Guid.NewGuid(), run, submission, queryId, id));
+            var requestId = queryId.HasValue && id.HasValue ? source!.IssueQueryId() : Guid.NewGuid();
+            entry = new(new(requestId, run, submission, queryId, id));
             if (submission is not null) {
                 PublishLocked(new(id, WorkerEvidenceKind.BeforeBody, entry.Request));
             }
         }
         var waiter = entry.Waiter!;
+        Task<Exception?>? write = null;
+        var deadline = timeout.Token;
         try {
-            using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, cancellationToken, _shutdown.Token);
+            using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(deadline, cancellationToken, _shutdown.Token);
             var token = lifetime.Token;
 
-            void CheckTargetLocked()
-            {
-                if (source is null || source.Pipe != _connection || source.ReadEnded
-                    || source.Id.WorkerInstanceId != run.WorkerInstanceId) {
-                    throw new InvalidOperationException("目标 Worker IPC 已失效。");
-                }
-            }
-
             lock (_gate) {
-                CheckTargetLocked();
+                CheckEvidenceTargetLocked(source, run);
                 if (attempt is not null && (attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
                     || attempt.Plan.RuntimeProfileDigest != source!.Admission.RuntimeProfileDigest
                     || !source.Fresh || _latestEvidenceSnapshot is not { WorkerState: WorkerState.Ready, RunState: RunState.Idle })) {
@@ -153,22 +180,9 @@ internal sealed partial class WorkerCoordinator
                 ? WireEnvelope.Request(ProtocolOperations.WorkerGetSnapshot, requestId, new GetSnapshotRequest(run.RunId))
                 : WireEnvelope.Request(ProtocolOperations.RunStart, requestId,
                     new RunStartRequest(run.RunId, attempt.PlanDigest, attempt.Plan) { RedactionValues = attempt.RedactionValues });
-            await source.Pipe.WriteFrameAsync(frame, token, sequence => {
-                lock (_gate) {
-                    CheckTargetLocked();
-                    entry.Request = entry.Request with { WriteSequence = sequence };
-                }
-            }, () => {
-                lock (_gate) {
-                    CheckTargetLocked();
-                    entry.BodyStarted = true;
-                    if (submission is not null) {
-                        PublishLocked(new(source.Id, WorkerEvidenceKind.BodyStarted, entry.Request));
-                    }
-                }
-            }).ConfigureAwait(false);
-            lock (_gate) {
-                PublishLocked(new(source.Id, WorkerEvidenceKind.WriteCompleted, entry.Request));
+            write = WriteEvidenceFrameAsync(source, entry, frame, token, deadline, cancellationToken);
+            if (await write.WaitAsync(token).ConfigureAwait(false) is { } writeError) {
+                ExceptionDispatchInfo.Throw(writeError);
             }
             token.ThrowIfCancellationRequested();
             var reply = await waiter.Task.WaitAsync(token).ConfigureAwait(false);
@@ -177,18 +191,27 @@ internal sealed partial class WorkerCoordinator
             }
             return reply;
         } catch (Exception error) {
-            var failure = error is OperationCanceledException && timeout.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested ? new TimeoutException("Worker 请求在 15 秒后超时。", error) : error;
+            var failure = RequestFailure(error, deadline, cancellationToken);
+            bool close;
             lock (_gate) {
-                // The reader removes answered entries. Here a possibly written request keeps only
-                // its IDs and position, so an arbitrarily late frame can still be interpreted.
                 entry.Waiter = null;
                 if (!entry.BodyStarted) {
+                    // The cancelled token is rechecked at the body boundary under this gate.
                     source?.Requests.Remove(entry.Request.RequestId);
                 }
-                PublishLocked(new(entry.Request.Connection,
-                    submission is not null && !entry.BodyStarted ? WorkerEvidenceKind.NotSent : WorkerEvidenceKind.RequestFailed,
-                    entry.Request, Error: failure));
+                // A stuck prefix writer owns its eventual NotSent. A deadline only ends the call.
+                if (write is null || entry.BodyStarted) {
+                    ReportFailureLocked(source, entry, failure);
+                }
+                close = source is not null && source.Pipe == _connection && !source.ReadEnded
+                    && source.Requests.Count >= MaxAbandonedEvidenceRequests
+                    && source.Requests.Values.Count(pending => pending.Waiter is null) >= MaxAbandonedEvidenceRequests;
+                if (close) {
+                    source!.Pipe.RetireWrites();
+                }
+            }
+            if (close) {
+                _ = source!.Pipe.DisposeAsync();
             }
             if (failure != error) {
                 throw failure;
@@ -197,49 +220,126 @@ internal sealed partial class WorkerCoordinator
         }
     }
 
+    private void CheckEvidenceTargetLocked(EvidenceConnection? source, RunKey run)
+    {
+        if (source is null || source.Pipe != _connection || source.ReadEnded
+            || source.Id.WorkerInstanceId != run.WorkerInstanceId) {
+            throw new InvalidOperationException("目标 Worker IPC 已失效。");
+        }
+    }
+
+    private static Exception RequestFailure(Exception error, CancellationToken deadline, CancellationToken caller) =>
+        error is OperationCanceledException && deadline.IsCancellationRequested && !caller.IsCancellationRequested
+            ? new TimeoutException("Worker 请求在 15 秒后超时。", error) : error;
+
+    // The writer can outlive its caller. It keeps no reply waiter or continuation back to that call.
+    private async Task<Exception?> WriteEvidenceFrameAsync(EvidenceConnection source, EvidencePending entry,
+        WireEnvelope frame, CancellationToken token, CancellationToken deadline, CancellationToken caller)
+    {
+        try {
+            await source.Pipe.WriteFrameAsync(frame, token, sequence => {
+                lock (_gate) {
+                    CheckEvidenceTargetLocked(source, entry.Request.Run);
+                    entry.Request = entry.Request with { WriteSequence = sequence };
+                }
+            }, () => {
+                lock (_gate) {
+                    token.ThrowIfCancellationRequested();
+                    CheckEvidenceTargetLocked(source, entry.Request.Run);
+                    entry.BodyStarted = true;
+                    if (entry.Request.Submission is not null) {
+                        PublishLocked(new(source.Id, WorkerEvidenceKind.BodyStarted, entry.Request));
+                    }
+                }
+            }).ConfigureAwait(false);
+            lock (_gate) {
+                PublishLocked(new(source.Id, WorkerEvidenceKind.WriteCompleted, entry.Request));
+            }
+            return null;
+        } catch (Exception error) {
+            var failure = RequestFailure(error, deadline, caller);
+            lock (_gate) {
+                ReportFailureLocked(source, entry, failure);
+            }
+            return failure;
+        }
+    }
+
+    private void ReportFailureLocked(EvidenceConnection? source, EvidencePending entry, Exception failure)
+    {
+        if (entry.FailureReported) {
+            return;
+        }
+        entry.FailureReported = true;
+        if (!entry.BodyStarted) {
+            source?.Requests.Remove(entry.Request.RequestId);
+        }
+        var kind = entry.Request.Submission is not null && !entry.BodyStarted
+            ? WorkerEvidenceKind.NotSent : WorkerEvidenceKind.RequestFailed;
+        PublishLocked(new(entry.Request.Connection, kind, entry.Request, Error: failure));
+    }
+
     private bool ReceiveEvidenceReply(EvidenceConnection source, Guid id, WireEnvelope frame)
     {
         lock (_gate) {
-            if (!source.Requests.Remove(id, out var entry)) {
+            if (!source.Requests.Remove(id, out var entry) && !source.IsIssuedQuery(id)) {
                 return false;
             }
-            var request = entry.Request;
+            var request = entry?.Request;
             try {
-                var start = request.Submission is not null;
-                if (!entry.BodyStarted || frame.ProtocolVersion != ProtocolConstants.ProtocolVersion
+                var start = request?.Submission is not null;
+                if (entry is { BodyStarted: false } || frame.ProtocolVersion != ProtocolConstants.ProtocolVersion
                     || frame.Operation != (start ? ProtocolOperations.RunStart : ProtocolOperations.WorkerGetSnapshot)
                     || frame.Success is null || (frame.Error is null) != frame.Success) {
                     throw new ProtocolException("Worker 响应的版本、操作或结果与请求不匹配。");
                 }
                 WorkerObservationBatch batch;
                 if (start) {
-                    batch = ReadStartReply(source.Id, request, frame);
+                    batch = ReadStartReply(source.Id, request!, frame);
                 } else if (frame.Success == false) {
+                    if (request is null) {
+                        return true; // An already superseded failed query carries no snapshot.
+                    }
                     batch = new(source.Id, WorkerEvidenceKind.QueryReply, request, ReplyCode: frame.Error!.Code,
                         Error: ResponseError(frame));
                 } else {
-                    var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
-                    if (response.RunRegistered is not bool registered || response.Snapshot is null
-                        || !registered && (response.Snapshot.ActiveRun?.RunId == request.Run.RunId
-                            || response.Snapshot.LastRun?.RunId == request.Run.RunId)) {
-                        throw new ProtocolException("定向 getSnapshot 缺少有效的 runRegistered 或与快照冲突。");
-                    }
-                    batch = SnapshotBatchLocked(source, response.Snapshot, full: true) with {
-                        Kind = WorkerEvidenceKind.QueryReply, Request = request, RunRegistered = registered
-                    };
+                    batch = ReadQuerySnapshotLocked(source, request, frame);
                 }
                 PublishLocked(batch);
-                entry.Waiter?.TrySetResult(batch);
+                entry?.Waiter?.TrySetResult(batch);
             } catch (Exception error) when (error is JsonException or ProtocolException) {
                 var fault = error as ProtocolException ?? new ProtocolException("Worker 响应的数据格式无效。", error);
                 source.ReadEnded = true;
                 var batch = new WorkerObservationBatch(source.Id, WorkerEvidenceKind.ProtocolFault, request, Error: fault);
                 PublishLocked(batch);
-                entry.Waiter?.TrySetResult(batch);
+                entry?.Waiter?.TrySetResult(batch);
                 throw fault;
             }
             return true;
         }
+    }
+
+    private WorkerObservationBatch ReadQuerySnapshotLocked(EvidenceConnection source, WorkerRequestEvidence? request,
+        WireEnvelope frame)
+    {
+        var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
+        if (response.RunRegistered is not bool registered || response.Snapshot is null
+            || !registered && request is not null && (response.Snapshot.ActiveRun?.RunId == request.Run.RunId
+                || response.Snapshot.LastRun?.RunId == request.Run.RunId)) {
+            throw new ProtocolException("定向 getSnapshot 缺少有效的 runRegistered 或与快照冲突。");
+        }
+        var batch = SnapshotBatchLocked(source, response.Snapshot, full: true, historicalOnly: request is null);
+        if (request is null) {
+            return batch;
+        }
+        // Only queries for this Run are superseded. A start still owns its own late disposition.
+        foreach (var prior in source.Requests.Values) {
+            if (prior.Waiter is null && prior.Request.QueryId.HasValue && prior.Request.Run == request.Run
+                && prior.Request.WriteSequence < request.WriteSequence) {
+                source.Requests.Remove(prior.Request.RequestId);
+            }
+        }
+        return batch with { Kind = WorkerEvidenceKind.QueryReply, Request = request, RunRegistered = registered };
     }
 
     private static WorkerObservationBatch ReadStartReply(WorkerConnectionId source, WorkerRequestEvidence request,
@@ -291,7 +391,8 @@ internal sealed partial class WorkerCoordinator
         }
     }
 
-    private WorkerObservationBatch SnapshotBatchLocked(EvidenceConnection source, WorkerSnapshot snapshot, bool full)
+    private WorkerObservationBatch SnapshotBatchLocked(EvidenceConnection source, WorkerSnapshot snapshot, bool full,
+        bool historicalOnly = false)
     {
         if (snapshot is null || snapshot.StateRevision < 0
             || snapshot.LastRun is { State: not (RunState.Succeeded or RunState.Failed or RunState.Cancelled) }
@@ -300,7 +401,7 @@ internal sealed partial class WorkerCoordinator
         }
         ValidateSnapshot(snapshot, source.Admission);
         WorkerCoordinatorSnapshot? current = null;
-        if (source.Pipe == _connection && AdvanceProjectionLocked(source, snapshot, full)) {
+        if (!historicalOnly && source.Pipe == _connection && AdvanceProjectionLocked(source, snapshot, full)) {
             current = new(WorkerObservation.Connected, source.Fresh, snapshot,
                 source.Fresh ? "Worker 状态已同步" : "等待完整 Snapshot");
         }
@@ -334,7 +435,9 @@ internal sealed partial class WorkerCoordinator
                     entry.Waiter?.TrySetResult(drained);
                 }
                 source.Requests.Clear();
-                _evidenceConnection = null;
+                if (_evidenceConnection == source) {
+                    _evidenceConnection = null;
+                }
                 PublishLocked(drained);
             }
             lifetime.Cancel();
