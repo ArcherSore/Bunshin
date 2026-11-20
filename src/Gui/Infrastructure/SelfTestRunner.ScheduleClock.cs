@@ -221,6 +221,10 @@ internal static partial class SelfTestRunner
         });
     }
 
+    private static bool IsScheduledBusySkip(string message, string configurationName) =>
+        message.Contains("跳过") && message.Contains(configurationName)
+        && message.Contains("运行") && message.Contains("其他任务");
+
     private static void VerifyScheduleClockAtLogon(AppLogger logger, string directory)
     {
         foreach (var clockFirst in new[] { true, false }) {
@@ -255,18 +259,22 @@ internal static partial class SelfTestRunner
                     var failures = new List<string>();
                     window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                     if (!clockFirst) {
+                        PumpUntil(() => preparations.Contains(boot), "先让登录配置进入准备，再投递定时机会。");
                         clock.Advance(TimeSpan.FromMinutes(1));
                         _ = window.CheckScheduledRunsAsync();
                     }
-                    var skipped = clockFirst ? "登录配置" : "定时配置";
-                    PumpUntil(() => messages.Any(m => m.Contains(skipped)),
-                        $"托盘登录时遇忙的配置 {skipped} 应记明跳过原因。");
+                    int BusySkipCount() => clockFirst
+                        ? messages.Count(m => m.Contains("登录配置") && m.Contains("跳过") && m.Contains("占用"))
+                        : window.LogLines.OfType<LogEntry>().Count(e => e.TaskLabel == "定时"
+                            && IsScheduledBusySkip(e.Message, "定时配置"));
+                    PumpUntil(() => BusySkipCount() > 0, "托盘登录时遇忙的配置应记明跳过原因。");
                     Require(preparations.SequenceEqual([clockFirst ? day : boot]) && !window.IsVisible,
                         "托盘登录时先抵达的启动应占用环境。");
                     release.SetResult();
                     PumpUntil(() => failures.Any(f => f.Contains("结束模拟启动")), "获准的启动应报告准备失败。");
                     window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
-                    Require(preparations.Count == 1 && failures.Count == 1, "遇忙的机会不得通知失败或重试。");
+                    Require(BusySkipCount() == 1 && preparations.Count == 1 && failures.Count == 1,
+                        "遇忙的机会应只记录一次跳过，不得通知失败或重试。");
                 }, scheduleClock: clock, launchCommand: new(AutoStart: true, Instance: boot.ToString()),
                     prepareEnvironment: async (project, _, _) => {
                         preparations.Add(project.ActiveConfigurationId);

@@ -393,7 +393,8 @@ internal static partial class SelfTestRunner
         Func<Task>? endEnvironment = null,
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         TimeProvider? scheduleClock = null, LaunchCommand? launchCommand = null,
-        System.Windows.Threading.DispatcherTimer? scheduleTimer = null, QuitAfterRunTracker? quitAfterRun = null)
+        System.Windows.Threading.DispatcherTimer? scheduleTimer = null, QuitAfterRunTracker? quitAfterRun = null,
+        Func<IReadOnlyList<WorkerProcessEntry>>? captureProcesses = null)
     {
         var projectDirectory = CreateProjectFixture(directory);
         if (!loadProject) {
@@ -406,7 +407,7 @@ internal static partial class SelfTestRunner
         using var ownedSession = session is null ? new SimulatedWts().CreateManager(logger) : null;
         var ownedCoordinator = coordinator is null
             ? new WorkerCoordinator(logger, Path.Combine(directory, "state"), "unused.exe",
-                $"Gui.RuntimeControls.SelfTest.{Guid.NewGuid():N}", usePipeAcl: false)
+                $"Gui.RuntimeControls.SelfTest.{Guid.NewGuid():N}", usePipeAcl: false, captureProcesses: captureProcesses)
             : null;
         var windowSession = session ?? ownedSession!;
         var windowCoordinator = coordinator ?? ownedCoordinator!;

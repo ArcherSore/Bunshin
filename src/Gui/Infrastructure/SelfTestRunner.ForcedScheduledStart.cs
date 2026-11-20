@@ -37,12 +37,15 @@ internal static partial class SelfTestRunner
                     var first = project.ActiveConfigurationId;
                     project.RenameConfiguration(first, "第一班");
                     var task = project.SelectedTaskNames.First();
-                    project.AddSchedulePolicy(first, "早班");
+                    var firstPolicy = project.AddSchedulePolicy(first, "早班");
+                    if (scenario == "disabled") {
+                        project.UpdateSchedulePolicy(first, firstPolicy with { Times = [new(8, 0), new(8, 1)] });
+                    }
                     var second = project.CreateConfiguration();
                     project.RenameConfiguration(second, "第二班");
                     project.AddItem(PlanItemKind.MaaTask, task);
                     project.AddSchedulePolicy(second, "早班");
-                    project.ActivateConfiguration(first);
+                    project.ActivateConfiguration(scenario == "disabled" ? second : first);
                     var notices = new List<RunTerminalNotification>();
                     var hiddenAtWarning = false;
                     window.NotificationRequested += (_, n) => {
@@ -72,6 +75,9 @@ internal static partial class SelfTestRunner
                         PumpUntil(() => check.IsCompleted, "关闭强制后遇忙应立即跳过。");
                         Require(Logged("跳过", "第一班", "正在运行其他任务") && countdowns.Count == 0 && notices.Count == 0,
                             "默认忙碌跳过应有记录且无倒计时或系统提示。");
+                        Require(Logged("跳过", "第二班", "正在运行其他任务") && !Logged("启动「")
+                            && project.ActiveConfigurationId == second,
+                            "同批后续候选也应在运行动态中记明忙原因，保留当前配置。");
                     } else {
                         PumpUntil(() => notices.Any(n => !n.Failed), "强制启动前应发出系统提示。");
                         var warning = notices.Single(n => !n.Failed).Message;
@@ -120,6 +126,17 @@ internal static partial class SelfTestRunner
                             "跳过或取消后应保留当前任务，本分钟不能再次启动。");
                         Require(scenario != "cancel" || countdowns.Count == 1 && Logged("已取消", "第一班", "当前任务继续"),
                             "取消强制启动应记录原因且不再倒计时。");
+                        if (scenario == "disabled") {
+                            clock.Advance(TimeSpan.FromMinutes(1));
+                            var single = window.CheckScheduledRunsAsync();
+                            PumpUntil(() => single.IsCompleted, "下一分钟仅第一班到点时也应立即跳过。");
+                            single.GetAwaiter().GetResult();
+                            var activity = window.LogLines.OfType<LogEntry>()
+                                .Where(e => e.TaskLabel == "定时" && e.Timestamp == clock.GetLocalNow()).ToArray();
+                            Require(activity is [var skip] && IsScheduledBusySkip(skip.Message, "第一班")
+                                && notices.Count == 0 && wts.LogoffAttempts.Count == 0,
+                                "已有任务运行时，唯一候选的忙原因也应进入当分钟的运行动态。");
+                        }
                     }
                 }, session: session, coordinator: coordinator, scheduleClock: clock,
                     environment: CreateEnvironment(logger, session, coordinator),
