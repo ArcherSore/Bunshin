@@ -126,14 +126,16 @@ internal sealed class RunHarness : IAsyncDisposable
         }
     }
 
-    internal async Task<WireEnvelope> RequestAsync<T>(string operation, T data)
+    internal Task<WireEnvelope> RequestAsync<T>(string operation, T data) =>
+        RequestAsync(WireEnvelope.Request(operation, Guid.NewGuid(), data));
+
+    internal async Task<WireEnvelope> RequestAsync(WireEnvelope request)
     {
-        var requestId = Guid.NewGuid();
-        await _gui.WriteAsync(WireEnvelope.Request(operation, requestId, data), _shutdown.Token);
+        await _gui.WriteAsync(request, _shutdown.Token);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
         limit.CancelAfter(WaitLimit);
         var response = await _responses.Reader.ReadAsync(limit.Token);
-        RunSelfTests.Expect(response.RequestId == requestId, $"{operation} 响应与请求不匹配。");
+        RunSelfTests.Expect(response.RequestId == request.RequestId, $"{request.Operation} 响应与请求不匹配。");
         return response;
     }
 
@@ -144,11 +146,13 @@ internal sealed class RunHarness : IAsyncDisposable
         Outcome<RunStopResponse>(
             await RequestAsync(ProtocolOperations.RunStop, new RunStopRequest(runId)), r => r.Disposition);
 
-    internal async Task<WorkerSnapshot> SnapshotAsync()
+    internal async Task<WorkerSnapshot> SnapshotAsync() => (await QuerySnapshotAsync()).Snapshot;
+
+    internal async Task<GetSnapshotResponse> QuerySnapshotAsync(Guid? runId = null)
     {
-        var response = await RequestAsync(ProtocolOperations.WorkerGetSnapshot, new { });
+        var response = await RequestAsync(ProtocolOperations.WorkerGetSnapshot, new GetSnapshotRequest(runId));
         RunSelfTests.Expect(response.Success == true, "worker.getSnapshot 失败。");
-        return ProtocolJson.Deserialize<GetSnapshotResponse>(response.Data).Snapshot;
+        return ProtocolJson.Deserialize<GetSnapshotResponse>(response.Data);
     }
 
     // Responses carry either the disposition or the error code, so one string covers both outcomes.

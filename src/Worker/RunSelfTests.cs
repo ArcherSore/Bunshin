@@ -11,6 +11,8 @@ internal static partial class RunSelfTests
 
     internal static (string Name, Action Body)[] Checks => [
         Scenario("A1/C2/W3", VerifyAcceptedRunAsync),
+        Scenario("A1", VerifyRegisteredStartFailureAsync),
+        Scenario("A1", VerifyProtocolVersionMismatchAsync),
         Scenario("A2", VerifyRetryWhileActiveAsync),
         Scenario("A3/A4/A10", VerifyRetryAfterTerminalAsync),
         Scenario("A5/A6/A7/A8", VerifyLedgerPrecedesStateAsync),
@@ -96,6 +98,36 @@ internal static partial class RunSelfTests
             "重试不得提交状态或创建第二个执行。");
     }
 
+    private static async Task VerifyRegisteredStartFailureAsync(RunHarness harness)
+    {
+        var request = Request(Plan(2));
+        // The same exception type during request validation would be an invalid_request rejection.
+        harness.Executions.FailCreate = _ => throw new InvalidDataException("scripted first execution failure");
+        Expect(await harness.StartAsync(request) == "accepted", "登记后创建执行对象失败仍应确认接纳。");
+        var result = await harness.QuerySnapshotAsync(request.RunId);
+        Expect(result.RunRegistered == true && result.Snapshot is { WorkerState: WorkerState.Ready,
+            ActiveRun: null, RunState: RunState.Idle,
+            LastRun: { State: RunState.Failed } failed } && failed.RunId == request.RunId
+            && failed.Items[0].State == PlanItemState.Failed && IsPriorItemFailed(failed.Items[1]),
+            "已登记的 Run 应出现在 LastRun，首项失败，后续项取消。");
+        Expect(await harness.StartAsync(request) == "already_accepted", "执行未能启动的 Run 仍应保持幂等。");
+        harness.Executions.FailCreate = null;
+        var (next, execution) = await StartRunningAsync(harness, 1);
+        execution.Complete(RuntimeExecutionOutcome.Succeeded);
+        Expect((await TerminalAsync(harness, next.RunId)).LastRun?.State == RunState.Succeeded,
+            "Worker 应能接纳并成功执行下一次合法提交。");
+    }
+
+    private static async Task VerifyProtocolVersionMismatchAsync(RunHarness harness)
+    {
+        var start = Request(Plan(1));
+        var envelope = WireEnvelope.Request(ProtocolOperations.RunStart, Guid.NewGuid(), start);
+        var reply = await harness.RequestAsync(envelope with { ProtocolVersion = ProtocolConstants.ProtocolVersion - 1 });
+        Expect(reply is { Success: false, Error.Code: "protocol_version_mismatch" }
+            && (await harness.QuerySnapshotAsync(start.RunId)).RunRegistered == false,
+            "旧协议的启动请求应在登记前被拒绝。");
+    }
+
     private static async Task VerifyRetryAfterTerminalAsync(RunHarness harness)
     {
         var (first, execution) = await StartRunningAsync(harness, 1);
@@ -118,8 +150,21 @@ internal static partial class RunSelfTests
     // Rejections follow the ledger, then Worker State, then the Active Run, then plan validation.
     private static async Task VerifyLedgerPrecedesStateAsync(RunHarness harness)
     {
+        var (earlier, firstExecution) = await StartRunningAsync(harness, 1);
+        firstExecution.Complete(RuntimeExecutionOutcome.Succeeded);
+        await TerminalAsync(harness, earlier.RunId);
         var (active, execution) = await StartRunningAsync(harness, 2);
-        Expect(await harness.StartAsync(Request(Plan(1))) == "error:worker_busy", "已有 Active Run 时应为 worker_busy。");
+        var rejected = Request(Plan(1));
+        Expect(await harness.StartAsync(rejected) == "error:worker_busy", "已有 Active Run 时应为 worker_busy。");
+        foreach (var (id, registered) in new[] { (active.RunId, true), (earlier.RunId, true), (rejected.RunId, false) }) {
+            var result = await harness.QuerySnapshotAsync(id);
+            Expect(result.RunRegistered == registered && result.Snapshot.ActiveRun?.RunId == active.RunId,
+                "有序确认应在同一快照中区分已登记与被拒绝的 Run。");
+        }
+        var plain = await harness.RequestAsync(ProtocolOperations.WorkerGetSnapshot, new { });
+        Expect(plain.Success == true && !plain.Data.TryGetProperty("runRegistered", out _)
+            && ProtocolJson.Deserialize<GetSnapshotResponse>(plain.Data).Snapshot.ActiveRun?.RunId == active.RunId,
+            "无 Run ID 的查询应返回快照并省略 runRegistered。");
         Expect(await harness.StartAsync(Request(Plan(0))) == "error:worker_busy", "Active Run 检查应先于计划校验。");
         var conflicting = Request(Plan(2), active.RunId);
         Expect(await harness.StartAsync(conflicting) == "error:run_id_conflict", "相同 runId 不同计划应为冲突。");
@@ -171,6 +216,8 @@ internal static partial class RunSelfTests
         };
         foreach (var (name, request, expected) in cases) {
             Expect(await harness.StartAsync(request) == expected, $"{name} 校验应返回 {expected}。");
+            Expect((await harness.QuerySnapshotAsync(request.RunId)).RunRegistered == false,
+                $"{name} 校验拒绝的请求不得登记。");
         }
         Expect((await harness.SnapshotAsync()).StateRevision == 2 && harness.Executions.Created.Count == 0,
             "被拒绝的计划不得提交状态或执行。");

@@ -231,7 +231,7 @@ internal static class PretaskSelfTests
             (_, _, _, _) => { }, (_, _) => { }, CancellationToken.None);
         supervisor.CompleteInitialization(RunHarness.Dependencies, null);
         var request = RunSelfTests.Request(RunSelfTests.Plan(0) with { Items = items });
-        supervisor.Accept(request);
+        supervisor.Accept(request, out _);
         return (supervisor, request);
     }
 

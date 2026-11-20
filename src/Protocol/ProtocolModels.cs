@@ -5,7 +5,7 @@ namespace Protocol;
 
 public static class ProtocolConstants
 {
-    public const int ProtocolVersion = 8;
+    public const int ProtocolVersion = 9;
     public const int SnapshotVersion = 3;
     public const int LaunchContextVersion = 1;
     public const int PlanVersion = 2;
@@ -210,7 +210,8 @@ public sealed record WorkerLogEntry(
 
 public sealed record ConnectionOpenRequest(Guid WorkerInstanceId, string LaunchToken, string RuntimeProfileDigest);
 
-public sealed record GetSnapshotResponse(WorkerSnapshot Snapshot);
+public sealed record GetSnapshotRequest(Guid? RunId = null);
+public sealed record GetSnapshotResponse(WorkerSnapshot Snapshot, bool? RunRegistered = null);
 
 public sealed record RunStartRequest(Guid RunId, string PlanDigest, RunPlan Plan)
 {

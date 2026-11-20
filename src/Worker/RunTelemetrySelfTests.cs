@@ -16,7 +16,7 @@ internal static class RunTelemetrySelfTests
     internal static (string Name, Action Body)[] Checks => [
         Check(VerifyRunTransactions), Check(VerifyTelemetryToggle), Check(VerifyTransactionSampling),
         Check(VerifyTelemetryFaults), Check(VerifyRedactionInFinalEnvelope), Check(VerifyNodeTraceSpans),
-        Check(VerifyFailureEvents), Check(VerifyFailureEvidence)
+        Check(VerifyFailureEvents), Check(VerifyRegisteredStartFailure), Check(VerifyFailureEvidence)
     ];
 
     private static (string Name, Action Body) Check(Func<Task> body) =>
@@ -109,6 +109,27 @@ internal static class RunTelemetrySelfTests
         var user = first.GetProperty("user").GetProperty("id").GetString()!;
         RunSelfTests.Expect(user.Length == 64 && user.All(Uri.IsHexDigit) && user == user.ToLowerInvariant()
             && user == TelemetryIdentity.AnonymousUserId(), "user.id 应为 MachineGuid 的加盐 SHA-256。");
+    }
+
+    private static async Task VerifyRegisteredStartFailure()
+    {
+        var transport = new CapturingTransport();
+        var request = RunSelfTests.Request(RunSelfTests.Plan(2));
+        await using (var harness = await TelemetryHarnessAsync(Options, transport)) {
+            harness.Executions.FailCreate = _ => throw new InvalidDataException("scripted first execution failure");
+            RunSelfTests.Expect(await harness.StartAsync(request) == "accepted", "首项创建失败后仍应确认接纳。");
+            RunSelfTests.Expect(await harness.StartAsync(request) == "already_accepted", "重放应确认此前已接纳。");
+        }
+
+        var transaction = transport.Items("transaction").Single();
+        var span = transaction.GetProperty("spans").EnumerateArray().Single();
+        var tags = transport.Items("event").Single().GetProperty("tags");
+        RunSelfTests.Expect(transaction.GetProperty("tags").GetProperty("run.id").GetString() == request.RunId.ToString()
+            && Status(transaction) == "internal_error" && Status(span) == "internal_error"
+            && tags.GetProperty("run.id").GetString() == request.RunId.ToString()
+            && tags.GetProperty("task.name").GetString() == request.Plan.Items[0].TaskName
+            && tags.GetProperty("failure.node").GetString() == "RunStartFailed",
+            "首项创建失败的 Run 重放后仍应只有一个失败事务、首项 Span 和对应的 RunStartFailed 事件。");
     }
 
     // Turned off, nothing new is collected and the current Run is dropped; turned on, the next Run is reported.

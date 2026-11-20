@@ -200,12 +200,14 @@ internal sealed class WorkerHost
                 $"Worker protocol={ProtocolConstants.ProtocolVersion}，request={request.ProtocolVersion}。 ");
         }
 
+        var registeredStart = false;
         try {
             return request.Operation switch {
                 ProtocolOperations.WorkerGetSnapshot => WireEnvelope.Response(
-                    request.Operation, requestId, new GetSnapshotResponse(GetSnapshot())),
+                    request.Operation, requestId, _supervisor.GetSnapshot(ProtocolJson.Deserialize<GetSnapshotRequest>(request.Data))),
                 ProtocolOperations.RunStart => WireEnvelope.Response(
-                    request.Operation, requestId, StartRun(ProtocolJson.Deserialize<RunStartRequest>(request.Data))),
+                    request.Operation, requestId,
+                    StartRun(ProtocolJson.Deserialize<RunStartRequest>(request.Data), out registeredStart)),
                 ProtocolOperations.RunStop => WireEnvelope.Response(
                     request.Operation, requestId,
                     _supervisor.Stop(ProtocolJson.Deserialize<RunStopRequest>(request.Data), out pendingStop)),
@@ -217,9 +219,10 @@ internal sealed class WorkerHost
                     SetFrameworkOptions(ProtocolJson.Deserialize<FrameworkSetOptionsRequest>(request.Data))),
                 _ => throw new WorkerRequestException("invalid_request", $"未知 operation：{request.Operation}。 ")
             };
-        } catch (WorkerRequestException exception) {
+        } catch (WorkerRequestException exception) when (!registeredStart) {
             return WireEnvelope.Failure(request.Operation, requestId, exception.Code, exception.Message);
-        } catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException) {
+        } catch (Exception exception) when (!registeredStart
+            && exception is JsonException or InvalidDataException or ArgumentException) {
             return WireEnvelope.Failure(
                 request.Operation, requestId, "invalid_request",
                 exception.GetBaseException().Message);
@@ -231,10 +234,10 @@ internal sealed class WorkerHost
         }
     }
 
-    private RunStartResponse StartRun(RunStartRequest request)
+    private RunStartResponse StartRun(RunStartRequest request, out bool registered)
     {
         Telemetry(() => _telemetry?.Register(request.RedactionValues));
-        return _supervisor.Accept(request);
+        return _supervisor.Accept(request, out registered);
     }
 
     private FrameworkSetOptionsResponse SetFrameworkOptions(FrameworkSetOptionsRequest request)
