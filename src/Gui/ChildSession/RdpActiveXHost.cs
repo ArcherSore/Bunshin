@@ -22,6 +22,9 @@ internal sealed class RdpActiveXHost : AxHost
     // MsRdpClient10 CLSID, supported on Windows 10 and 11. MsRdpClient11 (A0C63C30-...) exists only on Windows 11.
     internal const string RdpClientClsid = "8B918B82-7985-4C24-89DF-C33AD2BBFBCD";
 
+    // Self-tests may create the control to check its window and input settings, but must never connect it.
+    internal static Action? BeforeConnect { get; set; }
+
     private ConnectionPointCookie? _eventCookie;
     private RdpEventSink? _eventSink;
     private bool _connectionAttemptInProgress;
@@ -93,6 +96,7 @@ internal sealed class RdpActiveXHost : AxHost
 
     internal void ConnectToChildSession(DrawingSize desktopSize, ChildSessionCredential? credential)
     {
+        BeforeConnect?.Invoke();
         if (ConnectedState != 0) {
             return;
         }

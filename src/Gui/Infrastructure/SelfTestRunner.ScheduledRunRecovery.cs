@@ -10,11 +10,13 @@ internal static partial class SelfTestRunner
         CreateIdleSettings(CreateProjectFixture(directory), logger).ForceScheduledStart.Value = true;
         var clock = new ScheduleTestClock();
         WithFakeWorker(logger, Path.Combine(directory, "old-worker"), (coordinator, record, pipeName) => {
-            var wts = new SimulatedWts { ReportedId = record.ChildSessionId, Sessions = [record.ChildSessionId] };
+            var wts = new SimulatedWts { Sessions = [record.ChildSessionId] };
             using var session = wts.CreateManager(logger);
             using var timeout = new CancellationTokenSource(OnPoolLimit);
             var preparations = 0;
             WithRuntimeControlWindow(logger, directory, window => {
+                // Only the scheduling decision needs the old session. Reporting it at Loaded would start RDP restore.
+                wts.ReportedId = record.ChildSessionId;
                 var project = ProjectOf(window);
                 var target = project.ActiveConfigurationId;
                 var policy = project.AddSchedulePolicy(target, "早班");

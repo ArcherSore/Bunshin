@@ -187,6 +187,11 @@ internal static partial class SelfTestRunner
             : Enum.GetValues<Group>();
         // Nothing a self-test drives may ever reach a real telemetry service.
         TelemetryBuild.SelfTestProcess = true;
+        // A thrown connection error can be caught by the window and shown in a blocking modal dialog.
+        RdpActiveXHost.BeforeConnect = () => {
+            Console.Error.WriteLine($"FAIL 自检尝试建立真实 RDP 连接，已阻止连接并终止自检。{Environment.NewLine}{Environment.StackTrace}");
+            Environment.Exit(1);
+        };
         var root = Path.Combine(Path.GetTempPath(), $"Bunshin-self-test-{Guid.NewGuid():N}");
         // Scenarios open and close windows in turn; closing the last of them must not end the run.
         System.Windows.Application.Current.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
