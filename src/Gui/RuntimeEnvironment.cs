@@ -84,7 +84,7 @@ internal sealed class RuntimeEnvironment
             if (current.NoLiveAdmission) {
                 return null;
             }
-            if (current is { SnapshotFresh: true, WorkerSnapshot.ActiveRun: not null }) {
+            if (current is { Fresh: true, WorkerSnapshot.ActiveRun: not null }) {
                 return "正在运行其他任务";
             }
             return awaitingStart is null && current is { FreshIdleForEnvironmentEnd: true, WorkerSnapshot: { } worker }
