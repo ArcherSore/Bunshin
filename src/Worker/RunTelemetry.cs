@@ -238,7 +238,9 @@ internal sealed class RunTelemetry : IRunTelemetry
         if (run.RunId != _runId) {
             Forget();
             _runId = run.RunId;
-            if (snapshot.ActiveRun is null || run.StartedAtUtc < _enabledSinceUtc) {
+            // If the first execution could not be created, the first published snapshot is already terminal.
+            if (run.StartedAtUtc < _enabledSinceUtc
+                || (snapshot.ActiveRun is null && run.Error?.Code != "RunStartFailed")) {
                 return;
             }
             _transaction = SentrySdk.StartTransaction("run", "run");
