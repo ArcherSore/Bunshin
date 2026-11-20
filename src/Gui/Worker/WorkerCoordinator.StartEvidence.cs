@@ -46,6 +46,8 @@ internal sealed partial class WorkerCoordinator
     private WorkerConnectionId _connectionId;
     private long _writeSequence;
     private bool _receivedFullSnapshot;
+    // Initial and gap syncs reserve their place before their request enters _pending.
+    private int _scheduledSnapshotSyncs;
     private bool _evidenceRequested;
 
     // Subscribers enqueue batches synchronously. Frame validation, publication and waiter
@@ -68,6 +70,7 @@ internal sealed partial class WorkerCoordinator
         _connectionId = new(admission.WorkerInstanceId, _connectionId.Generation + 1);
         _writeSequence = 0;
         _receivedFullSnapshot = false;
+        _scheduledSnapshotSyncs = 1;
     }
 
     private void FinishEvidenceLocked(ProtocolConnection connection)
@@ -131,9 +134,10 @@ internal sealed partial class WorkerCoordinator
                 if (connection is null || connection != _connection || connection.IsClosed || entry.Identity.Connection is null) {
                     throw new InvalidOperationException("目标 Worker IPC 已失效。");
                 }
-                if (submission is not null && !_receivedFullSnapshot) {
+                if (submission is not null && (!_receivedFullSnapshot || _scheduledSnapshotSyncs != 0
+                    || _pending.Values.Any(request => request.Operation == ProtocolOperations.WorkerGetSnapshot))) {
                     var notSent = new WorkerObservationBatch(_connectionId, WorkerEvidenceKind.NotSent, entry.Identity,
-                        Error: new InvalidOperationException("当前连接正在等待首份完整 Snapshot。"));
+                        Error: new InvalidOperationException("当前连接正在等待完整 Snapshot。"));
                     PublishLocked(notSent);
                     return notSent;
                 }
@@ -218,6 +222,9 @@ internal sealed partial class WorkerCoordinator
                     || !registered && (response.Snapshot.ActiveRun?.RunId == request.Run.RunId
                         || response.Snapshot.LastRun?.RunId == request.Run.RunId)) {
                     throw new ProtocolException("定向 getSnapshot 缺少有效的 runRegistered 或与快照冲突。");
+                }
+                if (!frame.Data.GetProperty("snapshot").TryGetProperty("stateRevision", out _)) {
+                    throw new ProtocolException("定向 getSnapshot 缺少 snapshot.stateRevision。");
                 }
                 stateChanged = ApplyFreshSnapshotLocked(response.Snapshot, admission, reconciledStart: null);
                 batch = SnapshotBatchLocked(response.Snapshot) with {

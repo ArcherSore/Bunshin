@@ -881,6 +881,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 }
                 var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
                 changed = ApplyFreshSnapshotLocked(response.Snapshot, admission, pending.ReconciledStart);
+                _receivedFullSnapshot = true;
                 PublishLocked(SnapshotBatchLocked(response.Snapshot));
                 pending.SnapshotResponse = response;
             }
@@ -898,8 +899,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             ValidateEvidenceSnapshot(snapshot);
         }
         ValidateSnapshot(snapshot, admission);
-        // Even an older full reply satisfies this connection's initial sync requirement.
-        _receivedFullSnapshot = true;
         if (_startAwaitingObservation == reconciledStart) {
             _startAwaitingObservation = null;
         }
@@ -937,11 +936,13 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 return;
             }
             if (Snapshot.Fresh && state.StateRevision != currentRevision + 1) {
+                _receivedFullSnapshot = false;
+                _scheduledSnapshotSyncs++;
                 UpdateSnapshotLocked(Snapshot with {
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
                 });
-                _ = Task.Run(() => RefreshSnapshotAsync());
+                _ = Task.Run(() => RefreshSnapshotAsync(connection: connection));
                 revisionGapFrom = currentRevision;
             } else {
                 ValidateSnapshot(state.Snapshot, admission);
@@ -960,11 +961,11 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
     }
 
-    private async Task RefreshSnapshotAsync(Guid? reconciledStart = null)
+    private async Task RefreshSnapshotAsync(Guid? reconciledStart = null, ProtocolConnection? connection = null)
     {
         try {
             await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, reconciledStart: reconciledStart);
+                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection, reconciledStart: reconciledStart);
         } catch (Exception exception) {
             _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
         }
@@ -998,15 +999,18 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         string operation, TRequest data, CancellationToken cancellationToken, Action? onSending,
         ProtocolConnection? connection, Guid? reconciledStart)
     {
-        lock (_gate) {
-            connection ??= _connection
-                         ?? throw new InvalidOperationException("Worker IPC 尚未连接。 ");
-        }
         var requestId = Guid.NewGuid();
         var completion = new TaskCompletionSource<WireEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = new PendingRequest(operation, reconciledStart, completion);
-        if (!_pending.TryAdd(requestId, pending)) {
-            throw new InvalidOperationException("无法登记 IPC requestId。 ");
+        lock (_gate) {
+            if (operation == ProtocolOperations.WorkerGetSnapshot && connection is not null && connection == _connection) {
+                _scheduledSnapshotSyncs--;
+            }
+            connection ??= _connection
+                         ?? throw new InvalidOperationException("Worker IPC 尚未连接。 ");
+            if (!_pending.TryAdd(requestId, pending)) {
+                throw new InvalidOperationException("无法登记 IPC requestId。 ");
+            }
         }
         try {
             await WriteRequestAsync(connection, WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);

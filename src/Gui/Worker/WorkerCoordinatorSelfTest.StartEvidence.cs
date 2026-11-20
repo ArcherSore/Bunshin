@@ -280,22 +280,50 @@ internal static partial class WorkerCoordinatorSelfTest
         var latest = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         Require(latest.Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 3 },
             "重连后较高修订的就绪事件应更新生产快照。");
-        var early = f.NewSubmission();
-        var notSent = await f.Coordinator.SendStartAsync(early, f.Attempt, f.Token).WaitAsync(f.Token);
-        Require(notSent == await f.NextAsync(WorkerEvidenceKind.NotSent, early)
-            && notSent.Request?.WriteSequence is null && f.WireStarts == 0
-            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted && b.Request?.Submission == early),
-            "当前连接尚未收到完整快照时，启动应返回 NotSent，管道上应为零次启动。");
+        await RequireNotSentAsync();
         await peer.WriteAsync(WireEnvelope.Response(initial.Operation, initial.RequestId!.Value,
             new GetSnapshotResponse(running)), f.Token);
         var older = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         Require(older.ObservedSnapshot?.StateRevision == 2 && older.Current == latest.Current
             && older.Current == f.Coordinator.Snapshot, "较旧的完整回包应保留其证据，当前可启动状态应维持修订 3。");
-        var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
-        var frame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
-        await peer.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
-        Require((await send.WaitAsync(f.Token)).StartReply == StartReplyKind.Accepted && f.WireStarts == 1,
-            "生产快照允许启动时，证据接口应能发送并取得接纳应答。");
+        await RequireStartAcceptedAsync();
+
+        var gap = running with { StateRevision = 5 };
+        await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
+            new StateChangedEvent(f.Run.WorkerInstanceId, 5, gap)), f.Token);
+        var refresh = await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
+        Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current?.Resynchronising == true,
+            "修订从 3 跳到 5 应触发完整快照补查。");
+        ready = ready with { StateRevision = 6 };
+        await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
+            new StateChangedEvent(f.Run.WorkerInstanceId, 6, ready)), f.Token);
+        Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 6 },
+            "补查回包前的 Ready/Idle 事件应照常更新生产快照。");
+        await RequireNotSentAsync();
+        await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value, new GetSnapshotResponse(gap)), f.Token);
+        await f.NextAsync(WorkerEvidenceKind.Snapshot);
+        await RequireStartAcceptedAsync();
+
+        async Task RequireNotSentAsync()
+        {
+            var starts = f.WireStarts;
+            var early = f.NewSubmission();
+            var notSent = await f.Coordinator.SendStartAsync(early, f.Attempt, f.Token).WaitAsync(f.Token);
+            Require(notSent == await f.NextAsync(WorkerEvidenceKind.NotSent, early)
+                && notSent.Request?.WriteSequence is null && f.WireStarts == starts
+                && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted && b.Request?.Submission == early),
+                "完整快照请求尚未返回时，启动应返回 NotSent，管道上的启动数应保持不变。");
+        }
+
+        async Task RequireStartAcceptedAsync()
+        {
+            var starts = f.WireStarts;
+            var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
+            var frame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+            await peer.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
+            Require((await send.WaitAsync(f.Token)).StartReply == StartReplyKind.Accepted && f.WireStarts == starts + 1,
+                "完整回包到达且生产快照允许启动时，证据接口应能发送并取得接纳应答。");
+        }
     }
 
     private static async Task VerifyStartEvidenceWritesAsync(AppLogger logger, string directory, string project)
@@ -453,8 +481,11 @@ internal static partial class WorkerCoordinatorSelfTest
         await using var f = new EvidenceFixture(logger, directory, project);
         var snapshot = CreateSnapshot(f.Admission, 0);
         var active = CreateActiveRun(f.Attempt);
+        var missingRevision = JsonSerializer.SerializeToNode(snapshot, ProtocolJson.Options)!.AsObject();
+        missingRevision.Remove("stateRevision");
         object[] malformed = [
             new { snapshot }, new { snapshot, runRegistered = "false" },
+            new { snapshot = missingRevision, runRegistered = false },
             new GetSnapshotResponse(snapshot with { ActiveRun = active, RunState = active.State }, false),
             new GetSnapshotResponse(snapshot with { LastRun = active with { State = RunState.Failed } }, false),
             new GetSnapshotResponse(snapshot with { WorkerInstanceId = Guid.NewGuid() }, true),
