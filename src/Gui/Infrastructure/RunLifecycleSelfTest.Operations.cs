@@ -90,6 +90,30 @@ internal static partial class RunLifecycleSelfTest
         }
     }
 
+    private static void VerifyRunLifecycleLateReservation()
+    {
+        foreach (var force in new[] { true, false }) {
+            var f = new Scenario { Now = TimeSpan.FromSeconds(59) };
+            f.Connect();
+            var b = Intent(RunSource.Scheduled, 2);
+            f.PreviewSchedule(b, force);
+            var launch = Intent(RunSource.Launch);
+            f.Step(new Start(launch));
+            f.Now = TimeSpan.FromSeconds(65);
+            f.Step(new Reserved(b.Id, new(b.Id, Target)));
+            f.Step(new CommittedConfiguration(b.Id));
+            f.Step(new ActivityAppended(b.Id));
+            f.Step(new Reserved(launch.Id, new(launch.Id, Target)));
+            f.Step(new ReadyChecked(launch.Id, Target, launch.Input));
+            f.ExitWorker();
+            f.DrainDeliveries();
+            f.CheckSkipped(b, "当前时间已离开本次定时的分钟");
+            Check(f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == 1
+                && f.History.OfType<SendStart>().Single().Submission.IntentId == launch.Id
+                && f.Count<EndReserved>() == 0, "迟到的预留须释放，过期候选也不能淘汰开机启动");
+        }
+    }
+
     private static void VerifyRunLifecycleMidnightRollback()
     {
         var f = new Scenario();
@@ -115,7 +139,7 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleAdjacentMinutes()
     {
-        foreach (var arrival in new[] { "countdown", "prepare", "expired", "cleanup" }) {
+        foreach (var arrival in new[] { "end", "prepare", "expired", "cleanup" }) {
             var f = new Scenario();
             var cleanup = arrival == "cleanup";
             f.Begin(Intent(cleanup ? RunSource.Scheduled : RunSource.Launch));
@@ -124,22 +148,22 @@ internal static partial class RunLifecycleSelfTest
             var aKey = f.Key;
             var b = Intent(RunSource.Scheduled, 2);
             var c = Intent(RunSource.Scheduled, 3);
-            f.Now = TimeSpan.FromSeconds(115);
+            f.Now = TimeSpan.FromSeconds(105);
             f.PreviewSchedule(b, true);
             void PreviewCIfRequested()
             {
                 if (f.Last.OfType<Preview>().Any(p => p.Intent == c)) f.Step(new Previewed(c.Id, c));
             }
-            f.Now = TimeSpan.FromMinutes(2);
-            if (arrival == "countdown" || cleanup) {
-                f.Claim([c], true);
-                PreviewCIfRequested();
-            }
-            f.Now += TimeSpan.FromSeconds(5);
+            f.Now += TimeSpan.FromSeconds(10);
             f.Step(new CountdownDue(b.Id));
             f.Step(new Reserved(b.Id, new(b.Id, Target)));
             f.Step(new CommittedConfiguration(b.Id));
             f.Step(new ActivityAppended(b.Id));
+            f.Now = TimeSpan.FromMinutes(2);
+            if (arrival == "end" || cleanup) {
+                f.Claim([c], true);
+                PreviewCIfRequested();
+            }
             f.Terminal(cleanup ? RunState.Succeeded : RunState.Cancelled);
             f.ExitWorker();
             f.Step(new OldEnvironmentEnded(b.Id, true));
@@ -178,7 +202,7 @@ internal static partial class RunLifecycleSelfTest
             f.DrainDeliveries();
             var warnings = f.History.OfType<ShowCountdown>().ToArray();
             var expired = arrival == "expired";
-            Check(warnings.Length == (expired ? 1 : 2) && warnings[0] == new ShowCountdown(b, TimeSpan.FromSeconds(125))
+            Check(warnings.Length == (expired ? 1 : 2) && warnings[0] == new ShowCountdown(b, TimeSpan.FromSeconds(115))
                 && !f.History.Take(beforePrepared).OfType<Preview>().Any(p => p.Intent == c)
                 && (expired ? f.History.OfType<Skip>().SingleOrDefault() == new Skip(c, "当前时间已离开本次定时的分钟")
                     : warnings[1] == new ShowCountdown(c, expectedEnd))
@@ -207,9 +231,85 @@ internal static partial class RunLifecycleSelfTest
         f.Step(new CommittedConfiguration(c.Id));
         f.Step(new ActivityAppended(c.Id));
         f.DrainDeliveries();
-        Check(f.History.OfType<ShowCountdown>().Select(s => s.Deadline).SequenceEqual([TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20)])
+        f.CheckSkipped(c, "强制启动的目标任务已变化");
+        Check(f.History.OfType<ShowCountdown>().Single() == new ShowCountdown(c, TimeSpan.FromSeconds(10))
             && f.Count<Release>() == 1 && f.Count<EndReserved>() == 0 && f.Count<OperationFinished>() == 1,
             "取闸门时 Run 已换，旧倒计时不能授权结束后继");
+    }
+
+    private static void VerifyRunLifecycleReplacementReview()
+    {
+        foreach (var atReservation in new[] { false, true })
+        foreach (var condition in new[] { "offline", "stale", "query", "target", "terminal", "expired" }) {
+            var f = new Scenario();
+            f.Begin(Intent(condition == "offline" ? RunSource.Launch : RunSource.Manual));
+            f.Body();
+            f.Active();
+            var b = Intent(RunSource.Scheduled, 2);
+            var c = Intent(RunSource.Scheduled, 3);
+            f.PreviewSchedule(b, true);
+            f.Now = f.Only<ShowCountdown>().Deadline;
+            if (atReservation) f.Step(new CountdownDue(b.Id));
+            var active = f.Frame(active: SnapshotOf(f.Send.Attempt, RunState.Running));
+            string reason;
+            switch (condition) {
+                case "offline":
+                    f.Eof();
+                    reason = "Worker 连接已断开或状态尚未同步";
+                    break;
+                case "stale":
+                    f.FrameEvent(active, new(WorkerObservation.Connected, false, active, "重新同步中"));
+                    reason = "Worker 连接已断开或状态尚未同步";
+                    break;
+                case "query":
+                    f.Connect(); // Starts a targeted read. The next Active clears NeedQuery only.
+                    f.Active();
+                    reason = "原任务的运行证据尚未确认";
+                    break;
+                case "target":
+                    f.FrameEvent(f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Cancelled)));
+                    reason = "强制启动的目标任务已变化";
+                    break;
+                case "terminal":
+                    // A historical terminal settles A even while the controls still show it as Active.
+                    f.FrameEvent(f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Cancelled)),
+                        new(WorkerObservation.Connected, true, active, ""));
+                    reason = "强制启动的目标任务已变化";
+                    break;
+                default:
+                    f.Now = TimeSpan.FromMinutes(1);
+                    f.Claim([c], true);
+                    reason = "当前时间已离开本次定时的分钟";
+                    break;
+            }
+            if (!atReservation) f.Step(new CountdownDue(b.Id));
+            f.Step(new Reserved(b.Id, new(b.Id, Target)));
+            f.Step(new CommittedConfiguration(b.Id));
+            f.Step(new ActivityAppended(b.Id));
+            f.Step(new CountdownDue(b.Id));
+            if (condition == "offline") {
+                f.Now = TimeSpan.FromMinutes(1);
+                f.Claim([c], true);
+            }
+            if (condition is "offline" or "expired") {
+                f.Step(new Previewed(c.Id, c));
+                f.Step(new CancelCountdown(c.Id));
+            }
+            var beforeNewEvidence = f.History.Count;
+            if (condition == "offline") {
+                f.Reconnect();
+                f.QueryResult(f.QueryWire(), true, f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Succeeded)));
+            } else if (condition == "query") f.QueryResult(f.QueryWire(), true, active);
+            f.DrainDeliveries();
+            f.CheckSkipped(b, reason);
+            Check(f.History.Take(beforeNewEvidence).OfType<OperationFinished>().Count(o => o.Intent == b) == 1
+                && f.History.OfType<Reserve>().Count(r => r.Intent == b) == (atReservation ? 1 : 0)
+                && f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == (atReservation ? 1 : 0)
+                && f.Count<EndReserved>() == 0 && (condition is not ("offline" or "expired")
+                    || f.History.Take(beforeNewEvidence).OfType<OperationFinished>().Count(o => o.Intent == c) == 1)
+                && f.Items<RequestQuit>().Count(q => q.Run == f.Key) == (condition == "offline" ? 1 : 0),
+                $"{condition}/预留内={atReservation}：B 独立结束，后续班次可以完成");
+        }
     }
 
     private static void VerifyRunLifecycleDeferredPreview()

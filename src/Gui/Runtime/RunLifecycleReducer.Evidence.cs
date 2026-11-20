@@ -12,7 +12,7 @@ internal sealed partial class RunLifecycleReducer
         if (b.Kind == WorkerEvidenceKind.ProcessExited && b.Connection is { } exited) {
             Disconnect(exited, exited: true);
             foreach (var old in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == exited.WorkerInstanceId)) {
-                ApplyReconnectEvidence(old);
+                ApplyReconnectEvidence(old with { ReconnectFaultPending = false });
                 var retired = state.Runs[old.Key] with { Retired = true };
                 Save(retired);
                 if (!retired.Settled) {

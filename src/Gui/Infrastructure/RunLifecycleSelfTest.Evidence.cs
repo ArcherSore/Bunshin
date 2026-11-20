@@ -98,7 +98,7 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleReconnectFault()
     {
-        foreach (var outcome in new[] { "still-faulted", "terminal", "process-exit", "faulted-first" }) {
+        foreach (var outcome in new[] { "still-faulted", "terminal", "process-exit", "terminal-exit", "faulted-first" }) {
             var f = new Scenario();
             f.Begin(Intent(RunSource.Launch));
             f.Body();
@@ -109,19 +109,46 @@ internal static partial class RunLifecycleSelfTest
             var fault = f.Frame(active, worker: WorkerState.Faulted);
             f.FrameEvent(fault);
             f.FrameEvent(fault);
-            if (outcome == "terminal") f.Terminal(RunState.Succeeded);
+            var terminal = outcome is "terminal" or "terminal-exit";
+            if (terminal) f.Terminal(RunState.Succeeded);
             var beforeConfirmation = f.History.Count;
-            if (outcome == "process-exit") f.ExitWorker();
+            if (outcome is "process-exit" or "terminal-exit") f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, outcome == "terminal"
                 ? f.Frame(last: SnapshotOf(f.Send.Attempt, RunState.Succeeded)) : fault);
             f.DrainDeliveries();
             var notices = f.Items<Present>().ToArray();
+            var expected = outcome switch {
+                "process-exit" => NoticeKind.EndUnconfirmed,
+                "terminal-exit" => NoticeKind.Succeeded,
+                _ => NoticeKind.Faulted
+            };
             Check((outcome == "faulted-first" ? notices.Length == 0
-                    : notices.Length == 1 && notices[0].Kind == NoticeKind.Faulted && notices[0].Run == f.Key)
+                    : notices.Length == 1 && notices[0].Kind == expected && notices[0].Run == f.Key)
                 && !f.History.Take(beforeConfirmation).OfType<Deliver>().Any()
                 && f.Count<OperationFinished>() == 1 && f.Count<Release>() == 1 && f.Count<QueryRun>() == 1
-                && f.Items<RequestQuit>().Count() == (outcome == "terminal" ? 1 : 0),
+                && f.Items<RequestQuit>().Count() == (terminal ? 1 : 0),
                 $"重连 {outcome} 应保留实际观察到的故障转变，并独立结算终态");
+        }
+    }
+
+    private static void VerifyRunLifecycleBufferedFaultExit()
+    {
+        foreach (var terminal in new RunState?[] { null, RunState.Succeeded, RunState.Cancelled }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Launch));
+            f.Body();
+            f.Active();
+            f.Step(new BeginClosing(Id(19), ClosingKind.Exit));
+            f.FrameEvent(f.Frame(active: SnapshotOf(f.Send.Attempt, RunState.Running), worker: WorkerState.Faulted));
+            if (terminal.HasValue) f.Terminal(terminal.Value);
+            f.ExitWorker();
+            f.Step(new ClosingConfirmed(Id(19), false));
+            f.DrainDeliveries();
+            var notices = f.Items<Present>().ToArray();
+            Check((terminal == RunState.Cancelled ? notices.Length == 0 : notices.Length == 1 && notices[0].Run == f.Key
+                    && notices[0].Kind == (terminal.HasValue ? NoticeKind.Succeeded : NoticeKind.EndUnconfirmed))
+                && f.Items<RequestQuit>().Count(q => q.Run == f.Key) == (terminal.HasValue ? 1 : 0),
+                "退出确认期间排队的故障提醒应按进程退出时已知的结果交付");
         }
     }
 

@@ -26,24 +26,21 @@ internal static partial class RunLifecycleSelfTest
             f.Now = deadline;
             f.Step(new CountdownDue(next.Id));
             f.Step(new CountdownDue(next.Id));
-            Check(f.History.OfType<Reserve>().All(r => r.Intent != next) && f.Count<CommitConfiguration>() == 0,
-                "到期先等待开机归属，不能授权换场");
+            var beforeAnswer = f.History.Count;
             if (outcome == "terminal-exit") f.ExitWorker();
             else f.QueryResult(query, outcome != "idle-negative",
                 f.Frame(active: outcome == "active" ? SnapshotOf(f.Send.Attempt, RunState.Running) : null));
+            f.Step(new Reserved(next.Id, new(next.Id, Target)));
+            f.Step(new CommittedConfiguration(next.Id));
+            f.Step(new ActivityAppended(next.Id));
+            if (outcome == "active") f.Terminal(RunState.Succeeded);
             f.DrainDeliveries();
-            if (last != null) {
-                Check(f.Items<Present>().Single().Terminal == last && f.Items<RequestQuit>().Single().Run == f.Key
-                    && f.Count<EndReserved>() == 0 && f.Count<PrepareEnvironment>() == 0
-                    && f.History.OfType<Skip>().Single().Intent == next, "先到的成功须触发开机退出，消费替换机会");
-            } else {
-                Check(f.History.OfType<Reserve>().Count(r => r.Intent == next) == 1, "查询消除归属疑问后继续复核");
-                f.Step(new Reserved(next.Id, new(next.Id, Target)));
-                f.Step(new CommittedConfiguration(next.Id));
-                f.Step(new ActivityAppended(next.Id));
-                Check(f.Only<EndReserved>().Replace == (outcome == "active" ? f.Key : null)
-                    && !f.Items<RequestQuit>().Any(), "只顶替查询确认仍在运行的原目标");
-            }
+            f.CheckSkipped(next, "开机任务的运行证据尚未确认");
+            Check(f.History.Take(beforeAnswer).OfType<OperationFinished>().Any(o => o.Intent == next)
+                && f.History.OfType<Reserve>().All(r => r.Intent != next) && f.Count<EndReserved>() == 0
+                && f.Count<PrepareEnvironment>() == 0 && (last == null || f.Items<Present>().Single().Terminal == last)
+                && f.Items<RequestQuit>().Count(q => q.Run == f.Key) == (outcome == "idle-negative" ? 0 : 1),
+                $"开机归属 {outcome}：先结算候选，已收到的终态仍须触发 A 的退出");
         }
         var scheduled = new Scenario();
         scheduled.Begin(Intent(RunSource.Scheduled));
@@ -57,9 +54,12 @@ internal static partial class RunLifecycleSelfTest
         scheduled.Terminal(RunState.Succeeded);
         scheduled.Now = due;
         scheduled.Step(new CountdownDue(replacement.Id));
+        var beforeQuery = scheduled.History.Count;
         scheduled.QueryResult(scheduled.QueryWire(), true, scheduled.Frame(last: SnapshotOf(scheduled.Send.Attempt, RunState.Succeeded)));
         scheduled.DrainDeliveries();
-        Check(scheduled.History.OfType<Reserve>().All(r => r.Intent != replacement)
+        scheduled.CheckSkipped(replacement, "原任务的运行证据尚未确认");
+        Check(scheduled.History.Take(beforeQuery).OfType<OperationFinished>().Any(o => o.Intent == replacement)
+            && scheduled.History.OfType<Reserve>().All(r => r.Intent != replacement)
             && scheduled.Items<CompleteScheduled>().Single().Run == scheduled.Key && scheduled.Items<Cleanup>().Count() == 1,
             "已收到的定时终态也要在到期复核中先结算");
     }
@@ -174,6 +174,59 @@ internal static partial class RunLifecycleSelfTest
         }
     }
 
+    private static void VerifyRunLifecycleCancelledWriterRace()
+    {
+        var f = new Scenario();
+        var a = Intent(RunSource.Scheduled);
+        f.Begin(a);
+        var wire = f.Writer();
+        f.Evidence(new(f.Connection, WorkerEvidenceKind.BeforeBody, wire));
+        var exit = Id(19);
+        f.Step(new BeginClosing(exit, ClosingKind.Exit));
+        f.Step(new ClosingConfirmed(exit, true));
+        var cancel = f.Only<CancelSend>();
+        wire = wire with { WriteSequence = ++f.Sequence };
+        f.Evidence(new(f.Connection, WorkerEvidenceKind.BodyStarted, wire));
+        f.Timeout(wire);
+        f.ExitWorker();
+        f.Step(new ClosingEndReturned(exit, false));
+        f.DrainDeliveries();
+        Check(cancel.Submission == f.Send.Submission && f.Count<CancelSend>() == 1
+            && f.History.OfType<OperationFinished>().Single() is { Run: var run, Error: TimeoutException } && run == f.Key
+            && f.Items<Present>().Single() is { Kind: NoticeKind.StartUnknown, Run: var reported } && reported == run
+            && f.Count<EndForClosing>() == 1 && f.Count<Release>() == 1 && !f.Items<CompleteScheduled>().Any(),
+            "取消发送后 writer 仍可能越过正文边界；进程退出时只能报告一次启动结果未知");
+    }
+
+    private static void VerifyRunLifecycleClosingCountdown()
+    {
+        foreach (var elapsed in new[] { false, true }) {
+            var f = new Scenario();
+            f.FrameEvent(f.Frame(active: SnapshotOf(Attempt(8), RunState.Running)));
+            var b = Intent(RunSource.Scheduled, 2);
+            f.PreviewSchedule(b, true);
+            if (elapsed) {
+                f.Now = f.Only<ShowCountdown>().Deadline;
+                f.Step(new CountdownDue(b.Id));
+            }
+            var exit = Id(19);
+            f.Step(new BeginClosing(exit, ClosingKind.Exit));
+            f.Step(new ClosingConfirmed(exit, false));
+            f.Now = TimeSpan.FromSeconds(10);
+            f.Step(new CancelCountdown(b.Id));
+            f.Step(new CountdownDue(b.Id));
+            f.Step(new Reserved(b.Id, new(b.Id, Target)));
+            f.DrainDeliveries();
+            Check(f.Count<ShowCountdown>() == 1 && f.History.OfType<HideCountdown>().Single().Id == b.Id
+                && f.History.OfType<OperationFinished>().Single() is { Intent: var candidate, Error: OperationCanceledException } && candidate == b
+                && f.Count<Reserve>() == (elapsed ? 1 : 0) && f.Count<CommitConfiguration>() == 0
+                && (elapsed ? f.History.OfType<Skip>().SingleOrDefault() == new Skip(b, "应用正在退出") && f.Count<ScheduleActivity>() == 0
+                    : f.Count<Skip>() == 0 && f.History.OfType<ScheduleActivity>().SingleOrDefault()
+                        == new ScheduleActivity(b, $"已取消「{b.ConfigurationName}」的强制启动，当前任务继续")),
+                "退出打断倒计时或后续预留时应记录一次原因，撤销退出也不能复活该候选");
+        }
+    }
+
     private static void VerifyRunLifecycleClosingPreview()
     {
         var a = Intent(RunSource.Scheduled);
@@ -202,16 +255,14 @@ internal static partial class RunLifecycleSelfTest
         f.Active();
         var b = Intent(RunSource.Scheduled, 2);
         f.PreviewSchedule(b, true);
+        f.Now += TimeSpan.FromSeconds(10);
+        if (!disconnectBeforeDue) f.Step(new CountdownDue(b.Id));
         f.Step(new Stop(Id(8), f.Key));
         f.Step(new StopGateAcquired(Id(8)));
         f.Step(new StopReturned(Id(8), StopResult.TimedOut));
-        if (disconnectBeforeDue) f.Eof();
-        f.Now += TimeSpan.FromSeconds(10);
-        f.Step(new CountdownDue(b.Id));
-        if (!disconnectBeforeDue) {
-            f.Eof();
-            f.Step(new Reserved(b.Id, new(b.Id, Target)));
-        }
+        f.Eof();
+        if (disconnectBeforeDue) f.Step(new CountdownDue(b.Id));
+        else f.Step(new Reserved(b.Id, new(b.Id, Target)));
         f.Step(new CountdownDue(b.Id));
         var beforeReconnect = f.History.Count;
         f.Reconnect();
@@ -280,7 +331,8 @@ internal static partial class RunLifecycleSelfTest
         g.Expect(typeof(ScheduleActivity), typeof(PrepareEnvironment));
         Check(g.Only<PrepareEnvironment>().Intent == replacement && !g.Items<Cleanup>().Any(), "结束已确认，消化旧收尾再准备");
 
-        foreach (var stopped in new[] { true, false }) {
+        foreach (var stopped in new[] { true, false })
+        foreach (var atReservation in new[] { false, true }) {
             var f = new Scenario();
             f.Begin(Intent(RunSource.Launch));
             f.Body();
@@ -288,16 +340,28 @@ internal static partial class RunLifecycleSelfTest
             var next = Intent(RunSource.Scheduled, 2);
             f.PreviewSchedule(next, true);
             f.Now = f.Only<ShowCountdown>().Deadline;
+            if (atReservation) f.Step(new CountdownDue(next.Id));
             if (stopped) {
                 var stop = Id(8);
                 f.Step(new Stop(stop, f.Key));
                 f.Step(new StopGateAcquired(stop));
                 f.Step(new StopReturned(stop, StopResult.TimedOut));
             } else f.Terminal(RunState.Succeeded);
-            f.Step(new CountdownDue(next.Id));
+            if (!atReservation) f.Step(new CountdownDue(next.Id));
             f.Step(new Reserved(next.Id, new(next.Id, Target)));
-            Check(f.Count<EndReserved>() == 0 && f.Run.Quit == (stopped ? QuitStage.Bound : QuitStage.Pending),
+            f.Step(new CommittedConfiguration(next.Id));
+            f.Step(new ActivityAppended(next.Id));
+            f.DrainDeliveries();
+            f.CheckSkipped(next, stopped ? "正在等待开机任务停止并退出" : "应用正在退出");
+            Check(f.Count<EndReserved>() == 0 && f.Run.Quit == (stopped ? QuitStage.Bound : QuitStage.Pending)
+                && f.History.OfType<Reserve>().Count(r => r.Intent == next) == (atReservation ? 1 : 0)
+                && f.History.OfType<Release>().Count(r => r.Lease.Operation == next.Id) == (atReservation ? 1 : 0),
                 "倒计时期间自然结束或手停待确认，优先原 Run 的 -q");
+            if (stopped) {
+                f.Terminal(RunState.Cancelled);
+                f.DrainDeliveries();
+            }
+            Check(f.Items<RequestQuit>().Single().Run == f.Key, "开机终态独立交付一次退出请求");
         }
     }
 
@@ -378,6 +442,39 @@ internal static partial class RunLifecycleSelfTest
         h.Ack();
         Check(h.Items<Present>().Count() == 1 && h.Items<CompleteScheduled>().Count() == 1,
             "取消先于终态也必须正常交付");
+    }
+
+    private static void VerifyRunLifecycleUnsettledAfterEnd()
+    {
+        var f = new Scenario();
+        f.Begin(Intent(RunSource.Launch));
+        f.Body();
+        f.Active();
+        var a = f.Key;
+        var b = Intent(RunSource.Scheduled, 2);
+        var c = Intent(RunSource.Scheduled, 3);
+        f.PreviewSchedule(b, true);
+        f.Now = f.Only<ShowCountdown>().Deadline;
+        f.Step(new CountdownDue(b.Id));
+        f.Step(new Reserved(b.Id, new(b.Id, Target)));
+        f.Step(new CommittedConfiguration(b.Id));
+        f.Step(new ActivityAppended(b.Id));
+        f.Eof();
+        f.Now = TimeSpan.FromMinutes(1);
+        f.Claim([c], true);
+        f.Step(new OldEnvironmentEnded(b.Id, true));
+        f.Step(new Previewed(c.Id, c));
+        f.Step(new CancelCountdown(c.Id));
+        f.DrainDeliveries();
+        var beforeExit = f.History.Count;
+        f.ExitWorker();
+        f.DrainDeliveries();
+        var finished = f.History.OfType<OperationFinished>().Single(o => o.Intent == b);
+        Check(finished is { Admitted: true, Error.Message: "旧任务的运行结果尚未确认" }
+            && f.History.IndexOf(finished) < beforeExit && f.History.Take(beforeExit).OfType<OperationFinished>().Any(o => o.Intent == c)
+            && f.History.OfType<Release>().Count(r => r.Lease.Operation == b.Id) == 1 && f.Count<PrepareEnvironment>() == 0
+            && f.Items<Present>().Single(p => p.Run == a).Kind == NoticeKind.EndUnconfirmed && !f.Items<RequestQuit>().Any(),
+            "物理结束已返回但旧任务证据未到时应结束 B；证据层仍独立交付 A 的结果");
     }
 
     private static void VerifyRunLifecycleQuitRecovery()

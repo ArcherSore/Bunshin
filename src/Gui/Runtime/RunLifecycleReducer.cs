@@ -41,11 +41,11 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                 break;
             case CountdownDue e when At(e.Id, OperationStage.Countdown) is { } op && state.Now >= op.CountdownEnd:
                 effects.Add(new HideCountdown(e.Id));
-                Save(op with { Stage = OperationStage.ReviewCountdown });
+                if ((MissedMinute(op) ?? AdmissionBlocker(op)) is { } reason) SkipOperation(op, reason);
+                else AskReservation(op);
                 break;
             case CancelCountdown e when At(e.Id, OperationStage.Countdown) is { } op:
-                effects.Add(new HideCountdown(e.Id));
-                effects.Add(new ScheduleActivity(op.Intent, "已取消强制启动"));
+                CancelWarning(op);
                 Finish(op); break;
             case Observed e: Observe(e.Batch); break;
             case RetryDue e when state.Runs.TryGetValue(e.Key, out var run)
@@ -134,6 +134,10 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             return;
         }
         op = op with { Lease = e.Lease };
+        if (MissedMinute(op) is { } expired) {
+            SkipOperation(op, expired);
+            return;
+        }
         if (!op.Force && op.Intent.Source is RunSource.Launch or RunSource.Scheduled) {
             var otherSource = op.Intent.Source == RunSource.Launch ? RunSource.Scheduled : RunSource.Launch;
             foreach (var other in state.Operations.Values.Where(o => o.Intent.Source == otherSource && !o.Force
@@ -150,10 +154,11 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             op = op with { Intent = op.Intent with { Input = validated.Input, Attempt = validated.Attempt,
                 ConfigurationName = validated.ConfigurationName } };
         }
-        if (Blocked(op.Force) is { } reason) {
+        if (AdmissionBlocker(op) is { } reason) {
             SkipOperation(op, reason);
         } else if (op.Intent.Source == RunSource.Scheduled) {
-            ReserveScheduled(op);
+            Save(op with { Stage = OperationStage.Commit });
+            effects.Add(new CommitConfiguration(op.Intent, e.Lease));
         } else if (op.Intent.Mode is StartMode.PrepareOnly or StartMode.PrepareAndStart) {
             BeginPrepare(op);
         } else {

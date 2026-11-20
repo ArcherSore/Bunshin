@@ -12,7 +12,7 @@ internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
 internal enum CleanupStage { None, Claimed, WaitingForReconnect, Ended, Superseded, Failed }
 internal enum QuitStage { None, Bound, Suspended, Pending, AwaitingRecovery }
-internal enum OperationStage { WaitingForPrevious, Preview, Reserve, Countdown, ReviewCountdown, Commit, Activity, EndOld, DrainOld, Prepare, Ready, Resolve, Sending }
+internal enum OperationStage { WaitingForPrevious, Preview, Reserve, Countdown, Commit, Activity, EndOld, DrainOld, Prepare, Ready, Resolve, Sending }
 internal enum ClosingKind { Exit, Update, EndEnvironment }
 internal enum ClosingStage { Confirm, WaitingForOperations, End, Handoff, Committed }
 internal enum StopResult { Requested, TimedOut, Rejected }

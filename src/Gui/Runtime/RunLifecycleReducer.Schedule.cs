@@ -20,8 +20,8 @@ internal sealed partial class RunLifecycleReducer
         var waitForPrevious = op.Force && state.Operations.Values.Any(o => o.LocalMinute != op.LocalMinute && SelectingSchedule(o));
         if ((!waitForPrevious || state.Closing != null) && Blocked(op.Force) is { } reason) {
             SkipOperation(op, reason);
-        } else if (state.Now >= op.MinuteEnd) {
-            SkipOperation(op, "当前时间已离开本次定时的分钟");
+        } else if (MissedMinute(op) is { } expired) {
+            SkipOperation(op, expired);
         } else if (state.MinuteWinners.TryGetValue(op.LocalMinute, out var winner) && state.Now - winner.AwardedAt < WinnerWindow) {
             SkipOperation(op, $"与「{winner.Name}」同时到点");
         } else if (state.Operations.Values.Any(o => (o.Intent.Id != op.Intent.Id && o.Intent.Source == RunSource.Scheduled
@@ -60,7 +60,7 @@ internal sealed partial class RunLifecycleReducer
         if (e.Candidate.Id != op.Intent.Id || e.Candidate.Input.ConfigurationId != op.Intent.Input.ConfigurationId) return;
         op = op with { Intent = op.Intent with { Input = e.Candidate.Input, ConfigurationName = e.Candidate.ConfigurationName,
             Attempt = e.Candidate.Attempt } };
-        if (op.Force && state.Now >= op.MinuteEnd) SkipOperation(op, "当前时间已离开本次定时的分钟");
+        if (op.Force && MissedMinute(op) is { } expired) SkipOperation(op, expired);
         else if (op.Force && AtRisk() is { } risk) BeginCountdown(op, risk);
         else AskReservation(op);
     }
@@ -75,16 +75,17 @@ internal sealed partial class RunLifecycleReducer
 
     private void BeginCountdown(StartOperation op, RunKey target)
     {
-        if (state.Now >= op.MinuteEnd) {
-            SkipOperation(op, "当前时间已离开本次定时的分钟");
-            return;
-        }
-        if (op.Lease != null) effects.Add(new Release(op.Lease));
         RecordMinuteWinner(op);
         var deadline = state.Now + TimeSpan.FromSeconds(10);
         SkipRemainder(op, $"与「{op.Intent.ConfigurationName}」同时到点");
-        Save(op with { Lease = null, Stage = OperationStage.Countdown, Replacement = target, CountdownEnd = deadline, Remaining = [] });
+        Save(op with { Stage = OperationStage.Countdown, Replacement = target, CountdownEnd = deadline, Remaining = [] });
         effects.Add(new ShowCountdown(op.Intent, deadline));
+    }
+
+    private void CancelWarning(StartOperation op)
+    {
+        effects.Add(new HideCountdown(op.Intent.Id));
+        effects.Add(new ScheduleActivity(op.Intent, $"已取消「{op.Intent.ConfigurationName}」的强制启动，当前任务继续"));
     }
 
     // Two elapsed hours cover a one-hour DST rollback and the repeated hour, including midnight.
@@ -97,50 +98,36 @@ internal sealed partial class RunLifecycleReducer
             .Select(w => w.Key)).SetItem(op.LocalMinute, (op.Intent.ConfigurationName, state.Now)) };
     }
 
-    private TrackedRun? PendingReplacementEvidence() => state.Runs.Values.FirstOrDefault(r => !r.Settled
-        && (r.ReconnectEvidence?.LastRun is { } last && last.RunId == r.Key.RunId && last.PlanDigest == r.Digest
-            || r.Quit == QuitStage.Bound && (r.AwaitingReconnectQuery || r.Conclusion != StartConclusion.Accepted || r.NeedQuery)));
+    private string? MissedMinute(StartOperation op) => op.Intent.Source == RunSource.Scheduled && state.Now >= op.MinuteEnd
+        ? "当前时间已离开本次定时的分钟" : null;
 
-    private void ReviewCountdowns()
-    {
-        foreach (var op in state.Operations.Values.Where(o => o.Stage == OperationStage.ReviewCountdown)) {
-            if (Blocked(force: true) is { } reason) SkipOperation(op, reason);
-            else if (state.Runs.Values.Any(r => r is { Quit: QuitStage.Bound, ManualStop: not null }
-                && state.Connection?.WorkerInstanceId != r.Key.WorkerInstanceId))
-                SkipOperation(op, "正在等待开机任务停止并退出");
-            else if (PendingReplacementEvidence() is { } run) Save(run with { NeedQuery = true });
-            else AskReservation(op);
-        }
-    }
+    private string? AdmissionBlocker(StartOperation op) => Blocked(op.Force)
+        ?? (op.Intent.Source == RunSource.Scheduled ? ChangeoverBlocker(op) : null);
 
-    private void ReserveScheduled(StartOperation op)
+    private string? ChangeoverBlocker(StartOperation op)
     {
-        if (op.CountdownEnd.HasValue && PendingReplacementEvidence() != null) {
-            effects.Add(new Release(op.Lease!));
-            Save(op with { Stage = OperationStage.ReviewCountdown, Lease = null });
-            return;
+        var current = state.Current;
+        if (op.Force) {
+            if (state.Runs.Values.Any(r => !r.Settled && r.Owner?.Source == RunSource.Launch && r.ManualStop != null))
+                return "正在等待开机任务停止并退出";
+            if (!current.NoLiveAdmission && (!current.Fresh || state.Connection is not { } live
+                || live.WorkerInstanceId != current.WorkerSnapshot?.WorkerInstanceId))
+                return "Worker 连接已断开或状态尚未同步";
+            foreach (var r in state.Runs.Values.Where(r => !r.Settled && (r.Key == op.Replacement || r.Owner?.Source == RunSource.Launch))) {
+                if (r.AwaitingReconnectQuery || r.NeedQuery || r.Confirmation.InFlight != null || r.Conclusion != StartConclusion.Accepted)
+                    return r.Owner?.Source == RunSource.Launch ? "开机任务的运行证据尚未确认" : "原任务的运行证据尚未确认";
+            }
         }
-        var risk = AtRisk();
-        if (op.Force && risk is { } targetAtRisk && targetAtRisk != op.Replacement) {
-            BeginCountdown(op, targetAtRisk);
-            return;
-        }
-        var expected = op.Lease!.Expected;
-        if (risk != null && risk.Value.WorkerInstanceId != expected?.WorkerId
-            || !state.Current.NoLiveAdmission && state.Current.WorkerSnapshot is { } live && live.WorkerInstanceId != expected?.WorkerId
-            || expected?.WorkerId is { } worker && (state.Current.WorkerSnapshot?.WorkerInstanceId != worker
-            || state.Current.WorkerSnapshot.ChildSessionId != expected.SessionId
-            || !op.CountdownEnd.HasValue && !state.Current.FreshIdleForEnvironmentEnd)) {
-            SkipOperation(op, "运行环境状态未知");
-            return;
-        }
-        if (risk is { } target && state.Runs.GetValueOrDefault(target) is { ManualStop: not null, Quit: QuitStage.Bound }
-            && state.Current.WorkerSnapshot?.WorkerState != Protocol.WorkerState.Faulted) {
-            SkipOperation(op, "正在等待开机任务停止并退出");
-            return;
-        }
-        Save(op with { Stage = OperationStage.Commit, Replacement = op.Force ? risk : null });
-        effects.Add(new CommitConfiguration(op.Intent, op.Lease));
+        if (AtRisk() != op.Replacement || op.Replacement is { } key
+            && (state.Runs.GetValueOrDefault(key) is not { Settled: false } target || !CurrentShowsActive(target)))
+            return op.Force ? "强制启动的目标任务已变化" : "正在运行其他任务";
+        if (op.Lease is not { } lease) return null;
+        var expected = lease.Expected;
+        if (!current.NoLiveAdmission && current.WorkerSnapshot?.WorkerInstanceId != expected?.WorkerId
+            || expected?.WorkerId is { } worker && (current.WorkerSnapshot?.WorkerInstanceId != worker
+                || current.WorkerSnapshot.ChildSessionId != expected.SessionId || op.Replacement == null && !current.FreshIdleForEnvironmentEnd))
+            return "运行环境状态未知";
+        return null;
     }
 
     private void ConfigResult(StartOperation op, CommittedConfiguration e)
@@ -162,26 +149,14 @@ internal sealed partial class RunLifecycleReducer
             Finish(op);
             return;
         }
-        var current = state.Current;
-        var expected = op.Lease!.Expected;
-        var risk = AtRisk();
-        if (state.QuitPending || op.CountdownEnd.HasValue && PendingReplacementEvidence() != null || risk != null && risk != op.Replacement
-            || !current.NoLiveAdmission && current.WorkerSnapshot is { } observed && observed.WorkerInstanceId != expected?.WorkerId
-            || expected?.WorkerId is { } worker && (current.WorkerSnapshot?.WorkerInstanceId != worker
-                || current.WorkerSnapshot.ChildSessionId != expected.SessionId
-                || op.Replacement == null && !current.FreshIdleForEnvironmentEnd)) {
-            Fail(op, new InvalidOperationException("换场目标已变化"));
+        if ((state.QuitPending ? "应用正在退出" : ChangeoverBlocker(op)) is { } reason) {
+            Fail(op, new InvalidOperationException(reason));
             return;
         }
-        if (op.Replacement is { } key && state.Runs.GetValueOrDefault(key) is { Quit: QuitStage.Bound } old) {
-            if (old.ManualStop != null && current.WorkerSnapshot?.WorkerState != Protocol.WorkerState.Faulted) {
-                Fail(op, new InvalidOperationException("正在等待开机任务停止并退出"));
-                return;
-            }
+        if (op.Replacement is { } key && state.Runs.GetValueOrDefault(key) is { Quit: QuitStage.Bound } old)
             Save(old with { Quit = QuitStage.Suspended });
-        }
         Save(op with { Stage = OperationStage.EndOld });
-        effects.Add(new EndReserved(op.Lease, op.Replacement));
+        effects.Add(new EndReserved(op.Lease!, op.Replacement));
     }
 
     private void EndResult(StartOperation op, OldEnvironmentEnded e)
@@ -197,6 +172,7 @@ internal sealed partial class RunLifecycleReducer
         if (op.Replacement is { } key && state.Runs.TryGetValue(key, out var old)) {
             if (old.Quit == QuitStage.Suspended) Save(old with { Quit = QuitStage.None });
             if (op.Cancelled) Finish(op);
+            else if (!old.Settled) Fail(op, new InvalidOperationException("旧任务的运行结果尚未确认"));
             else Save(op with { Stage = OperationStage.DrainOld });
         } else if (op.Cancelled) {
             Finish(op);
@@ -216,8 +192,7 @@ internal sealed partial class RunLifecycleReducer
     {
         foreach (var op in state.Operations.Values.Where(o => o.Stage == OperationStage.DrainOld)) {
             var key = op.Replacement!.Value;
-            if (state.Runs.GetValueOrDefault(key) is { Settled: false }
-                || state.Deliveries.Any(d => d.Payload.Key == key)) continue;
+            if (state.Deliveries.Any(d => d.Payload.Key == key)) continue;
             BeginPrepare(op);
         }
     }

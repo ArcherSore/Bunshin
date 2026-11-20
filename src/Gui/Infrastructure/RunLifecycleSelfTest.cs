@@ -25,7 +25,9 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleLogonGate, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRejectedRetry,
         VerifyRunLifecycleFaultedTakeover, VerifyRunLifecycleAdjacentMinutes, VerifyRunLifecycleCountdownTarget, VerifyRunLifecycleDeferredPreview,
         VerifyRunLifecycleStoppedOffline, VerifyRunLifecycleReconnectFault, VerifyRunLifecycleCancelledPreparation,
-        VerifyRunLifecycleClosingPreview, VerifyRunLifecycleSimultaneousNames, VerifyRunLifecycleMidnightRollback
+        VerifyRunLifecycleClosingPreview, VerifyRunLifecycleSimultaneousNames, VerifyRunLifecycleMidnightRollback,
+        VerifyRunLifecycleLateReservation, VerifyRunLifecycleReplacementReview, VerifyRunLifecycleClosingCountdown,
+        VerifyRunLifecycleCancelledWriterRace, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleUnsettledAfterEnd
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
@@ -87,6 +89,14 @@ internal static partial class RunLifecycleSelfTest
                 $"动作应为 [{string.Join(", ", ordered.Select(t => t.Name))}]，实际 [{string.Join(", ", Last.Select(e => e.GetType().Name))}]");
         internal T Only<T>() where T : LifecycleEffect => Last.OfType<T>().Single();
         internal int Count<T>() where T : LifecycleEffect => History.OfType<T>().Count();
+        internal void CheckSkipped(RunIntent candidate, string reason)
+        {
+            Check(History.OfType<Skip>().Where(s => s.Intent.Id == candidate.Id).SequenceEqual([new Skip(candidate, reason)])
+                && History.OfType<OperationFinished>().Where(o => o.Intent.Id == candidate.Id)
+                    .SequenceEqual([new OperationFinished(candidate, false, null, null)])
+                && History.OfType<CommitConfiguration>().All(c => c.Intent.Id != candidate.Id),
+                $"{candidate.ConfigurationName} 应只跳过一次（{reason}），结束本次操作且零次写盘");
+        }
         internal IEnumerable<T> Items<T>() where T : Payload => History.OfType<Deliver>().Select(d => d.Item).OfType<T>();
         internal T DeliveredItem<T>() where T : Payload => (T)Only<Deliver>().Item;
         internal void Ack()

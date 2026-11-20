@@ -52,8 +52,7 @@ internal sealed partial class RunLifecycleReducer
             if (terminal.State == RunState.Cancelled) {
                 r = r with { Notification = NotificationSlot.Silent };
             } else {
-                var kind = terminal.State == RunState.Succeeded ? NoticeKind.Succeeded : NoticeKind.Failed;
-                Queue(new Present(r.Key, r.Owner, kind, PresentationChannel.Tray, "任务运行", Terminal: terminal));
+                Queue(TerminalNotice(r, terminal));
                 r = r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
             }
         }
@@ -71,6 +70,10 @@ internal sealed partial class RunLifecycleReducer
         Save(r);
     }
 
+    private static Present TerminalNotice(TrackedRun r, RunSnapshot terminal) => new(r.Key, r.Owner,
+        terminal.State == RunState.Succeeded ? NoticeKind.Succeeded : NoticeKind.Failed,
+        PresentationChannel.Tray, "任务运行", Terminal: terminal);
+
     private void Dispatch()
     {
         if (state.Closing?.Stage == ClosingStage.Committed) return;
@@ -78,7 +81,6 @@ internal sealed partial class RunLifecycleReducer
             state = state with { Closing = closing with { Stage = ClosingStage.End } };
             effects.Add(new EndForClosing(state.Closing));
         }
-        ReviewCountdowns();
         DispatchQueries();
         RecheckCleanups();
         if (state.Closing == null) {
@@ -112,8 +114,19 @@ internal sealed partial class RunLifecycleReducer
                 state = state with { Deliveries = state.Deliveries.Remove(d) };
                 continue;
             }
-            state = state with { Deliveries = state.Deliveries.Replace(d, d with { InFlight = true, DispatchedOn = state.Connection }) };
-            effects.Add(new Deliver(d.Id, d.Payload));
+            var item = d.Payload;
+            if (item is Present { Kind: NoticeKind.Faulted, Run: { } key } fault && state.Runs[key] is { Retired: true } r) {
+                // Closing or a prior delivery held this notice until after the Worker exited.
+                if (r.Terminal?.State == RunState.Cancelled) {
+                    Save(r with { Notification = NotificationSlot.Silent });
+                    state = state with { Deliveries = state.Deliveries.Remove(d) };
+                    continue;
+                }
+                item = r.Terminal is { } last ? TerminalNotice(r, last)
+                    : fault with { Kind = NoticeKind.EndUnconfirmed, Operation = "任务运行" };
+            }
+            state = state with { Deliveries = state.Deliveries.Replace(d, d with { Payload = item, InFlight = true, DispatchedOn = state.Connection }) };
+            effects.Add(new Deliver(d.Id, item));
             return;
         }
     }
@@ -256,9 +269,9 @@ internal sealed partial class RunLifecycleReducer
                 Save(op with { Cancelled = true });
                 continue;
             }
-            if (op.Stage == OperationStage.Countdown) effects.Add(new HideCountdown(op.Intent.Id));
+            if (op.Stage == OperationStage.Countdown) CancelWarning(op);
             effects.Add(new CancelOperation(op.Intent.Id, op.Lease));
-            if (op.Intent.Source == RunSource.Scheduled && !op.Admitted && !op.CountdownEnd.HasValue)
+            if (op.Intent.Source == RunSource.Scheduled && !op.Admitted && op.Stage != OperationStage.Countdown)
                 effects.Add(new Skip(op.Intent, "应用正在退出"));
             SkipRemainder(op, "应用正在退出");
             effects.Add(new OperationFinished(op.Intent, op.Admitted, null, new OperationCanceledException("操作已取消")));
