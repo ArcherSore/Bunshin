@@ -42,6 +42,7 @@ internal static partial class RunSelfTests
         Scenario("C4", VerifyCompletionRacesStopAsync),
         Scenario("C5", VerifyConcurrentSnapshotsAsync),
         Scenario("W2", VerifyStopSurvivesWriteFailureAsync),
+        Scenario("IPC", VerifyRunSurvivesPartialEventReconnectAsync),
         Scenario("W5", VerifyUnknownOperationRejectedAsync)
     ];
 
@@ -328,7 +329,7 @@ internal static partial class RunSelfTests
         var revision = (await harness.SnapshotAsync()).StateRevision;
         // W1 holds the Stopping event write for a while, so MaaFramework Stop started early from another thread is
         // caught too. Correct code waits out the hold, because Stop cannot start until that write completes.
-        harness.Wire.HoldWrite = bytes => IsStoppingEvent(bytes)
+        harness.Wire.HoldWrite = bytes => IsRunStateEvent(bytes, RunState.Stopping)
             ? Task.WhenAny(first.StopCalled, Task.Delay(StoppingWriteHold)) : null;
         Expect(await harness.StopAsync(request.RunId) == "stop_requested", "Running 中停止应为 stop_requested。");
         var stopping = await harness.SnapshotAsync();
@@ -655,6 +656,57 @@ internal static partial class RunSelfTests
         Expect(response is { Success: false, Error.Code: "invalid_request" }, "未知 operation 应返回 invalid_request。");
     }
 
+    private static async Task VerifyRunSurvivesPartialEventReconnectAsync(RunHarness harness)
+    {
+        var (request, item) = await StartRunningAsync(harness, 1, running: false);
+        var prefixWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Wire.HoldWrite = bytes => {
+            if (!IsRunStateEvent(bytes, RunState.Running)) {
+                return null;
+            }
+            prefixWritten.TrySetResult();
+            return releaseBody.Task;
+        };
+        var queued = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.ResponseWriteStarted = write => queued.TrySetResult(write);
+        Task<WorkerSnapshot> query;
+        Task replyWrite;
+        try {
+            item.ReportRunning();
+            await prefixWritten.Task.WaitAsync(RunHarness.WaitLimit);
+            query = harness.SnapshotAsync();
+            replyWrite = await queued.Task.WaitAsync(RunHarness.WaitLimit);
+            Expect(!replyWrite.IsCompleted, "状态帧正文阻塞时，快照应答必须在写锁上排队。");
+            harness.DisconnectGui();
+        } finally {
+            harness.ResponseWriteStarted = null;
+            releaseBody.TrySetResult();
+        }
+        try {
+            await query.WaitAsync(RunHarness.WaitLimit);
+            throw new InvalidOperationException("已断开的 GUI 不应收到快照应答。");
+        } catch (System.Threading.Channels.ChannelClosedException) {
+        }
+        try {
+            await replyWrite.WaitAsync(RunHarness.WaitLimit);
+            throw new InvalidOperationException("断开的管道不能写入排队的快照应答。");
+        } catch (IOException) {
+        }
+        try {
+            await harness.Serving.WaitAsync(RunHarness.WaitLimit);
+            throw new InvalidOperationException("排队应答应以断管 IOException 结束本连接。");
+        } catch (IOException) {
+        }
+        await harness.ReconnectAsync();
+        var restored = await harness.QuerySnapshotAsync(request.RunId);
+        Expect(restored.RunRegistered == true && restored.Snapshot.ActiveRun?.RunId == request.RunId
+            && restored.Snapshot.RunState == RunState.Running, "同一 Worker 重连后应继续原 Run。");
+        item.Complete(RuntimeExecutionOutcome.Succeeded);
+        Expect((await TerminalAsync(harness, request.RunId)).LastRun?.State == RunState.Succeeded,
+            "断管前执行的 Plan Item 应能在重连后正常完成。");
+    }
+
     private static async Task<(RunStartRequest Request, ScriptedExecution First)> StartRunningAsync(
         RunHarness harness, int count, bool running = true, int pipelineBytes = 0)
     {
@@ -674,14 +726,14 @@ internal static partial class RunSelfTests
         ProtocolJson.Deserialize<StateChangedEvent>(stateEvent.Data).Snapshot.StateRevision;
 
     // Frames are written as a length prefix followed by the JSON payload; only the payload can match.
-    private static bool IsStoppingEvent(ReadOnlyMemory<byte> bytes)
+    private static bool IsRunStateEvent(ReadOnlyMemory<byte> bytes, RunState state)
     {
         if (bytes.Length == 0 || bytes.Span[0] != (byte)'{') {
             return false;
         }
         var frame = JsonSerializer.Deserialize<WireEnvelope>(bytes.Span, ProtocolJson.Options)!;
         return frame.Operation == ProtocolOperations.RunStateChanged
-            && ProtocolJson.Deserialize<StateChangedEvent>(frame.Data).Snapshot.RunState == RunState.Stopping;
+            && ProtocolJson.Deserialize<StateChangedEvent>(frame.Data).Snapshot.RunState == state;
     }
 
     private static bool IsStopResponse(WireEnvelope frame) =>

@@ -23,6 +23,9 @@ internal static partial class WorkerCoordinatorSelfTest
 
     internal static (string Name, Func<AppLogger, string, string, Task> Body)[] Checks => [
         (nameof(VerifyStartEvidenceSyncReconnectAsync), VerifyStartEvidenceSyncReconnectAsync),
+        (nameof(VerifyInitialSnapshotBeforeEofAsync), VerifyInitialSnapshotBeforeEofAsync),
+        (nameof(VerifyInitialLogPageBeforeEofAsync), VerifyInitialLogPageBeforeEofAsync),
+        (nameof(VerifyStartEvidenceRevisionOrderAsync), VerifyStartEvidenceRevisionOrderAsync),
         (nameof(VerifyStartEvidenceWritesAsync), VerifyStartEvidenceWritesAsync),
         (nameof(VerifyStartEvidenceRepliesAsync), VerifyStartEvidenceRepliesAsync),
         (nameof(VerifyStartEvidenceQueryAsync), VerifyStartEvidenceQueryAsync),

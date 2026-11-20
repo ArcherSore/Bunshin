@@ -45,7 +45,6 @@ internal sealed partial class WorkerCoordinator
     private readonly Dictionary<Guid, EvidenceRequest> _evidenceRequests = [];
     private WorkerConnectionId _connectionId;
     private long _writeSequence;
-    private WorkerCoordinatorSnapshot? _observedState;
     private bool _evidenceRequested;
 
     // Subscribers enqueue batches synchronously. Frame validation, publication and waiter
@@ -67,7 +66,6 @@ internal sealed partial class WorkerCoordinator
     {
         _connectionId = new(admission.WorkerInstanceId, _connectionId.Generation + 1);
         _writeSequence = 0;
-        _observedState = null;
     }
 
     private void FinishEvidenceLocked(ProtocolConnection connection)
@@ -81,7 +79,6 @@ internal sealed partial class WorkerCoordinator
             request.Waiter = null;
         }
         _evidenceRequests.Clear();
-        _observedState = null;
     }
 
     private void ObserveAdmissionLocked(WorkerAdmissionRecord record, WorkerEvidenceKind kind)
@@ -132,7 +129,7 @@ internal sealed partial class WorkerCoordinator
                 if (connection is null || connection != _connection || connection.IsClosed || entry.Identity.Connection is null) {
                     throw new InvalidOperationException("目标 Worker IPC 已失效。");
                 }
-                if (attempt is not null && (_observedState is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
+                if (attempt is not null && (Snapshot is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
                     || attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
                     || attempt.Plan.RuntimeProfileDigest != worker.RuntimeProfileDigest)) {
                     throw new InvalidOperationException("当前 Worker、计划或 Run 状态不允许 Start。");
@@ -187,8 +184,9 @@ internal sealed partial class WorkerCoordinator
     }
 
     private bool ReceiveEvidenceReplyLocked(Guid id, WireEnvelope frame, WorkerAdmissionRecord admission,
-        ProtocolConnection connection)
+        ProtocolConnection connection, out bool stateChanged)
     {
+        stateChanged = false;
         if (!_evidenceRequests.Remove(id, out var entry)) {
             return false;
         }
@@ -213,7 +211,8 @@ internal sealed partial class WorkerCoordinator
                         || response.Snapshot.LastRun?.RunId == request.Run.RunId)) {
                     throw new ProtocolException("定向 getSnapshot 缺少有效的 runRegistered 或与快照冲突。");
                 }
-                batch = SnapshotBatchLocked(response.Snapshot, admission, full: true) with {
+                stateChanged = ApplyFreshSnapshotLocked(response.Snapshot, admission, reconciledStart: null);
+                batch = SnapshotBatchLocked(response.Snapshot) with {
                     Kind = WorkerEvidenceKind.QueryReply, Request = request, RunRegistered = registered
                 };
             }
@@ -248,48 +247,15 @@ internal sealed partial class WorkerCoordinator
 
     private bool ObservingEvidence => _evidenceRequested || ObservationReceived is not null;
 
-    private GetSnapshotResponse? ObserveFullReplyLocked(WireEnvelope frame, WorkerAdmissionRecord admission)
-    {
-        try {
-            if (frame.Operation != ProtocolOperations.WorkerGetSnapshot || frame.ProtocolVersion != ProtocolConstants.ProtocolVersion) {
-                throw new ProtocolException("getSnapshot 响应的操作或协议版本不匹配。");
-            }
-            var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
-            PublishLocked(SnapshotBatchLocked(response.Snapshot, admission, full: true));
-            return response;
-        } catch (Exception error) when (!ObservingEvidence && error is ProtocolException or JsonException) {
-            _observedState = null;
-            return null;
-        }
-    }
+    private WorkerObservationBatch SnapshotBatchLocked(WorkerSnapshot observed) =>
+        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed);
 
-    private void ObserveStateLocked(StateChangedEvent state, int protocolVersion, WorkerAdmissionRecord admission)
-    {
-        try {
-            if (protocolVersion != ProtocolConstants.ProtocolVersion || state.Snapshot?.StateRevision != state.StateRevision) {
-                throw new ProtocolException("stateChanged 的版本或修订与快照不匹配。");
-            }
-            PublishLocked(SnapshotBatchLocked(state.Snapshot, admission, full: false));
-        } catch (ProtocolException) when (!ObservingEvidence) {
-            _observedState = null;
-        }
-    }
-
-    private WorkerObservationBatch SnapshotBatchLocked(WorkerSnapshot snapshot, WorkerAdmissionRecord admission, bool full)
+    private static void ValidateEvidenceSnapshot(WorkerSnapshot snapshot)
     {
         if (snapshot is null || snapshot.StateRevision < 0
             || snapshot.LastRun is { State: not (RunState.Succeeded or RunState.Failed or RunState.Cancelled) }
             || snapshot.ActiveRun is { State: not (RunState.Starting or RunState.Running or RunState.Stopping) }) {
             throw new ProtocolException("Worker Snapshot 状态或修订无效。");
         }
-        ValidateSnapshot(snapshot, admission);
-        var previous = _observedState?.WorkerSnapshot?.StateRevision;
-        WorkerCoordinatorSnapshot? current = null;
-        if (previous is null || snapshot.StateRevision > previous || full && snapshot.StateRevision == previous) {
-            var fresh = full || _observedState?.Fresh == true && snapshot.StateRevision == previous + 1;
-            _observedState = current = new(WorkerObservation.Connected, fresh, snapshot,
-                fresh ? "Worker 状态已同步" : "等待完整 Snapshot");
-        }
-        return new(_connectionId, WorkerEvidenceKind.Snapshot, Current: current, ObservedSnapshot: snapshot);
     }
 }

@@ -13,10 +13,11 @@ public sealed class ProtocolConnection : IAsyncDisposable
     private readonly Stream _stream;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly TaskCompletionSource<Exception?> _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private int _disposed;
+    private sealed record Closure(Exception? Reason);
+    private Closure? _closure;
 
     public Task<Exception?> Closed => _closed.Task;
-    public bool IsClosed => Volatile.Read(ref _disposed) != 0;
+    public bool IsClosed => Volatile.Read(ref _closure) is not null;
 
     public ProtocolConnection(Stream stream)
     {
@@ -72,6 +73,7 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
         await _writeGate.WaitAsync(cancellationToken);
         var incomplete = false;
+        Closure? broken = null;
         try {
             ThrowIfDisposed();
             // Stream.WriteAsync returns no byte count on cancellation. A one-byte write
@@ -89,21 +91,36 @@ public sealed class ProtocolConnection : IAsyncDisposable
             incomplete = false;
             await _stream.FlushAsync(cancellationToken);
         } catch (Exception error) when (incomplete) {
-            Close(new IOException("IPC 帧未写完整。", error));
+            // Fence queued writers before releasing the gate. Dispose the stream outside it.
+            broken = BeginClose(error as IOException ?? new IOException("IPC 帧未写完整。", error));
             throw;
         } finally {
             _writeGate.Release();
+            if (broken is not null) {
+                FinishClose(broken);
+            }
         }
     }
 
     public void Close(Exception? reason = null)
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0) {
-            try {
-                _stream.Dispose();
-            } finally {
-                _closed.TrySetResult(reason);
-            }
+        if (BeginClose(reason) is { } closure) {
+            FinishClose(closure);
+        }
+    }
+
+    private Closure? BeginClose(Exception? reason)
+    {
+        var closure = new Closure(reason);
+        return Interlocked.CompareExchange(ref _closure, closure, null) is null ? closure : null;
+    }
+
+    private void FinishClose(Closure closure)
+    {
+        try {
+            _stream.Dispose();
+        } finally {
+            _closed.TrySetResult(closure.Reason);
         }
     }
 
@@ -115,7 +132,11 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
     private void ThrowIfDisposed()
     {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
+        var closure = Volatile.Read(ref _closure);
+        if (closure?.Reason is IOException error) {
+            throw new IOException(error.Message, error);
+        }
+        ObjectDisposedException.ThrowIf(closure is not null, this);
     }
 }
 

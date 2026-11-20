@@ -161,7 +161,8 @@ internal sealed class WorkerHost
         await ServeConnectionAsync(connection, cancellationToken);
     }
 
-    internal async Task ServeConnectionAsync(ProtocolConnection connection, CancellationToken cancellationToken)
+    internal async Task ServeConnectionAsync(ProtocolConnection connection, CancellationToken cancellationToken,
+        Action<Task>? responseWriteStarted = null)
     {
         await using var events = new WorkerEventSender(connection);
         lock (_eventsGate) {
@@ -174,7 +175,9 @@ internal sealed class WorkerHost
                     return;
                 }
                 var response = HandleRequest(envelope, out var pendingStop);
-                await connection.WriteAsync(response, cancellationToken);
+                var write = connection.WriteAsync(response, cancellationToken);
+                responseWriteStarted?.Invoke(write);
+                await write;
                 if (pendingStop is not null) {
                     await BeginStopAsync(pendingStop, connection, cancellationToken);
                 }

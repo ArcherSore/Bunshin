@@ -14,7 +14,7 @@ internal sealed class RunHarness : IAsyncDisposable
     internal static readonly ProjectProvenance Project = new("test", "1", 1, "test");
 
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly Channel<WireEnvelope> _responses = Channel.CreateUnbounded<WireEnvelope>();
+    private Channel<WireEnvelope> _responses = null!;
     private readonly object _gate = new();
     private readonly List<WorkerSnapshot> _states = [];
     private readonly List<WorkerLogEntry> _logs = [];
@@ -59,6 +59,17 @@ internal sealed class RunHarness : IAsyncDisposable
 
     internal Task Serving { get; private set; } = Task.CompletedTask;
 
+    internal Action<Task>? ResponseWriteStarted { get; set; }
+
+    internal void DisconnectGui() => _gui.Close();
+
+    internal async Task ReconnectAsync()
+    {
+        await _receiving.WaitAsync(WaitLimit);
+        await _worker.DisposeAsync();
+        await ConnectAsync();
+    }
+
     internal StructuredReason? ReadinessFailure { get; set; }
 
     internal static DependencyStatus Dependencies
@@ -95,7 +106,8 @@ internal sealed class RunHarness : IAsyncDisposable
         Executions.Wire = Wire;
         _gui = new ProtocolConnection(_server);
         _worker = new ProtocolConnection(Wire);
-        Serving = Host.ServeConnectionAsync(_worker, _shutdown.Token);
+        _responses = Channel.CreateUnbounded<WireEnvelope>();
+        Serving = Host.ServeConnectionAsync(_worker, _shutdown.Token, write => ResponseWriteStarted?.Invoke(write));
         _receiving = Task.Run(ReceiveAsync);
     }
 
