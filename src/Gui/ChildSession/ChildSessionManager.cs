@@ -61,6 +61,7 @@ internal sealed class ChildSessionManager : IDisposable
 
     internal async Task<uint> EnsureConnectedAsync(bool showPreview, CancellationToken cancellationToken = default)
     {
+        RdpActiveXHost.BeforeConnect?.Invoke();
         await _operationLock.WaitAsync(cancellationToken);
         try {
             ThrowIfDisposed();
