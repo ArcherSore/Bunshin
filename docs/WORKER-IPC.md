@@ -4,7 +4,7 @@
 
 ## 控制通道
 
-协议版本为 8，Run Plan 版本为 2，Snapshot 版本为 3；Worker Launch Context 保持版本 1。GUI 是本机 Named Pipe 服务端，Worker 是客户端。每条消息以 4 字节 little-endian 无符号长度开头，后接 UTF-8 JSON；payload 上限 4 MiB。Envelope 包含 protocolVersion、messageType、operation、data；请求与响应由 requestId 配对，响应包含 success 或结构化 error。版本或帧非法时拒绝连接，不做降级协商。
+协议版本为 9，Run Plan 版本为 2，Snapshot 版本为 3，Worker Launch Context 版本为 1。GUI 是本机 Named Pipe 服务端，Worker 是客户端。双方的 protocolVersion 必须完全一致才能通过 connection.open 握手。每条消息以 4 字节 little-endian 无符号长度开头，后接 UTF-8 JSON；payload 上限 4 MiB。Envelope 包含 protocolVersion、messageType、operation、data；请求与响应由 requestId 配对，响应包含 success 或结构化 error。版本或帧非法时拒绝连接，不做降级协商。
 
 | 操作 | 用途 |
 | --- | --- |
@@ -15,6 +15,12 @@
 | framework.setOptions | 更新运行中 Worker 的诊断开关与遥测开关 |
 
 Worker 的 worker.stateChanged、run.stateChanged 和 log.entry 是可丢失的实时事件。重连后必须重新获取 Snapshot；不能用事件重建权威状态。run.stop 的成功响应表示请求已接受，不表示 Run 已终结。GUI 需要观察后续 Snapshot 或事件所指向的终态。
+
+`run.start` 以 Worker 登记 Run ID 和 Plan Digest 为接纳边界。首次登记返回 `accepted`。在同一 Worker 实例内重放相同 Run ID 和摘要返回 `already_accepted`，即使该 Run 已离开 ActiveRun 和 LastRun，也不会再次执行。登记后若首个执行对象创建失败或执行循环未能启动，Worker 将该 Run 结算为 `LastRun.State = Failed`，恢复 Ready，可接纳下一次合法提交。
+
+`run.start` 的登记前拒绝码仅有 `protocol_version_mismatch`、`invalid_request`、`run_id_conflict`、`worker_not_ready`、`worker_faulted`、`operation_not_allowed`、`worker_busy` 和 `invalid_run_plan`。这些码只说明本次提交被拒绝。例如，`run_id_conflict` 保留该 ID 先前登记的摘要。`internal_error` 或应答超时均无法判定本次提交是否已登记。
+
+`worker.getSnapshot` 可携带 `runId`。携带时，成功响应必须包含布尔字段 `runRegistered`，表示该 ID 是否曾在本 Worker 实例登记。Worker 在同一把锁内读取完整快照和登记表，因此即使后续 Run 已覆盖 LastRun，历史登记仍返回 `true`。省略 `runId` 时，响应仅包含 `snapshot`。
 
 ## 身份与持久边界
 

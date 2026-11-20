@@ -17,7 +17,7 @@ internal sealed class RunSupervisor
     private readonly Action<string, string, string, Guid?> _log;
     private readonly Action<string, WorkerSnapshot> _publish;
     private readonly CancellationToken _shutdown;
-    private readonly Dictionary<Guid, (string Digest, RunSnapshot? Terminal)> _ledger = new();
+    private readonly Dictionary<Guid, string> _ledger = new();
     private WorkerState _workerState = WorkerState.Starting;
     private StructuredReason? _workerReason;
     private DependencyStatus _dependencyStatus;
@@ -77,64 +77,84 @@ internal sealed class RunSupervisor
         }
     }
 
-    internal RunStartResponse Accept(RunStartRequest request)
+    internal GetSnapshotResponse GetSnapshot(GetSnapshotRequest request)
     {
-        IPlanItemExecution execution;
-        RunSnapshot run;
-        WorkerSnapshot snapshot;
         lock (_stateGate) {
-            if (_ledger.TryGetValue(request.RunId, out var existing)) {
-                if (existing.Digest != request.PlanDigest) {
-                    throw new WorkerRequestException("run_id_conflict", "相同 runId 使用了不同 planDigest。 ");
-                }
-                var existingRun = _activeRun?.RunId == request.RunId
-                    ? _activeRun
-                    : _lastRun?.RunId == request.RunId
-                        ? _lastRun
-                        : existing.Terminal;
-                if (existingRun is not null) {
+            return new(GetSnapshotLocked(), request.RunId is Guid id ? _ledger.ContainsKey(id) : null);
+        }
+    }
+
+    internal RunStartResponse Accept(RunStartRequest request, out bool registered)
+    {
+        registered = false;
+        try {
+            IPlanItemExecution execution;
+            WorkerSnapshot snapshot;
+            lock (_stateGate) {
+                var run = RegisterRunLocked(request);
+                registered = true;
+                if (run is null) {
                     return new RunStartResponse("already_accepted");
                 }
+                snapshot = CommitLocked();
+                execution = CreateExecution(run.RunId, request.Plan.Items[0]);
+                _execution = execution;
             }
-            if (_workerState == WorkerState.NotReady) {
-                throw new WorkerRequestException("worker_not_ready", _workerReason?.Message ?? "Worker NotReady。 ");
+            PublishState(ProtocolOperations.RunStateChanged, snapshot);
+            Log("INFO", "run.lifecycle", $"Run 已接受：{request.RunId}，items={request.Plan.Items.Count}，"
+                + $"first={request.Plan.Items[0].TaskName}。 ", request.RunId);
+            _ = Task.Run(() => ExecuteRunAsync(request.RunId, execution, _shutdown));
+        } catch (Exception exception) when (registered) {
+            // The loop has not started, so no execution can still own resources or advance this Run.
+            var error = new StructuredReason("RunStartFailed", exception.GetBaseException().Message);
+            WorkerSnapshot failed;
+            lock (_stateGate) {
+                failed = CompleteRunLocked(0, new(RuntimeExecutionOutcome.Failed, null, error),
+                    wasStopping: false, DateTime.UtcNow);
             }
-            if (_workerState == WorkerState.Faulted) {
-                throw new WorkerRequestException("worker_faulted", _workerReason?.Message ?? "Worker Faulted。 ");
-            }
-            if (_workerState != WorkerState.Ready) {
-                throw new WorkerRequestException("operation_not_allowed", $"Worker state={_workerState}。 ");
-            }
-            if (_activeRun is not null) {
-                throw new WorkerRequestException("worker_busy", "Worker 已有 active Run。 ");
-            }
-            ValidateRunPlan(request);
-
-            var item = request.Plan.Items[0];
-            var startedAtUtc = DateTime.UtcNow;
-            var itemSnapshots = request.Plan.Items.Select((candidate, index) => new PlanItemSnapshot(
-                candidate.PlanItemId, candidate.TaskName, candidate.TaskLabel, candidate.Entry,
-                candidate.ResolvedOptions, candidate.PipelineOverride,
-                index == 0 ? PlanItemState.Starting : PlanItemState.Pending,
-                index == 0 ? startedAtUtc : null, null, null, null, null) { Kind = candidate.Kind }).ToArray();
-            run = new RunSnapshot(
-                request.RunId, request.PlanDigest, RunState.Starting, request.Plan.CreatedAtUtc,
-                startedAtUtc, null, null, item.PlanItemId, 0,
-                request.Plan, itemSnapshots, null, null);
-            _lastRun = null;
-            _activeRun = run;
-            _ledger.Add(request.RunId, (request.PlanDigest, null));
-            execution = CreateExecution(request.RunId, item);
-            _execution = execution;
-            snapshot = CommitLocked();
+            PublishState(ProtocolOperations.RunStateChanged, failed);
+            Log("ERROR", "run.lifecycle", $"Run 启动执行失败：{request.RunId}，{error.Message}", request.RunId);
         }
-
-        PublishState(ProtocolOperations.RunStateChanged, snapshot);
-        Log(
-            "INFO", "run.lifecycle",
-            $"Run 已接受：{request.RunId}，items={run.Items.Count}，first={run.Items[0].TaskName}。 ", request.RunId);
-        _ = Task.Run(() => ExecuteRunAsync(request.RunId, execution, _shutdown));
         return new RunStartResponse("accepted");
+    }
+
+    private RunSnapshot? RegisterRunLocked(RunStartRequest request)
+    {
+        if (_ledger.TryGetValue(request.RunId, out var digest)) {
+            if (digest != request.PlanDigest) {
+                throw new WorkerRequestException("run_id_conflict", "相同 runId 使用了不同 planDigest。 ");
+            }
+            return null;
+        }
+        if (_workerState == WorkerState.NotReady) {
+            throw new WorkerRequestException("worker_not_ready", _workerReason?.Message ?? "Worker NotReady。 ");
+        }
+        if (_workerState == WorkerState.Faulted) {
+            throw new WorkerRequestException("worker_faulted", _workerReason?.Message ?? "Worker Faulted。 ");
+        }
+        if (_workerState != WorkerState.Ready) {
+            throw new WorkerRequestException("operation_not_allowed", $"Worker state={_workerState}。 ");
+        }
+        if (_activeRun is not null) {
+            throw new WorkerRequestException("worker_busy", "Worker 已有 active Run。 ");
+        }
+        ValidateRunPlan(request);
+
+        var item = request.Plan.Items[0];
+        var startedAtUtc = DateTime.UtcNow;
+        var itemSnapshots = request.Plan.Items.Select((candidate, index) => new PlanItemSnapshot(
+            candidate.PlanItemId, candidate.TaskName, candidate.TaskLabel, candidate.Entry,
+            candidate.ResolvedOptions, candidate.PipelineOverride,
+            index == 0 ? PlanItemState.Starting : PlanItemState.Pending,
+            index == 0 ? startedAtUtc : null, null, null, null, null) { Kind = candidate.Kind }).ToArray();
+        var run = new RunSnapshot(
+            request.RunId, request.PlanDigest, RunState.Starting, request.Plan.CreatedAtUtc,
+            startedAtUtc, null, null, item.PlanItemId, 0,
+            request.Plan, itemSnapshots, null, null);
+        _ledger.Add(request.RunId, request.PlanDigest);
+        _lastRun = null;
+        _activeRun = run;
+        return run;
     }
 
     private void ValidateRunPlan(RunStartRequest request)
@@ -204,7 +224,7 @@ internal sealed class RunSupervisor
         && !string.IsNullOrWhiteSpace(program.Executable) && !program.Executable.Contains('\0')
         && program.Arguments.All(argument => argument is not null && !argument.Contains('\0'));
 
-    // Called under _stateGate so the active Run is never committed without its execution; factories only construct.
+    // Factories only construct. Bind the execution to its item under the same lock used by Stop.
     private IPlanItemExecution CreateExecution(Guid runId, RunPlanItem item) =>
         _createExecution(runId, item, () => MarkRunRunning(runId, item.PlanItemId));
 
@@ -382,7 +402,7 @@ internal sealed class RunSupervisor
         var wasStopping = _activeRun.State == RunState.Stopping;
         if (result.Outcome != RuntimeExecutionOutcome.Succeeded || wasStopping
             || currentIndex + 1 >= _activeRun.Items.Count) {
-            return CompleteRunLocked(runId, currentIndex, result, wasStopping, now);
+            return CompleteRunLocked(currentIndex, result, wasStopping, now);
         }
         var items = _activeRun.Items.ToArray();
         items[currentIndex] = items[currentIndex] with {
@@ -426,7 +446,7 @@ internal sealed class RunSupervisor
     }
 
     private WorkerSnapshot CompleteRunLocked(
-        Guid runId, int currentIndex, RuntimeExecutionResult result, bool wasStopping, DateTime now)
+        int currentIndex, RuntimeExecutionResult result, bool wasStopping, DateTime now)
     {
         var finalRunState = ResolveFinalRunState(result.Outcome, wasStopping);
         var finalItemState = finalRunState switch {
@@ -465,7 +485,6 @@ internal sealed class RunSupervisor
         _activeRun = null;
         _lastRun = terminal;
         _execution = null;
-        _ledger[runId] = (_ledger[runId].Digest, terminal);
         if (result.Outcome == RuntimeExecutionOutcome.CleanupFailed) {
             _workerState = WorkerState.Faulted;
             _workerReason = result.Error;
