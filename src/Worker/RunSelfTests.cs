@@ -42,18 +42,19 @@ internal static partial class RunSelfTests
         Scenario("C4", VerifyCompletionRacesStopAsync),
         Scenario("C5", VerifyConcurrentSnapshotsAsync),
         Scenario("W2", VerifyStopSurvivesWriteFailureAsync),
-        Scenario("IPC", VerifyRunSurvivesPartialEventReconnectAsync),
+        Scenario("IPC", VerifyRunSurvivesPartialEventReconnectAsync, reconnect: true),
+        Scenario("IPC", VerifyRunSurvivesPartialRequestReconnectAsync, reconnect: true),
         Scenario("W5", VerifyUnknownOperationRejectedAsync)
     ];
 
     private static (string Name, Action Body) Scenario(
-        string id, Func<RunHarness, Task> body, bool initialize = true) =>
-        ($"Run.{id}.{body.Method.Name}", () => ScenarioAsync(id, body, initialize).GetAwaiter().GetResult());
+        string id, Func<RunHarness, Task> body, bool initialize = true, bool reconnect = false) =>
+        ($"Run.{id}.{body.Method.Name}", () => ScenarioAsync(id, body, initialize, reconnect).GetAwaiter().GetResult());
 
     // C1 applies to every scenario: no execution member may be called while the state lock is held.
-    private static async Task ScenarioAsync(string id, Func<RunHarness, Task> body, bool initialize = true)
+    private static async Task ScenarioAsync(string id, Func<RunHarness, Task> body, bool initialize, bool reconnect)
     {
-        await using var harness = await RunHarness.CreateAsync(initialize);
+        await using var harness = await RunHarness.CreateAsync(initialize, reconnect: reconnect);
         try {
             await body(harness);
         } catch (Exception exception) {
@@ -656,7 +657,13 @@ internal static partial class RunSelfTests
         Expect(response is { Success: false, Error.Code: "invalid_request" }, "未知 operation 应返回 invalid_request。");
     }
 
-    private static async Task VerifyRunSurvivesPartialEventReconnectAsync(RunHarness harness)
+    private static Task VerifyRunSurvivesPartialEventReconnectAsync(RunHarness harness) =>
+        VerifyEventWriteFailureAsync(harness, partialRequest: false);
+
+    private static Task VerifyRunSurvivesPartialRequestReconnectAsync(RunHarness harness) =>
+        VerifyEventWriteFailureAsync(harness, partialRequest: true);
+
+    private static async Task VerifyEventWriteFailureAsync(RunHarness harness, bool partialRequest)
     {
         var (request, item) = await StartRunningAsync(harness, 1, running: false);
         var prefixWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -668,39 +675,54 @@ internal static partial class RunSelfTests
             prefixWritten.TrySetResult();
             return releaseBody.Task;
         };
-        var queued = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
-        harness.ResponseWriteStarted = write => queued.TrySetResult(write);
-        Task<WorkerSnapshot> query;
-        Task replyWrite;
+        var readingRemainder = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumeRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try {
             item.ReportRunning();
             await prefixWritten.Task.WaitAsync(RunHarness.WaitLimit);
-            query = harness.SnapshotAsync();
-            replyWrite = await queued.Task.WaitAsync(RunHarness.WaitLimit);
-            Expect(!replyWrite.IsCompleted, "状态帧正文阻塞时，快照应答必须在写锁上排队。");
+            Task<WireEnvelope>? reply = null;
+            var logQuery = WireEnvelope.Request(ProtocolOperations.LogGetSince, Guid.NewGuid(), new LogGetSinceRequest(0, 10));
+            if (partialRequest) {
+                var bodyReads = 0;
+                harness.Wire.HoldRead = count => {
+                    if (count > sizeof(uint) && ++bodyReads == 2) {
+                        readingRemainder.TrySetResult();
+                        return resumeRead.Task;
+                    }
+                    return null;
+                };
+                await harness.WritePartialRequestAsync(logQuery);
+                await readingRemainder.Task.WaitAsync(RunHarness.WaitLimit);
+            } else {
+                reply = harness.RequestAsync(ProtocolOperations.FrameworkSetOptions, new FrameworkSetOptionsRequest(new(), false));
+                await harness.OptionsApplied.Task.WaitAsync(RunHarness.WaitLimit);
+            }
+            // This writer cannot leave the gate until the event writer has recorded its failure.
+            var queued = harness.WorkerConnection.WriteAsync(
+                WireEnvelope.Response(logQuery.Operation, logQuery.RequestId!.Value, new { }), CancellationToken.None);
+            Expect(!queued.IsCompleted, "事件帧正文阻塞时，后续写入必须在写锁上排队。");
             harness.DisconnectGui();
-        } finally {
-            harness.ResponseWriteStarted = null;
             releaseBody.TrySetResult();
+            try {
+                await queued.WaitAsync(RunHarness.WaitLimit);
+                throw new InvalidOperationException("断管后排队的写者必须收到 IOException。");
+            } catch (IOException) {
+            }
+            if (reply is not null) {
+                try {
+                    await reply.WaitAsync(RunHarness.WaitLimit);
+                    throw new InvalidOperationException("已断开的 GUI 不应收到应答。");
+                } catch (System.Threading.Channels.ChannelClosedException) {
+                }
+            }
+        } finally {
+            releaseBody.TrySetResult();
+            resumeRead.TrySetResult();
         }
-        try {
-            await query.WaitAsync(RunHarness.WaitLimit);
-            throw new InvalidOperationException("已断开的 GUI 不应收到快照应答。");
-        } catch (System.Threading.Channels.ChannelClosedException) {
-        }
-        try {
-            await replyWrite.WaitAsync(RunHarness.WaitLimit);
-            throw new InvalidOperationException("断开的管道不能写入排队的快照应答。");
-        } catch (IOException) {
-        }
-        try {
-            await harness.Serving.WaitAsync(RunHarness.WaitLimit);
-            throw new InvalidOperationException("排队应答应以断管 IOException 结束本连接。");
-        } catch (IOException) {
-        }
-        await harness.ReconnectAsync();
+        await harness.WaitForConnectionAsync();
         var restored = await harness.QuerySnapshotAsync(request.RunId);
-        Expect(restored.RunRegistered == true && restored.Snapshot.ActiveRun?.RunId == request.RunId
+        Expect(restored.Snapshot.WorkerPid == Environment.ProcessId && restored.RunRegistered == true
+            && restored.Snapshot.ActiveRun?.RunId == request.RunId
             && restored.Snapshot.RunState == RunState.Running, "同一 Worker 重连后应继续原 Run。");
         item.Complete(RuntimeExecutionOutcome.Succeeded);
         Expect((await TerminalAsync(harness, request.RunId)).LastRun?.State == RunState.Succeeded,

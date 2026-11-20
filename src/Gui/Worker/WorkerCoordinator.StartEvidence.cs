@@ -45,6 +45,7 @@ internal sealed partial class WorkerCoordinator
     private readonly Dictionary<Guid, EvidenceRequest> _evidenceRequests = [];
     private WorkerConnectionId _connectionId;
     private long _writeSequence;
+    private bool _receivedFullSnapshot;
     private bool _evidenceRequested;
 
     // Subscribers enqueue batches synchronously. Frame validation, publication and waiter
@@ -66,6 +67,7 @@ internal sealed partial class WorkerCoordinator
     {
         _connectionId = new(admission.WorkerInstanceId, _connectionId.Generation + 1);
         _writeSequence = 0;
+        _receivedFullSnapshot = false;
     }
 
     private void FinishEvidenceLocked(ProtocolConnection connection)
@@ -129,6 +131,12 @@ internal sealed partial class WorkerCoordinator
                 if (connection is null || connection != _connection || connection.IsClosed || entry.Identity.Connection is null) {
                     throw new InvalidOperationException("目标 Worker IPC 已失效。");
                 }
+                if (submission is not null && !_receivedFullSnapshot) {
+                    var notSent = new WorkerObservationBatch(_connectionId, WorkerEvidenceKind.NotSent, entry.Identity,
+                        Error: new InvalidOperationException("当前连接正在等待首份完整 Snapshot。"));
+                    PublishLocked(notSent);
+                    return notSent;
+                }
                 if (attempt is not null && (Snapshot is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
                     || attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
                     || attempt.Plan.RuntimeProfileDigest != worker.RuntimeProfileDigest)) {
@@ -142,7 +150,7 @@ internal sealed partial class WorkerCoordinator
                 ? WireEnvelope.Request(ProtocolOperations.WorkerGetSnapshot, entry.Identity.RequestId, new GetSnapshotRequest(run.RunId))
                 : WireEnvelope.Request(ProtocolOperations.RunStart, entry.Identity.RequestId,
                     new RunStartRequest(run.RunId, attempt.PlanDigest, attempt.Plan) { RedactionValues = attempt.RedactionValues });
-            await connection.WriteAsync(frame, token, () => BeginBody(connection, entry, token)).WaitAsync(token).ConfigureAwait(false);
+            await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, token)).WaitAsync(token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             var batch = await reply.WaitAsync(token).ConfigureAwait(false);
             if (batch.Kind == WorkerEvidenceKind.Disconnected) {

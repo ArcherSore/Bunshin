@@ -13,11 +13,12 @@ public sealed class ProtocolConnection : IAsyncDisposable
     private readonly Stream _stream;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly TaskCompletionSource<Exception?> _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private sealed record Closure(Exception? Reason);
-    private Closure? _closure;
+    private int _disposed;
+    private IOException? _writeFailure;
 
     public Task<Exception?> Closed => _closed.Task;
-    public bool IsClosed => Volatile.Read(ref _closure) is not null;
+    public bool IsClosed => Volatile.Read(ref _disposed) != 0;
+    public IOException? WriteFailure => Volatile.Read(ref _writeFailure);
 
     public ProtocolConnection(Stream stream)
     {
@@ -62,7 +63,7 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
     public async Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending)
     {
-        ThrowIfDisposed();
+        ThrowIfWriteUnavailable();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
         if (payload.Length == 0 || payload.Length > ProtocolConstants.MaximumFramePayloadBytes) {
             throw new ProtocolException($"IPC frame payload 越界：{payload.Length} bytes。 ");
@@ -73,9 +74,8 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
         await _writeGate.WaitAsync(cancellationToken);
         var incomplete = false;
-        Closure? broken = null;
         try {
-            ThrowIfDisposed();
+            ThrowIfWriteUnavailable();
             // Stream.WriteAsync returns no byte count on cancellation. A one-byte write
             // distinguishes an untouched stream from a partially written length prefix.
             await _stream.WriteAsync(prefix.AsMemory(0, 1), cancellationToken);
@@ -91,36 +91,23 @@ public sealed class ProtocolConnection : IAsyncDisposable
             incomplete = false;
             await _stream.FlushAsync(cancellationToken);
         } catch (Exception error) when (incomplete) {
-            // Fence queued writers before releasing the gate. Dispose the stream outside it.
-            broken = BeginClose(error as IOException ?? new IOException("IPC 帧未写完整。", error));
+            // A second frame would corrupt the wire. Only the owner may close the concurrent reader.
+            Volatile.Write(ref _writeFailure, error as IOException ?? new IOException("IPC 帧未写完整。", error));
             throw;
         } finally {
             _writeGate.Release();
-            if (broken is not null) {
-                FinishClose(broken);
-            }
         }
     }
 
     public void Close(Exception? reason = null)
     {
-        if (BeginClose(reason) is { } closure) {
-            FinishClose(closure);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
+            return;
         }
-    }
-
-    private Closure? BeginClose(Exception? reason)
-    {
-        var closure = new Closure(reason);
-        return Interlocked.CompareExchange(ref _closure, closure, null) is null ? closure : null;
-    }
-
-    private void FinishClose(Closure closure)
-    {
         try {
             _stream.Dispose();
         } finally {
-            _closed.TrySetResult(closure.Reason);
+            _closed.TrySetResult(reason);
         }
     }
 
@@ -130,14 +117,15 @@ public sealed class ProtocolConnection : IAsyncDisposable
         return ValueTask.CompletedTask;
     }
 
-    private void ThrowIfDisposed()
+    private void ThrowIfWriteUnavailable()
     {
-        var closure = Volatile.Read(ref _closure);
-        if (closure?.Reason is IOException error) {
+        if (WriteFailure is { } error) {
             throw new IOException(error.Message, error);
         }
-        ObjectDisposedException.ThrowIf(closure is not null, this);
+        ThrowIfDisposed();
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(IsClosed, this);
 }
 
 public sealed class ProtocolException : Exception

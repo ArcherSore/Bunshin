@@ -25,6 +25,7 @@ internal static partial class WorkerCoordinatorSelfTest
         (nameof(VerifyStartEvidenceSyncReconnectAsync), VerifyStartEvidenceSyncReconnectAsync),
         (nameof(VerifyInitialSnapshotBeforeEofAsync), VerifyInitialSnapshotBeforeEofAsync),
         (nameof(VerifyInitialLogPageBeforeEofAsync), VerifyInitialLogPageBeforeEofAsync),
+        (nameof(VerifyLiveLogPageBeforeInitialSyncEofAsync), VerifyLiveLogPageBeforeInitialSyncEofAsync),
         (nameof(VerifyStartEvidenceRevisionOrderAsync), VerifyStartEvidenceRevisionOrderAsync),
         (nameof(VerifyStartEvidenceWritesAsync), VerifyStartEvidenceWritesAsync),
         (nameof(VerifyStartEvidenceRepliesAsync), VerifyStartEvidenceRepliesAsync),

@@ -46,11 +46,11 @@ internal sealed class WorkerLogRecovery(
                 return Task.CompletedTask;
             }
             _logSequence.ObserveTarget(targetSequence);
-            if (_logSequence.LastContiguousSequence >= _logSequence.HighestObservedSequence) {
-                return Task.CompletedTask;
-            }
             if (_logRecoveryTask is { IsCompleted: false }) {
                 return _logRecoveryTask;
+            }
+            if (_logSequence.LastContiguousSequence >= _logSequence.HighestObservedSequence) {
+                return Task.CompletedTask;
             }
 
             _logRecoveryTask = Task.Run(

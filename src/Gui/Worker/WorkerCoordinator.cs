@@ -632,7 +632,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
 
         using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = connectionLifetime.Token;
-        _ = ReadWorkerAsync();
+        ConnectionReader = ReadWorkerAsync();
         var initialSync = SynchroniseWorkerAsync();
         try {
             if (await connection.Closed.WaitAsync(cancellationToken) is { } failure) {
@@ -678,9 +678,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             try {
                 var response = await SendRequestAsync<object, GetSnapshotResponse>(
                     ProtocolOperations.WorkerGetSnapshot, new { }, token, connection: connection, reconciledStart: previousStart);
-                if (connection.IsClosed) {
-                    return;
-                }
                 _ = SynchroniseFrameworkOptionsAsync(token);
                 await _logRecovery.EnsureLogRecoveryAsync(admission.WorkerInstanceId, logRecoveryGeneration,
                     response.Snapshot.LastLogSequence, token);
@@ -689,6 +686,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             }
         }
     }
+
+    internal Task ConnectionReader { get; private set; } = Task.CompletedTask;
 
     // A Worker that outlived the GUI still holds the options of its launch. This runs beside log recovery, and its
     // failure ends nothing: debug records are not worth a connection, and SendRequestAsync has logged it.
@@ -899,6 +898,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             ValidateEvidenceSnapshot(snapshot);
         }
         ValidateSnapshot(snapshot, admission);
+        // Even an older full reply satisfies this connection's initial sync requirement.
+        _receivedFullSnapshot = true;
         if (_startAwaitingObservation == reconciledStart) {
             _startAwaitingObservation = null;
         }
@@ -1008,7 +1009,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             throw new InvalidOperationException("无法登记 IPC requestId。 ");
         }
         try {
-            await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
+            await WriteRequestAsync(connection, WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
             var response = await completion.Task.WaitAsync(RequestTimeout, _requestClock, cancellationToken);
             if (response.Success != true) {
                 throw new WorkerProtocolErrorException(
@@ -1023,6 +1024,17 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             throw;
         } catch {
             _pending.TryRemove(requestId, out _);
+            throw;
+        }
+    }
+
+    private static async Task WriteRequestAsync(ProtocolConnection connection, WireEnvelope request,
+        CancellationToken cancellationToken, Action? onSending)
+    {
+        try {
+            await connection.WriteAsync(request, cancellationToken, onSending);
+        } catch (Exception error) when ((connection.WriteFailure ?? error as IOException) is { } failure) {
+            connection.Close(failure);
             throw;
         }
     }

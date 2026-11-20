@@ -23,6 +23,8 @@ internal sealed class RunHarness : IAsyncDisposable
     private ProtocolConnection _gui = null!;
     private ProtocolConnection _worker = null!;
     private Task _receiving = Task.CompletedTask;
+    private readonly Channel<bool> _connections = Channel.CreateUnbounded<bool>();
+    private Task? _workerLoop;
 
     private RunHarness(Guid workerId, TelemetryOptions? telemetry,
         Func<LaunchManifest, Func<Guid, IReadOnlyList<WorkerLogEntry>>, IRunTelemetry?>? createTelemetry,
@@ -40,6 +42,7 @@ internal sealed class RunHarness : IAsyncDisposable
                     throw FrameworkOptionsFailure;
                 }
                 AppliedFrameworkOptions.Add(options);
+                OptionsApplied.TrySetResult();
             },
             createTelemetry ?? ((_, _) => null));
         Executions.Probe = Host.GetSnapshot;
@@ -59,15 +62,40 @@ internal sealed class RunHarness : IAsyncDisposable
 
     internal Task Serving { get; private set; } = Task.CompletedTask;
 
-    internal Action<Task>? ResponseWriteStarted { get; set; }
+    internal TaskCompletionSource OptionsApplied { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal void DisconnectGui() => _gui.Close();
 
-    internal async Task ReconnectAsync()
+    internal async Task WritePartialRequestAsync(WireEnvelope request)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(request, ProtocolJson.Options);
+        var fragment = new byte[sizeof(uint) + 1];
+        BinaryPrimitives.WriteUInt32LittleEndian(fragment, (uint)payload.Length);
+        fragment[^1] = payload[0];
+        await _server.WriteAsync(fragment, _shutdown.Token);
+    }
+
+    internal ProtocolConnection WorkerConnection => _worker;
+
+    internal async Task WaitForConnectionAsync()
+    {
+        var connected = _connections.Reader.ReadAsync(_shutdown.Token).AsTask();
+        // A fatal exception from the real Worker loop must fail the test immediately.
+        var completed = await Task.WhenAny(connected, _workerLoop!).WaitAsync(WaitLimit);
+        await completed;
+        RunSelfTests.Expect(!_workerLoop!.IsCompleted, "Worker 在重连前退出。");
+    }
+
+    private async Task ServeTestPipeAsync(CancellationToken cancellationToken)
     {
         await _receiving.WaitAsync(WaitLimit);
-        await _worker.DisposeAsync();
         await ConnectAsync();
+        _connections.Writer.TryWrite(true);
+        try {
+            await Host.ServeConnectionAsync(_worker, cancellationToken);
+        } finally {
+            await _worker.DisposeAsync();
+        }
     }
 
     internal StructuredReason? ReadinessFailure { get; set; }
@@ -83,12 +111,18 @@ internal sealed class RunHarness : IAsyncDisposable
 
     internal static async Task<RunHarness> CreateAsync(bool initialize = true, TelemetryOptions? telemetry = null,
         Func<LaunchManifest, Func<Guid, IReadOnlyList<WorkerLogEntry>>, IRunTelemetry?>? createTelemetry = null,
-        string projectRoot = "C:\\dummy")
+        string projectRoot = "C:\\dummy", bool reconnect = false)
     {
         var harness = new RunHarness(Guid.NewGuid(), telemetry, createTelemetry, projectRoot);
-        await harness.ConnectAsync();
-        if (initialize) {
-            await harness.Host.InitializeAsync(CancellationToken.None);
+        if (reconnect) {
+            harness._workerLoop = harness.Host.RunAsync(harness._shutdown.Token, harness.ServeTestPipeAsync);
+            await harness.WaitForConnectionAsync();
+        } else {
+            await harness.ConnectAsync();
+            harness.Serving = harness.Host.ServeConnectionAsync(harness._worker, harness._shutdown.Token);
+            if (initialize) {
+                await harness.Host.InitializeAsync(CancellationToken.None);
+            }
         }
         return harness;
     }
@@ -107,7 +141,6 @@ internal sealed class RunHarness : IAsyncDisposable
         _gui = new ProtocolConnection(_server);
         _worker = new ProtocolConnection(Wire);
         _responses = Channel.CreateUnbounded<WireEnvelope>();
-        Serving = Host.ServeConnectionAsync(_worker, _shutdown.Token, write => ResponseWriteStarted?.Invoke(write));
         _receiving = Task.Run(ReceiveAsync);
     }
 
@@ -203,11 +236,13 @@ internal sealed class RunHarness : IAsyncDisposable
         Executions.ReleaseAll();
         _shutdown.Cancel();
         try {
-            await Task.WhenAll(Serving, _receiving).WaitAsync(WaitLimit);
+            await Task.WhenAll(_workerLoop ?? Serving, _receiving).WaitAsync(WaitLimit);
         } catch (Exception) {
             // Tests that expect a particular connection outcome await Serving themselves.
         }
-        Host.DisposeTelemetry();
+        if (_workerLoop is null) {
+            Host.DisposeTelemetry();
+        }
         await _gui.DisposeAsync();
         await _worker.DisposeAsync();
         _shutdown.Dispose();
@@ -433,6 +468,7 @@ internal sealed class RecordingStream(Stream inner) : Stream
 
     // Returns a task to wait for before the given bytes are written, or null to write them at once.
     internal Func<ReadOnlyMemory<byte>, Task?>? HoldWrite { get; set; }
+    internal Func<int, Task?>? HoldRead { get; set; }
 
     public override bool CanRead => true;
     public override bool CanSeek => false;
@@ -485,8 +521,13 @@ internal sealed class RecordingStream(Stream inner) : Stream
     public override void Write(byte[] buffer, int offset, int count) =>
         WriteAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
 
-    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-        inner.ReadAsync(buffer, cancellationToken);
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (HoldRead?.Invoke(buffer.Length) is { } hold) {
+            await hold.WaitAsync(cancellationToken);
+        }
+        return await inner.ReadAsync(buffer, cancellationToken);
+    }
 
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
         inner.ReadAsync(buffer, offset, count, cancellationToken);

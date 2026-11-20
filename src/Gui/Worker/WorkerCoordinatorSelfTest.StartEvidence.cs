@@ -103,18 +103,12 @@ internal static partial class WorkerCoordinatorSelfTest
         await f.Coordinator.WaitForServerReadyAsync(f.Token);
         await using var peer = await ConnectRawAsync(f.PipeName, f.Token);
         await f.BeginSyncAsync(peer);
+        var oldReader = f.Coordinator.ConnectionReader;
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var returned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Coordinator.StateChanged += (_, state) => {
             if (state.Fresh && state.WorkerSnapshot?.StateRevision == 2 && entered.TrySetResult()) {
                 release.Wait(f.Token);
-            }
-        };
-        // Multicast handlers run in registration order on the old reader.
-        f.Coordinator.StateChanged += (_, state) => {
-            if (state.Fresh && state.WorkerSnapshot?.StateRevision == 2) {
-                returned.TrySetResult();
             }
         };
         var snapshot = CreateSnapshot(f.Admission, 0) with { StateRevision = 2 };
@@ -122,6 +116,7 @@ internal static partial class WorkerCoordinatorSelfTest
             new StateChangedEvent(f.Run.WorkerInstanceId, 2, snapshot)), f.Token);
         try {
             await entered.Task.WaitAsync(f.Token);
+            Require(!oldReader.IsCompleted, "阻塞的状态回调应属于仍在执行的旧读循环。");
             // Queue a frame while the old reader is still inside the callback.
             var stale = snapshot with { StateRevision = 3 };
             await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
@@ -139,7 +134,7 @@ internal static partial class WorkerCoordinatorSelfTest
                 && fresh.Connection?.WorkerInstanceId == lost.Connection?.WorkerInstanceId
                 && fresh.Connection?.Generation > lost.Connection?.Generation, "原 PID 应在旧回调返回前完成重连同步。");
             release.Set();
-            await returned.Task.WaitAsync(f.Token);
+            await oldReader.WaitAsync(f.Token);
             var query = f.Coordinator.QueryRunAsync(f.Run, new(Guid.NewGuid()), f.Token);
             var frame = await f.ReadAsync(next, ProtocolOperations.WorkerGetSnapshot);
             await next.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value,
@@ -216,6 +211,57 @@ internal static partial class WorkerCoordinatorSelfTest
         Require(sequences.SequenceEqual([1L, 2L, 3L]), "首次同步已开始发布的日志页应在断线清理前按序发完。");
     }
 
+    private static async Task VerifyLiveLogPageBeforeInitialSyncEofAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        await f.Coordinator.WaitForServerReadyAsync(f.Token);
+        await using var peer = await ConnectRawAsync(f.PipeName, f.Token);
+        var initial = await f.BeginSyncAsync(peer);
+        Require(SpinWait.SpinUntil(() => f.Clock.PendingTimers == 1, TimeSpan.FromSeconds(5)),
+            "首次快照请求应已写完并在等待回包。");
+        var server = f.Server;
+        var releasePage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.HoldNextFlush = releasePage.Task;
+        var sequences = new ConcurrentQueue<long>();
+        f.Coordinator.LogReceived += (_, entry) => sequences.Enqueue(entry.Sequence);
+        var entries = Enumerable.Range(1, 3).Select(i => CreateEntry(i, ProtocolConstants.RunLogSource,
+            $"log {i}", DateTime.UtcNow)).ToArray();
+        await peer.WriteAsync(CreateLogEvent(f.Run.WorkerInstanceId, entries[^1]), f.Token);
+        var page = await ReadRequestAsync(peer, ProtocolOperations.LogGetSince, f.Token);
+
+        // Hold the successful snapshot sender until the reader has processed both replies and EOF.
+        // The page reply is already on the GUI, but its sender has yet to return from FlushAsync.
+        void WaitForEof(object? sender, Gui.Models.LogEntry entry)
+        {
+            if (entry.Message.Contains("Worker 请求完成") && entry.Message.Contains(initial.Operation)) {
+                server.WireClosed.Task.Wait(f.Token);
+            }
+        }
+        logger.EntryWritten += WaitForEof;
+        f.Coordinator.FrameworkOptions = () => {
+            releasePage.TrySetResult();
+            return new();
+        };
+        var atDisconnect = new TaskCompletionSource<long[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Coordinator.ObservationReceived += (_, batch) => {
+            if (batch.Kind == WorkerEvidenceKind.Disconnected) {
+                atDisconnect.TrySetResult(sequences.ToArray());
+                releasePage.TrySetResult();
+            }
+        };
+        try {
+            await WriteLogPageAsync(peer, page, entries, 3, f.Token);
+            await peer.WriteAsync(WireEnvelope.Response(initial.Operation, initial.RequestId!.Value,
+                new GetSnapshotResponse(CreateSnapshot(f.Admission, 3))), f.Token);
+            await peer.DisposeAsync();
+            Require(await atDisconnect.Task.WaitAsync(f.Token) is [1L, 2L, 3L],
+                "实时日志先启动的补页应在断线通知前按序发完。");
+        } finally {
+            releasePage.TrySetResult();
+            logger.EntryWritten -= WaitForEof;
+        }
+    }
+
     private static async Task VerifyStartEvidenceRevisionOrderAsync(AppLogger logger, string directory, string project)
     {
         await using var f = new EvidenceFixture(logger, directory, project);
@@ -231,12 +277,19 @@ internal static partial class WorkerCoordinatorSelfTest
         var running = CreateSnapshot(f.Admission, 0, active) with { StateRevision = 2 };
         await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
             new StateChangedEvent(f.Run.WorkerInstanceId, 3, ready)), f.Token);
+        var latest = await f.NextAsync(WorkerEvidenceKind.Snapshot);
+        Require(latest.Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 3 },
+            "重连后较高修订的就绪事件应更新生产快照。");
+        var early = f.NewSubmission();
+        var notSent = await f.Coordinator.SendStartAsync(early, f.Attempt, f.Token).WaitAsync(f.Token);
+        Require(notSent == await f.NextAsync(WorkerEvidenceKind.NotSent, early)
+            && notSent.Request?.WriteSequence is null && f.WireStarts == 0
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted && b.Request?.Submission == early),
+            "当前连接尚未收到完整快照时，启动应返回 NotSent，管道上应为零次启动。");
         await peer.WriteAsync(WireEnvelope.Response(initial.Operation, initial.RequestId!.Value,
             new GetSnapshotResponse(running)), f.Token);
-        var latest = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         var older = await f.NextAsync(WorkerEvidenceKind.Snapshot);
-        Require(latest.Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 3 }
-            && older.ObservedSnapshot?.StateRevision == 2 && older.Current == latest.Current
+        Require(older.ObservedSnapshot?.StateRevision == 2 && older.Current == latest.Current
             && older.Current == f.Coordinator.Snapshot, "较旧的完整回包应保留其证据，当前可启动状态应维持修订 3。");
         var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
         var frame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
