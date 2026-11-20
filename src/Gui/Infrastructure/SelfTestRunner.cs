@@ -171,6 +171,8 @@ internal static partial class SelfTestRunner
             c => VerifyEndAfterUnconfirmedStop(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEndWithFaultedWorker),
             c => VerifyEndWithFaultedWorker(c.Logger, c.Directory)),
+        new(Group.RuntimeControls, nameof(VerifyStartEvidenceEnvironmentExit),
+            c => VerifyStartEvidenceEnvironmentExit(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEndWaitsForWorker),
             c => VerifyEndWaitsForWorker(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEndUnconfirmed), c => VerifyEndUnconfirmed(c.Logger, c.Directory)),

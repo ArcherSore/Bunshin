@@ -55,7 +55,7 @@ internal sealed record WorkerCoordinatorSnapshot(
         WorkerObservation.WorkerNotStarted, false, null, "Worker 尚未启动");
 }
 
-internal sealed class WorkerCoordinator : IAsyncDisposable
+internal sealed partial class WorkerCoordinator : IAsyncDisposable
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AdmissionTimeout = TimeSpan.FromSeconds(60);
@@ -76,12 +76,17 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     private readonly Func<uint, Guid, string, string, CancellationToken, Task<VerifiedChildSessionProcessLaunch>>
         _launchWorker;
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<WireEnvelope>> _pending = new();
+    private sealed record PendingRequest(string Operation, TaskCompletionSource<WireEnvelope> Completion)
+    {
+        internal GetSnapshotResponse? SnapshotResponse;
+    }
+    private readonly ConcurrentDictionary<Guid, PendingRequest> _pending = new();
     private readonly ConcurrentDictionary<Guid, byte> _abandonedRequests = new();
     private readonly TaskCompletionSource<bool> _serverReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _serverTask;
     private ProtocolConnection? _connection;
     private WorkerAdmissionRecord? _admission;
+    private CancellationTokenSource? _exitWatch;
     // An unreadable record may still describe a live Worker, so it blocks Prepare until the session is ended.
     private bool _admissionUnreadable;
     private Guid? _launchingWorkerInstanceId;
@@ -99,7 +104,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         Func<IReadOnlyList<WorkerProcessEntry>>? captureProcesses = null,
         Func<IReadOnlyCollection<uint>>? enumerateSessions = null,
         Func<uint, Guid, string, string, CancellationToken, Task<VerifiedChildSessionProcessLaunch>>?
-            launchWorker = null)
+            launchWorker = null, TimeProvider? requestClock = null, Func<Stream, Stream>? wrapPipe = null)
     {
         _logger = logger;
         _runResults = new RunResultLog(logger);
@@ -114,6 +119,8 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         _workerImageName = Path.GetFileName(_workerExecutablePath);
         _pipeName = pipeName;
         _usePipeAcl = usePipeAcl;
+        _requestClock = requestClock ?? TimeProvider.System;
+        _wrapPipe = wrapPipe;
         _captureProcesses = captureProcesses ?? WorkerAdmissionInspection.CaptureProcesses;
         _enumerateSessions = enumerateSessions ?? WorkerAdmissionInspection.EnumerateSessionIds;
         var launcher = new ChildSessionWorkerLauncher(logger);
@@ -145,12 +152,14 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     internal Func<bool>? TelemetryEnabled { get; set; }
     internal Func<ProjectPlanModule, TelemetryOptions?>? TelemetryOptions { get; set; }
 
-    internal int? TrackedWorkerPid
+    internal int? TrackedWorkerPid => TrackedAdmission?.WorkerPid;
+
+    internal WorkerAdmissionRecord? TrackedAdmission
     {
         get
         {
             lock (_gate) {
-                return _admission?.WorkerPid;
+                return _admission;
             }
         }
     }
@@ -522,13 +531,20 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    internal void ChildSessionEnded()
+    internal void ChildSessionEnded(WorkerAdmissionRecord? confirmedExit = null)
     {
         WorkerAdmissionRecord? record;
         lock (_logRecovery.DispatchGate) {
             lock (_gate) {
                 record = _admission;
-                _admission = null;
+                CancelExitWatchLocked();
+                if (_connection is { } connection) {
+                    connection.Close(new IOException("Worker Admission 已摘除。"));
+                    FinishEvidenceLocked(connection);
+                }
+                if (record is not null) {
+                    RemoveAdmissionLocked(record, confirmedExit == record);
+                }
                 _admissionUnreadable = false;
                 _connection = null;
                 _awaitedFreshSnapshot = null;
@@ -603,7 +619,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
 
     private async Task ServeConnectionAsync(NamedPipeServerStream server, CancellationToken cancellationToken)
     {
-        await using var connection = new ProtocolConnection(server);
+        await using var connection = new ProtocolConnection(_wrapPipe?.Invoke(server) ?? server);
         if (await AdmitConnectionAsync(server, connection, cancellationToken) is not { } admitted) {
             return;
         }
@@ -615,29 +631,21 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
 
         using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var reader = ReadLoopAsync(
-            connection, admission.WorkerInstanceId,
-            logRecoveryGeneration, connectionLifetime.Token);
-        _ = reader.ContinueWith(
-            _ => connectionLifetime.Cancel(),
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+        var token = connectionLifetime.Token;
+        _ = ReadWorkerAsync();
+        _ = SynchroniseWorkerAsync();
         try {
-            var response = await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, connectionLifetime.Token);
-            ApplyFreshSnapshot(response.Snapshot, admission, connection, previousStart);
-            _ = SynchroniseFrameworkOptionsAsync(connectionLifetime.Token);
-            await _logRecovery.EnsureLogRecoveryAsync(
-                admission.WorkerInstanceId, logRecoveryGeneration,
-                response.Snapshot.LastLogSequence, connectionLifetime.Token);
-            await reader;
+            if (await connection.Closed.WaitAsync(cancellationToken) is { } failure) {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failure);
+            }
         } finally {
+            connection.Close(cancellationToken.IsCancellationRequested ? new OperationCanceledException(cancellationToken) : null);
             connectionLifetime.Cancel();
             WorkerAdmissionRecord? detached = null;
             lock (_logRecovery.DispatchGate) {
                 lock (_gate) {
                     if (ReferenceEquals(_connection, connection)) {
+                        FinishEvidenceLocked(connection);
                         _connection = null;
                         _logRecovery.InvalidateConnectionLocked();
                         detached = _admission;
@@ -649,6 +657,33 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
             // It runs after detaching so ClassifyAdmission inspects the recorded PID instead of trusting the pipe.
             if (detached is not null && !cancellationToken.IsCancellationRequested) {
                 MarkDisconnected(detached);
+            }
+        }
+
+        async Task ReadWorkerAsync()
+        {
+            try {
+                await ReadLoopAsync(connection, admission, logRecoveryGeneration, token);
+                connection.Close();
+            } catch (Exception error) {
+                connection.Close(error);
+            }
+        }
+
+        async Task SynchroniseWorkerAsync()
+        {
+            try {
+                var response = await SendRequestAsync<object, GetSnapshotResponse>(
+                    ProtocolOperations.WorkerGetSnapshot, new { }, token, connection: connection);
+                ApplyFreshSnapshot(response.Snapshot, admission, connection, previousStart);
+                if (connection.IsClosed) {
+                    return;
+                }
+                _ = SynchroniseFrameworkOptionsAsync(token);
+                await _logRecovery.EnsureLogRecoveryAsync(admission.WorkerInstanceId, logRecoveryGeneration,
+                    response.Snapshot.LastLogSequence, token);
+            } catch (Exception error) {
+                connection.Close(error);
             }
         }
     }
@@ -716,6 +751,8 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                         _store.SaveRecord(admission);
                     }
                     _connection = connection;
+                    CancelExitWatchLocked();
+                    BeginEvidenceLocked(admission);
                     var logRecoveryGeneration = _logRecovery.ConnectionAdmittedLocked(admission.WorkerInstanceId);
                     UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
                         WorkerObservation.Connected, false, Snapshot.WorkerSnapshot,
@@ -732,22 +769,39 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     }
 
     private async Task ReadLoopAsync(
-        ProtocolConnection connection, Guid workerInstanceId,
+        ProtocolConnection connection, WorkerAdmissionRecord admission,
         int logRecoveryGeneration, CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested) {
+        var workerInstanceId = admission.WorkerInstanceId;
+        while (!connection.IsClosed && !cancellationToken.IsCancellationRequested) {
             var envelope = await connection.ReadAsync(cancellationToken);
             if (envelope is null) {
                 _logger.Info($"Worker IPC 已关闭（EOF）{AppLogger.Field("instance", workerInstanceId)}");
                 return;
             }
             if (envelope.MessageType == ProtocolMessageTypes.Response && envelope.RequestId is Guid requestId) {
-                if (_pending.TryRemove(requestId, out var pending)) {
-                    pending.TrySetResult(envelope);
-                    continue;
-                }
-                if (_abandonedRequests.TryRemove(requestId, out _)) {
-                    continue;
+                lock (_gate) {
+                    if (connection != _connection || connection.IsClosed) {
+                        return;
+                    }
+                    if (ReceiveEvidenceReplyLocked(requestId, envelope, admission, connection)) {
+                        continue;
+                    }
+                    if (_pending.TryRemove(requestId, out var pending)) {
+                        try {
+                            if (pending.Operation == ProtocolOperations.WorkerGetSnapshot && envelope.Success == true) {
+                                pending.SnapshotResponse = ObserveFullReplyLocked(envelope, admission);
+                            }
+                            pending.Completion.TrySetResult(envelope);
+                        } catch (Exception error) {
+                            pending.Completion.TrySetException(error);
+                            throw;
+                        }
+                        continue;
+                    }
+                    if (_abandonedRequests.TryRemove(requestId, out _)) {
+                        continue;
+                    }
                 }
             }
             if (envelope.MessageType != ProtocolMessageTypes.Event) {
@@ -760,7 +814,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                         if (state.WorkerInstanceId != workerInstanceId) {
                             throw new ProtocolException("stateChanged workerInstanceId 不匹配。 ");
                         }
-                        ApplyStateEvent(state);
+                        ApplyStateEvent(state, envelope.ProtocolVersion, connection);
                         break;
                     }
                 case ProtocolOperations.LogEntry: {
@@ -825,7 +879,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         ValidateSnapshot(snapshot, admission);
         lock (_gate) {
             if (_admission?.WorkerInstanceId != admission.WorkerInstanceId
-                || !ReferenceEquals(connection, _connection)) {
+                || !ReferenceEquals(connection, _connection) || connection.IsClosed) {
                 return;
             }
             if (_startAwaitingObservation == reconciledStart) {
@@ -848,13 +902,17 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
     }
 
-    private void ApplyStateEvent(StateChangedEvent state)
+    private void ApplyStateEvent(StateChangedEvent state, int protocolVersion, ProtocolConnection connection)
     {
         WorkerAdmissionRecord admission;
         long? revisionGapFrom = null;
         lock (_gate) {
+            if (connection != _connection || connection.IsClosed) {
+                return;
+            }
             admission = _admission
                         ?? throw new ProtocolException("没有 Admission Record 却收到 state event。 ");
+            ObserveStateLocked(state, protocolVersion, admission);
             var currentRevision = Snapshot.WorkerSnapshot?.StateRevision ?? 0;
             if (state.StateRevision <= currentRevision) {
                 return;
@@ -933,17 +991,18 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         }
         var requestId = Guid.NewGuid();
         var completion = new TaskCompletionSource<WireEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pending.TryAdd(requestId, completion)) {
+        var pending = new PendingRequest(operation, completion);
+        if (!_pending.TryAdd(requestId, pending)) {
             throw new InvalidOperationException("无法登记 IPC requestId。 ");
         }
         try {
             await connection.WriteAsync(WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
-            var response = await completion.Task.WaitAsync(RequestTimeout, cancellationToken);
+            var response = await completion.Task.WaitAsync(RequestTimeout, _requestClock, cancellationToken);
             if (response.Success != true) {
                 throw new WorkerProtocolErrorException(
                     response.Error?.Code ?? "internal_error", response.Error?.Message ?? "Worker 返回未知错误。 ");
             }
-            return ProtocolJson.Deserialize<TResponse>(response.Data);
+            return pending.SnapshotResponse is TResponse snapshot ? snapshot : ProtocolJson.Deserialize<TResponse>(response.Data);
         } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
             AbandonPendingRequest(requestId);
             throw;
@@ -969,7 +1028,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     private async Task ExpireAbandonedRequestAsync(Guid requestId)
     {
         try {
-            await Task.Delay(RequestTimeout, _shutdown.Token).ConfigureAwait(false);
+            await Task.Delay(RequestTimeout, _requestClock, _shutdown.Token).ConfigureAwait(false);
         } catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) {
         } finally {
             _abandonedRequests.TryRemove(requestId, out _);
@@ -980,7 +1039,7 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
     {
         foreach (var pair in _pending) {
             if (_pending.TryRemove(pair.Key, out var pending)) {
-                pending.TrySetCanceled();
+                pending.Completion.TrySetCanceled();
             }
         }
         _abandonedRequests.Clear();
@@ -1025,17 +1084,27 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                 AdmissionLiveness.Alive => "Worker 仍存活，IPC 已断开",
                 _ => "无法确认 Worker 是否仍在运行，IPC 已断开"
             });
-        if (liveness != AdmissionLiveness.Stale) {
-            _ = WatchForWorkerExitAsync(admission);
+        lock (_gate) {
+            if (liveness != AdmissionLiveness.Stale && _exitWatch is null
+                && ReferenceEquals(_admission, admission) && _connection is null) {
+                _exitWatch = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+                _ = WatchForWorkerExitAsync(admission, _exitWatch);
+            }
         }
     }
 
-    // A killed Worker's pipe ends while Windows still lists its process, so the inspection at EOF usually finds it.
-    // The same inspection repeats until the process is gone, the Worker reconnects or the Admission is replaced.
-    private async Task WatchForWorkerExitAsync(WorkerAdmissionRecord admission)
+    private void CancelExitWatchLocked()
     {
-        // Read before the first await, while the server task that disposes _shutdown on shutdown is still running.
-        var cancellationToken = _shutdown.Token;
+        var watch = _exitWatch;
+        _exitWatch = null;
+        watch?.Cancel();
+    }
+
+    // A killed Worker's pipe can end before Windows removes its process. Repeat the same inspection
+    // until the process is gone, the Worker reconnects or the Admission is replaced.
+    private async Task WatchForWorkerExitAsync(WorkerAdmissionRecord admission, CancellationTokenSource watch)
+    {
+        var cancellationToken = watch.Token;
         try {
             while (true) {
                 await Task.Delay(WorkerExitRecheckDelay, cancellationToken);
@@ -1045,11 +1114,18 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                     }
                 }
                 if (ClassifyAdmission(admission) == AdmissionLiveness.Stale) {
-                    SetDisconnectedObservation(admission, WorkerObservation.WorkerExited, "Worker 进程已退出");
+                    SetDisconnectedObservation(admission, WorkerObservation.WorkerExited, "Worker 进程已退出", watch);
                     return;
                 }
             }
         } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        } finally {
+            lock (_gate) {
+                if (ReferenceEquals(_exitWatch, watch)) {
+                    _exitWatch = null;
+                }
+            }
+            watch.Dispose();
         }
     }
 
@@ -1114,7 +1190,8 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
                 _logger.Warn("删除失效的 Worker Admission Record 失败；保留该记录。", exception);
                 return false;
             }
-            _admission = null;
+            CancelExitWatchLocked();
+            RemoveAdmissionLocked(record, confirmedExit: true);
             _awaitedFreshSnapshot = null;
             UpdateSnapshotLocked(WorkerCoordinatorSnapshot.Empty with { Detail = detail });
             try {
@@ -1137,11 +1214,15 @@ internal sealed class WorkerCoordinator : IAsyncDisposable
         SetDisconnectedObservation(record, WorkerObservation.WorkerRecoveryConflict, detail);
     }
 
-    private void SetDisconnectedObservation(WorkerAdmissionRecord record, WorkerObservation observation, string detail)
+    private void SetDisconnectedObservation(WorkerAdmissionRecord record, WorkerObservation observation, string detail,
+        CancellationTokenSource? watch = null)
     {
         lock (_gate) {
-            if (!ReferenceEquals(_admission, record) || _connection is not null) {
+            if (!ReferenceEquals(_admission, record) || _connection is not null || watch is not null && watch != _exitWatch) {
                 return;
+            }
+            if (observation == WorkerObservation.WorkerExited && Snapshot.Observation != observation) {
+                ObserveAdmissionLocked(record, WorkerEvidenceKind.ProcessExited);
             }
             UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(observation, false, Snapshot.WorkerSnapshot, detail));
         }

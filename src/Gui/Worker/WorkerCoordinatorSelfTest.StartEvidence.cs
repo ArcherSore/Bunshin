@@ -1,0 +1,434 @@
+using System.Buffers.Binary;
+using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Threading.Channels;
+using Gui.Infrastructure;
+using ProjectModel;
+using Protocol;
+
+namespace Gui.Worker;
+
+internal static partial class WorkerCoordinatorSelfTest
+{
+    private sealed class EvidenceFixture : IAsyncDisposable
+    {
+        internal readonly string PipeName = $"Gui.Evidence.{Guid.NewGuid():N}";
+        private readonly Channel<WorkerObservationBatch> _observed = Channel.CreateUnbounded<WorkerObservationBatch>();
+        internal readonly ConcurrentQueue<WorkerObservationBatch> History = new();
+        internal readonly SelfTestRunner.ScheduleTestClock Clock = new();
+        // A watchdog bounds a broken test. Only Advance drives the request deadlines.
+        private readonly CancellationTokenSource _watchdog = new(TimeSpan.FromSeconds(30));
+        internal CancellationToken Token => _watchdog.Token;
+        internal readonly WorkerAdmissionRecord Admission;
+        internal readonly WorkerCoordinator Coordinator;
+        internal readonly RunStartAttempt Attempt;
+        private int _wireStarts;
+        internal int WireStarts => Volatile.Read(ref _wireStarts);
+        internal EvidenceWriteStream Server { get; private set; } = null!;
+        internal RunKey Run => new(Admission.WorkerInstanceId, Attempt.RunId);
+        internal Submission NewSubmission() => new(Guid.NewGuid(), Guid.NewGuid(), Run, Attempt.PlanDigest);
+
+        internal EvidenceFixture(AppLogger logger, string directory, string projectDirectory)
+        {
+            var project = OpenProject(projectDirectory, directory);
+            Attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
+            Admission = new(Guid.NewGuid(), Convert.ToHexString(Guid.NewGuid().ToByteArray()),
+                CurrentSession, Environment.ProcessId, project.RuntimeProfileDigest, DateTime.UtcNow);
+            var stateDirectory = Path.Combine(directory, $"worker-evidence-{Guid.NewGuid():N}");
+            new WorkerAdmissionStore(stateDirectory).SaveRecord(Admission);
+            Coordinator = new(logger, stateDirectory, WorkerPath, PipeName, usePipeAcl: false,
+                captureProcesses: () => [new WorkerProcessEntry(Environment.ProcessId, Admission.ChildSessionId, Path.GetFileName(WorkerPath))],
+                enumerateSessions: () => [Admission.ChildSessionId], requestClock: Clock,
+                wrapPipe: pipe => Server = new(pipe, () => Interlocked.Increment(ref _wireStarts)));
+            Coordinator.ObservationReceived += (_, batch) => {
+                History.Enqueue(batch);
+                _observed.Writer.TryWrite(batch);
+            };
+        }
+
+        internal async Task<ProtocolConnection> ConnectAsync(long revision = 1)
+        {
+            await Coordinator.WaitForServerReadyAsync(Token);
+            var pipe = await OpenConnectionAsync(PipeName, Admission, 0, Token, stateRevision: revision);
+            await NextAsync(WorkerEvidenceKind.Snapshot);
+            return pipe;
+        }
+
+        internal async Task<WorkerObservationBatch> NextAsync(WorkerEvidenceKind kind, Submission? submission = null)
+        {
+            while (true) {
+                var batch = await _observed.Reader.ReadAsync(Token);
+                if (batch.Kind == kind && (submission is null || batch.Request?.Submission == submission)) {
+                    return batch;
+                }
+            }
+        }
+
+        internal async Task<WireEnvelope> ReadAsync(ProtocolConnection pipe, string operation)
+        {
+            var frame = await pipe.ReadAsync(Token) ?? throw new EndOfStreamException();
+            Require(frame.MessageType == ProtocolMessageTypes.Request && frame.Operation == operation
+                && frame.RequestId.HasValue, $"预期 {operation}，实际收到 {frame.Operation}。");
+            if (operation == ProtocolOperations.WorkerGetSnapshot) {
+                Require(ProtocolJson.Deserialize<GetSnapshotRequest>(frame.Data).RunId == Run.RunId,
+                    "证据查询必须在线上带目标 runId。");
+            }
+            return frame;
+        }
+
+        internal async Task ExpireAsync(Task task)
+        {
+            Clock.Advance(TimeSpan.FromSeconds(15));
+            await ExpectAsync<TimeoutException>(() => task.WaitAsync(Token), "虚拟期限到达后请求必须超时。");
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Coordinator.DisposeAsync();
+            _watchdog.Dispose();
+        }
+    }
+
+    private static async Task VerifyStartEvidenceSyncReconnectAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        await f.Coordinator.WaitForServerReadyAsync(f.Token);
+        await using var peer = await ConnectRawAsync(f.PipeName, f.Token);
+        await peer.WriteAsync(WireEnvelope.Request(ProtocolOperations.ConnectionOpen, Guid.NewGuid(),
+            new ConnectionOpenRequest(f.Run.WorkerInstanceId, f.Admission.LaunchToken, f.Admission.RuntimeProfileDigest)), f.Token);
+        Require(await peer.ReadAsync(f.Token) is { Success: true }, "首次握手应接纳同一 PID。");
+        await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Coordinator.StateChanged += (_, state) => {
+            if (state.WorkerSnapshot?.StateRevision == 2 && entered.TrySetResult()) {
+                release.Wait(f.Token);
+            }
+        };
+        var snapshot = CreateSnapshot(f.Admission, 0) with { StateRevision = 2 };
+        await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
+            new StateChangedEvent(f.Run.WorkerInstanceId, 2, snapshot)), f.Token);
+        try {
+            await entered.Task.WaitAsync(f.Token);
+            // Queue a frame while the old reader is still inside the callback.
+            var stale = snapshot with { StateRevision = 3 };
+            await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
+                new StateChangedEvent(f.Run.WorkerInstanceId, 3, stale)), f.Token);
+            Require(SpinWait.SpinUntil(() => f.Clock.PendingTimers == 1, TimeSpan.FromSeconds(5)),
+                "等待首次快照的虚拟定时器尚未登记。");
+            f.Clock.Advance(TimeSpan.FromSeconds(15));
+            var lost = await f.NextAsync(WorkerEvidenceKind.Disconnected);
+            Require(lost.Error is TimeoutException && await peer.ReadAsync(f.Token) is null,
+                "存活 Worker 必须直接观察到首次同步超时造成的 EOF。");
+            await peer.DisposeAsync(); // The Worker closes its client only after the server has disconnected it.
+            await using var next = await f.ConnectAsync(4);
+            var fresh = f.History.Last(b => b.Kind == WorkerEvidenceKind.Snapshot);
+            Require(fresh.Current?.Fresh == true && fresh.ObservedSnapshot?.WorkerPid == f.Admission.WorkerPid
+                && fresh.Connection?.WorkerInstanceId == lost.Connection?.WorkerInstanceId
+                && fresh.Connection?.Generation > lost.Connection?.Generation, "原 PID 应在旧回调返回前完成重连同步。");
+            release.Set();
+            var query = f.Coordinator.QueryRunAsync(f.Run, new(Guid.NewGuid()), f.Token);
+            var frame = await f.ReadAsync(next, ProtocolOperations.WorkerGetSnapshot);
+            await next.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value,
+                new GetSnapshotResponse(snapshot with { StateRevision = 4 }, false)), f.Token);
+            Require((await query.WaitAsync(f.Token)).Connection == fresh.Connection && f.WireStarts == 0
+                && !f.History.Any(b => b.ObservedSnapshot?.StateRevision == 3), "重连应能查询，旧连接的缓存帧不能再发布。");
+        } finally {
+            release.Set();
+        }
+    }
+
+    private static async Task VerifyStartEvidenceWritesAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        var c = f.Coordinator;
+        await using var zero = await f.ConnectAsync();
+        var oversized = f.Attempt with { RedactionValues = [new string('x', ProtocolConstants.MaximumFramePayloadBytes)] };
+        var large = f.NewSubmission();
+        var sizeError = await ExpectAsync<ProtocolException>(() => c.SendStartAsync(large, oversized, f.Token), "超大帧应该被拒绝。");
+        var rejected = await f.NextAsync(WorkerEvidenceKind.NotSent, large);
+        Require(ReferenceEquals(rejected.Error, sizeError) && rejected.Request?.WriteSequence is null, "超大帧失败应在正文前保留原错。");
+
+        f.Server.StopAfterBytes = 0;
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(f.Token);
+        // The ordinary writer has no virtual deadline while it holds the lock.
+        var held = c.StopRunAsync(f.Run.RunId, cancel.Token);
+        await f.Server.Blocked.Task.WaitAsync(f.Token);
+        var queued = f.NewSubmission();
+        var queuedTask = c.SendStartAsync(queued, f.Attempt, f.Token);
+        await f.ExpireAsync(queuedTask);
+        Require(!held.IsCompleted, "排队的提交必须在持锁者仍停于首字节前时超时。");
+        cancel.Cancel();
+        await ExpectAsync<OperationCanceledException>(() => held.WaitAsync(f.Token), "普通请求应保留零字节取消。");
+        Require(f.History.Count(b => b.Kind == WorkerEvidenceKind.NotSent && b.Request?.Submission == queued) == 1
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted)
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.Disconnected)
+            && f.Server.PartialFrameBytes == 0 && c.EvidenceCounts == (0, 0), "零字节和等写锁应保持健康连接。");
+        var stop = c.StopRunAsync(f.Run.RunId, f.Token);
+        var stopped = await f.ReadAsync(zero, ProtocolOperations.RunStop);
+        await zero.WriteAsync(WireEnvelope.Response(stopped.Operation, stopped.RequestId!.Value, new RunStopResponse("accepted")), f.Token);
+        await stop.WaitAsync(f.Token);
+        await zero.DisposeAsync();
+        await f.NextAsync(WorkerEvidenceKind.Disconnected);
+
+        foreach (var count in new[] { 1, sizeof(uint), sizeof(uint) + 1 }) {
+            await using var partial = await f.ConnectAsync();
+            var server = f.Server;
+            server.StopAfterBytes = count;
+            if (count == 1) {
+                server.ReleasePrefix = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            var sub = f.NewSubmission();
+            var sending = c.SendStartAsync(sub, f.Attempt, f.Token);
+            await server.Blocked.Task.WaitAsync(f.Token);
+            try {
+                await f.ExpireAsync(sending);
+                await server.WireClosed.Task.WaitAsync(f.Token);
+            } finally {
+                server.ReleasePrefix?.TrySetResult();
+            }
+            var disconnect = await f.NextAsync(WorkerEvidenceKind.Disconnected);
+            Require(disconnect.Error is IOException && server.PartialFrameBytes == count
+                && f.History.Any(b => b.Kind == WorkerEvidenceKind.BeforeBody && b.Request?.Submission == sub)
+                && f.History.Any(b => b.Request?.Submission == sub && b.Kind ==
+                    (count > sizeof(uint) ? WorkerEvidenceKind.BodyStarted : WorkerEvidenceKind.NotSent))
+                && c.EvidenceCounts == (0, 0) && f.WireStarts == 0, "半帧应按正文边界归类，并由 GUI 关闭整条连接。");
+            await ExpectAsync<EndOfStreamException>(() => partial.ReadAsync(f.Token), "客户端应在未读满该帧时收到 EOF。");
+        }
+        await using (var ordinary = await f.ConnectAsync()) {
+            f.Server.StopAfterBytes = sizeof(uint);
+            using var interrupted = CancellationTokenSource.CreateLinkedTokenSource(f.Token);
+            var first = c.StopRunAsync(f.Run.RunId, interrupted.Token);
+            await f.Server.Blocked.Task.WaitAsync(f.Token);
+            var waiting = c.StopRunAsync(f.Run.RunId, f.Token);
+            interrupted.Cancel();
+            await ExpectAsync<OperationCanceledException>(() => first, "普通半帧写者应收到原取消。");
+            await ExpectAsync<ObjectDisposedException>(() => waiting.WaitAsync(f.Token), "排队的普通请求不能续写半帧。");
+            await f.NextAsync(WorkerEvidenceKind.Disconnected);
+            Require(f.Server.PartialFrameBytes == sizeof(uint), "半帧后不能追加下一请求的任何字节。");
+            await ExpectAsync<EndOfStreamException>(() => ordinary.ReadAsync(f.Token), "普通半帧也应由服务端关闭。");
+        }
+        await using var healthy = await f.ConnectAsync();
+        f.Server.StopAfterBytes = 0;
+        using var beforeFirstByte = CancellationTokenSource.CreateLinkedTokenSource(f.Token);
+        var cancelled = f.NewSubmission();
+        var zeroByteStart = c.SendStartAsync(cancelled, f.Attempt, beforeFirstByte.Token);
+        await f.Server.Blocked.Task.WaitAsync(f.Token);
+        beforeFirstByte.Cancel();
+        await ExpectAsync<OperationCanceledException>(() => zeroByteStart, "首字节前取消应保留原调用方取消。");
+        var notSent = await f.NextAsync(WorkerEvidenceKind.NotSent, cancelled);
+        Require(notSent.Request?.WriteSequence is null && f.Server.PartialFrameBytes == 0
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted && b.Request?.Submission == cancelled),
+            "零字节取消应关联原提交且不进入正文。");
+        var submission = f.NewSubmission();
+        var completed = c.SendStartAsync(submission, f.Attempt, f.Token);
+        await f.ReadAsync(healthy, ProtocolOperations.RunStart);
+        await f.ExpireAsync(completed);
+        Require(c.EvidenceCounts == (1, 0) && f.WireStarts == 1 && !f.Server.WireClosed.Task.IsCompleted,
+            "完整帧超时只保留应答关联，重连后的 Worker 只应收到显式发送的一帧。");
+    }
+
+    private static async Task VerifyStartEvidenceRepliesAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        await using var peer = await f.ConnectAsync();
+        var c = f.Coordinator;
+        string[] codes = ["accepted", "already_accepted", "invalid_request", "run_id_conflict", "worker_not_ready",
+            "worker_faulted", "operation_not_allowed", "worker_busy", "invalid_run_plan", "protocol_version_mismatch", "internal_error"];
+        var submissions = new List<(Submission Submission, Guid Id)>();
+        for (var i = 0; i <= codes.Length; ++i) {
+            var submission = f.NewSubmission();
+            var send = c.SendStartAsync(submission, f.Attempt, f.Token);
+            var body = await f.NextAsync(WorkerEvidenceKind.BodyStarted, submission);
+            var frame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+            Require(body.Request!.RequestId == frame.RequestId && c.EvidenceCounts == (i + 1, 1), "线上请求与正文证据必须对应。");
+            submissions.Add((submission, frame.RequestId!.Value));
+            await f.ExpireAsync(send);
+            Require(c.EvidenceCounts == (i + 1, 0), "连续超时后只保留轻量身份。");
+        }
+        var wire = f.Server;
+        for (var i = codes.Length - 1; i >= 0; --i) {
+            var (submission, id) = submissions[i];
+            await peer.WriteAsync(i < 2
+                ? WireEnvelope.Response(ProtocolOperations.RunStart, id, new RunStartResponse(codes[i]))
+                : WireEnvelope.Failure(ProtocolOperations.RunStart, id, codes[i], "scripted"), f.Token);
+            var late = await f.NextAsync(WorkerEvidenceKind.StartReply);
+            var disposition = i switch {
+                0 => StartReplyKind.Accepted, 1 => StartReplyKind.AlreadyAccepted,
+                _ when codes[i] == "internal_error" => StartReplyKind.Indeterminate,
+                _ => StartReplyKind.RejectedBeforeRegistration
+            };
+            Require(late.Request?.Submission == submission && late.Request.RequestId == id
+                && late.ReplyCode == codes[i] && late.StartReply == disposition, "迟到应答必须带回原提交和真实处置。");
+        }
+        Require(c.EvidenceCounts == (1, 0), "只有未回包的启动应保留轻量身份。");
+        // Do not read the tail run.start on the peer. It must still count on the GUI wire.
+        var tail = c.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
+        Require(SpinWait.SpinUntil(() => f.WireStarts == submissions.Count + 1, TimeSpan.FromSeconds(5)),
+            "客户端未读取的完整帧也必须计数。");
+        await f.ExpireAsync(tail);
+        var last = submissions[^1];
+        await peer.WriteAsync(WireEnvelope.Response(ProtocolOperations.RunStart, last.Id,
+            new RunStartResponse("accepted")), f.Token);
+        await peer.DisposeAsync();
+        var eof = await f.NextAsync(WorkerEvidenceKind.Disconnected);
+        await wire.WireClosed.Task.WaitAsync(f.Token);
+        var ordered = f.History.ToList();
+        Require(eof.Error is null && c.EvidenceCounts == (0, 0) && f.WireStarts == submissions.Count + 1,
+            "EOF 应清空本连接的所有关联，且没有自动重发。");
+        var accepted = ordered.Single(b => b.Kind == WorkerEvidenceKind.StartReply && b.Request?.RequestId == last.Id);
+        Require(accepted.Request?.Submission == last.Submission && ordered.IndexOf(accepted) < ordered.IndexOf(eof),
+            "应答后紧跟 EOF 时仍应先发布同一连接上已读到的接纳。");
+        await using var next = await f.ConnectAsync();
+        var lookup = c.QueryRunAsync(f.Run, new(Guid.NewGuid()), f.Token);
+        var lookupFrame = await f.ReadAsync(next, ProtocolOperations.WorkerGetSnapshot);
+        await next.WriteAsync(WireEnvelope.Response(lookupFrame.Operation, lookupFrame.RequestId!.Value,
+            new GetSnapshotResponse(CreateSnapshot(f.Admission, 0), true)), f.Token);
+        Require(!(await lookup.WaitAsync(f.Token)).Request!.Covers(accepted.Request!),
+            "重连查询不能按写序覆盖旧连接上的启动。");
+    }
+
+    private static async Task VerifyStartEvidenceQueryAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        var snapshot = CreateSnapshot(f.Admission, 0);
+        var active = CreateActiveRun(f.Attempt);
+        object[] malformed = [
+            new { snapshot }, new { snapshot, runRegistered = "false" },
+            new GetSnapshotResponse(snapshot with { ActiveRun = active, RunState = active.State }, false),
+            new GetSnapshotResponse(snapshot with { LastRun = active with { State = RunState.Failed } }, false),
+            new GetSnapshotResponse(snapshot with { WorkerInstanceId = Guid.NewGuid() }, true),
+            new GetSnapshotResponse(snapshot with { WorkerPid = -1 }, false)
+        ];
+        for (var i = 0; i < malformed.Length; i++) {
+            await using var peer = await f.ConnectAsync();
+            var id = new QueryId(Guid.NewGuid());
+            var query = f.Coordinator.QueryRunAsync(f.Run, id, f.Token);
+            var frame = await f.ReadAsync(peer, ProtocolOperations.WorkerGetSnapshot);
+            var late = i == 1;
+            if (late) {
+                await f.ExpireAsync(query);
+            }
+            await peer.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value, malformed[i]), f.Token);
+            if (!late) {
+                await ExpectAsync<ProtocolException>(() => query.WaitAsync(f.Token), "无效定向回包必须判为协议错误。");
+            }
+            var fault = await f.NextAsync(WorkerEvidenceKind.Disconnected);
+            Require(fault.Error is ProtocolException && await peer.ReadAsync(f.Token) is null
+                && !f.History.Any(b => b.Request?.QueryId == id && b.Kind == WorkerEvidenceKind.QueryReply),
+                "无效回包不能产生查询证据，Worker 应收到服务端关闭。");
+        }
+        await using var healthy = await f.ConnectAsync();
+        var start = f.NewSubmission();
+        var send = f.Coordinator.SendStartAsync(start, f.Attempt, f.Token);
+        var body = await f.NextAsync(WorkerEvidenceKind.BodyStarted);
+        await f.ReadAsync(healthy, ProtocolOperations.RunStart);
+        await f.ExpireAsync(send);
+        foreach (var registered in new[] { false, true }) {
+            var id = new QueryId(Guid.NewGuid());
+            var query = f.Coordinator.QueryRunAsync(f.Run, id, f.Token);
+            var frame = await f.ReadAsync(healthy, ProtocolOperations.WorkerGetSnapshot);
+            await healthy.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value,
+                new GetSnapshotResponse(snapshot, registered)), f.Token);
+            var result = await query.WaitAsync(f.Token);
+            Require(result.Request?.QueryId == id && result.Request.RequestId == frame.RequestId
+                && result.Request.Covers(body.Request!) && result.RunRegistered == registered && result.Current?.Fresh == true,
+                "同连接的有效查询应按写序覆盖原提交，并保留 true/false 原值。");
+        }
+        f.Coordinator.ChildSessionEnded();
+        var removed = await f.NextAsync(WorkerEvidenceKind.AdmissionRemoved);
+        Require(removed.Connection == body.Connection && await healthy.ReadAsync(f.Token) is null
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.ProcessExited) && f.WireStarts == 1,
+            "摘除 Admission 应立即关闭管道，不能冒充进程退出。");
+    }
+
+    // Only the GUI's outgoing writes are intercepted. Admission, framing, reader, and peer EOF use a real pipe.
+    private sealed class EvidenceWriteStream(Stream pipe, Action onWireStart) : Stream
+    {
+        internal int? StopAfterBytes;
+        internal TaskCompletionSource? ReleasePrefix;
+        internal readonly TaskCompletionSource Blocked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource WireClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly object _wireGate = new();
+        private bool _closed;
+        private bool _forwarding;
+        private readonly MemoryStream _frame = new();
+        internal long PartialFrameBytes => _frame.Length;
+
+        // Accumulate the bytes actually forwarded under the protocol write lock, including
+        // frames the scripted peer never reads and fragments that never become a request.
+        private async Task ForwardAsync(ReadOnlyMemory<byte> bytes, CancellationToken token)
+        {
+            lock (_wireGate) {
+                ObjectDisposedException.ThrowIf(_closed, this);
+                _forwarding = true;
+            }
+            try {
+                await pipe.WriteAsync(bytes, token);
+                _frame.Write(bytes.Span);
+                var frame = _frame.GetBuffer().AsSpan(0, (int)_frame.Length);
+                if (frame.Length >= sizeof(uint) && frame.Length - sizeof(uint) == BinaryPrimitives.ReadUInt32LittleEndian(frame)) {
+                    if (JsonSerializer.Deserialize<WireEnvelope>(frame[sizeof(uint)..], ProtocolJson.Options)
+                        is { MessageType: ProtocolMessageTypes.Request, Operation: ProtocolOperations.RunStart }) {
+                        onWireStart();
+                    }
+                    _frame.SetLength(0);
+                }
+            } finally {
+                lock (_wireGate) {
+                    _forwarding = false;
+                    if (_closed) {
+                        WireClosed.TrySetResult();
+                    }
+                }
+            }
+        }
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
+        {
+            if (StopAfterBytes is not int remaining) {
+                await ForwardAsync(buffer, token);
+                return;
+            }
+            int count = Math.Min(remaining, buffer.Length);
+            StopAfterBytes = remaining - count;
+            if (count > 0) {
+                await ForwardAsync(buffer[..count], token);
+            }
+            if (count == buffer.Length && (remaining != count || _frame.Length != sizeof(uint))) {
+                return;
+            }
+            StopAfterBytes = null;
+            Blocked.TrySetResult();
+            if (ReleasePrefix is { } release) {
+                await release.Task;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) =>
+            pipe.ReadAsync(buffer, token);
+        public override bool CanRead => pipe.CanRead;
+        public override bool CanWrite => pipe.CanWrite;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Flush() => pipe.Flush();
+        public override Task FlushAsync(CancellationToken token) => pipe.FlushAsync(token);
+        public override int Read(byte[] buffer, int offset, int count) => pipe.Read(buffer, offset, count);
+        public override void Write(byte[] buffer, int offset, int count) => pipe.Write(buffer, offset, count);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) {
+                pipe.Dispose();
+                lock (_wireGate) {
+                    _closed = true;
+                    if (!_forwarding) {
+                        WireClosed.TrySetResult();
+                    }
+                }
+            }
+            base.Dispose(disposing);
+        }
+    }
+}
