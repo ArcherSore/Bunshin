@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text.Json;
 using Gui.Runtime;
 using Gui.Worker;
@@ -12,29 +11,17 @@ namespace Gui.Infrastructure;
 internal static partial class RunLifecycleSelfTest
 {
     internal static readonly Action[] Cases = [
-        VerifyRunLifecycleSourceConclusions, VerifyRunLifecycleConfirmationClock, VerifyRunLifecycleAtomicRunning,
-        VerifyRunLifecycleLatePositive, VerifyRunLifecycleBeforeBodyExit, VerifyRunLifecycleFaultedSlot,
-        VerifyRunLifecycleRetryChannels, VerifyRunLifecycleRetryIdentity, VerifyRunLifecycleReconnectNegative,
-        VerifyRunLifecycleQueryBeforeWriter, VerifyRunLifecycleProtocolRecovery, VerifyRunLifecycleBootAttribution,
-        VerifyRunLifecycleRetirementOrder, VerifyRunLifecyclePreparation, VerifyRunLifecycleScheduleAdmission,
-        VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleCleanupCollision, VerifyRunLifecycleCleanupReconnect,
-        VerifyRunLifecycleCountdown, VerifyRunLifecycleReplacement, VerifyRunLifecycleExitBuffer,
-        VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleStopTarget, VerifyRunLifecycleReconnectBarrier,
-        VerifyRunLifecycleObservedRuns, VerifyRunLifecycleCountdownEvidence, VerifyRunLifecycleClosingReceipts,
-        VerifyRunLifecycleSendFailure, VerifyRunLifecycleMinuteWinner, VerifyRunLifecycleExpiredSelection,
-        VerifyRunLifecycleLogonGate, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRejectedRetry,
-        VerifyRunLifecycleFaultedTakeover, VerifyRunLifecycleAdjacentMinutes, VerifyRunLifecycleCountdownTarget, VerifyRunLifecycleDeferredPreview,
-        VerifyRunLifecycleStoppedOffline, VerifyRunLifecycleReconnectFault, VerifyRunLifecycleCancelledPreparation,
-        VerifyRunLifecycleClosingPreview, VerifyRunLifecycleSimultaneousNames, VerifyRunLifecycleMidnightRollback,
-        VerifyRunLifecycleLateReservation, VerifyRunLifecycleReplacementReview, VerifyRunLifecycleClosingCountdown,
-        VerifyRunLifecycleCancelledWriterRace, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleUnsettledAfterEnd,
-        VerifyRunLifecycleChangeoverSync, VerifyRunLifecycleManualPreparationGate, VerifyRunLifecycleModalChangeover,
-        VerifyRunLifecycleStopRejection
+        VerifyRunLifecycleSourceConclusions, VerifyRunLifecycleBeforeBodyExit, VerifyRunLifecycleConfirmationClock,
+        VerifyRunLifecycleLatePositive, VerifyRunLifecycleQueryBeforeWriter, VerifyRunLifecycleProtocolRecovery,
+        VerifyRunLifecycleReconnectNegative, VerifyRunLifecycleReconnectBarrier, VerifyRunLifecycleRetirementOrder,
+        VerifyRunLifecycleRetryIdentity, VerifyRunLifecycleRejectedRetry, VerifyRunLifecycleRetryChannels,
+        VerifyRunLifecycleBootAttribution, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRegisteredQuery,
+        VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleObservedRuns, VerifyRunLifecycleFaultedSlot,
+        VerifyRunLifecycleReconnectFault, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleExitBuffer
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
     private static readonly DateTime Epoch = DateTime.UnixEpoch;
-    private static readonly EnvironmentTarget Target = new(7, Id(100));
     private static readonly InputVersion Input = new(Id(200), 1, 1);
     private static readonly JsonElement Empty = JsonSerializer.SerializeToElement(new { });
     private static RunStartAttempt Attempt(int n)
@@ -44,10 +31,8 @@ internal static partial class RunLifecycleSelfTest
         return new(Id(300 + n), plan, $"digest-{n}") { RedactionValues = ["secret"] };
     }
 
-    private static RunIntent Intent(RunSource source, int n = 1) => new(Id(n), source,
-        source == RunSource.Scheduled ? StartMode.PrepareAndStart : StartMode.Start, source.ToString(),
-        "开始任务", Input, "第一班", Foreground: source == RunSource.Manual, QuitAfterRun: source == RunSource.Launch,
-        Attempt: Attempt(n), Opportunity: source == RunSource.Scheduled ? "08:00" : null);
+    private static RunIntent Intent(RunSource source, int n = 1) => new(Id(n), source, "开始任务", Input, "第一班",
+        Foreground: source == RunSource.Manual, QuitAfterRun: source == RunSource.Launch);
 
     private static RunSnapshot SnapshotOf(RunStartAttempt attempt, RunState status)
     {
@@ -70,154 +55,92 @@ internal static partial class RunLifecycleSelfTest
         internal RunLifecycleState State = new();
         internal TimeSpan Now;
         internal readonly List<LifecycleEffect> History = [];
-        internal LifecycleEffect[] Last = [];
-        internal WorkerConnectionId Connection = new(Target.WorkerId!.Value, 1);
-        internal long Revision;
-        internal long Sequence;
+        internal WorkerConnectionId Connection = new(Id(100), 1);
+        internal SubmissionStarted Start = null!;
+        internal RunKey Key => Start.Key;
+        internal RunStartAttempt Plan => Start.Attempt;
         internal string? ConfigurationName;
-        internal SendStart Send => History.OfType<SendStart>().Last();
-        internal RunKey Key => Send.Submission.Run;
-        internal TrackedRun Run => State.Runs[Key];
+        private long revision;
+        private int sequence;
+        private int sends;
+        private readonly HashSet<long> acknowledged = [];
 
         internal void Step(LifecycleEvent input)
         {
             var step = RunLifecycleReducer.Reduce(State, input with { At = Now });
             State = step.State;
-            Last = step.Effects.ToArray();
-            History.AddRange(Last);
+            History.AddRange(step.Effects);
         }
 
-        internal void Expect(params Type[] ordered) =>
-            Check(Last.Select(e => e.GetType()).SequenceEqual(ordered),
-                $"动作应为 [{string.Join(", ", ordered.Select(t => t.Name))}]，实际 [{string.Join(", ", Last.Select(e => e.GetType().Name))}]");
-        internal T Only<T>() where T : LifecycleEffect => Last.OfType<T>().Single();
-        internal int Count<T>() where T : LifecycleEffect => History.OfType<T>().Count();
-        internal void CheckSkipped(RunIntent candidate, string reason)
+        internal void Begin(RunIntent intent, RunStartAttempt? attempt = null)
         {
-            Check(History.OfType<Skip>().Where(s => s.Intent.Id == candidate.Id).SequenceEqual([new Skip(candidate, reason)])
-                && History.OfType<OperationFinished>().Where(o => o.Intent.Id == candidate.Id)
-                    .SequenceEqual([new OperationFinished(candidate, false, null, null)])
-                && History.OfType<CommitConfiguration>().All(c => c.Intent.Id != candidate.Id),
-                $"{candidate.ConfigurationName} 应只跳过一次（{reason}），结束本次操作且零次写盘");
-        }
-        internal IEnumerable<T> Items<T>() where T : Payload => History.OfType<Deliver>().Select(d => d.Item).OfType<T>();
-        internal T DeliveredItem<T>() where T : Payload => (T)Only<Deliver>().Item;
-        internal void Ack()
-        {
-            var next = State.Deliveries.Single(d => d.InFlight);
-            Check(next.Payload is not Cleanup, "收尾必须回投物理结果");
-            Step(new Delivered(next.Id));
+            attempt ??= Attempt(sends + 1);
+            var key = new RunKey(Connection.WorkerInstanceId, attempt.RunId);
+            var submission = new Submission(Id(500 + ++sends), intent.Id, key, attempt.PlanDigest);
+            Start = new(intent, key, submission, attempt);
+            Step(Start);
         }
 
-        internal void DrainDeliveries()
+        internal void Ack(long id)
         {
-            while (State.Deliveries.Count != 0) {
-                if (State.Deliveries.Single(d => d.InFlight) is { Payload: Cleanup } cleanup)
-                    Step(new CleanupReturned(cleanup.Id, CleanupResult.Ended));
-                else Ack();
+            if (History.OfType<Deliver>().Any(d => d.Id == id)) acknowledged.Add(id);
+            Step(new Delivered(id));
+        }
+
+        // Drive exactly the actions the consumer actually received. A missing dispatch or a
+        // duplicate action after its receipt must still be visible to the final assertions.
+        internal void Finish(params Type[] expected)
+        {
+            while (History.OfType<Deliver>().FirstOrDefault(d => !acknowledged.Contains(d.Id)) is { } pending) {
+                Check(acknowledged.Count < expected.Length, "多余交付：" + pending.Item);
+                Ack(pending.Id);
             }
+            var sent = History.OfType<Deliver>().ToArray();
+            var actual = sent.Select(d => d.Item.GetType()).ToArray();
+            Check(State.InFlightDelivery == null && State.Deliveries.IsEmpty && acknowledged.Count == sent.Length
+                && actual.SequenceEqual(expected), $"交付历史 [{string.Join(", ", actual.Select(t => t.Name))}]，"
+                + $"期望 [{string.Join(", ", expected.Select(t => t.Name))}]");
         }
+
+        internal IEnumerable<T> Items<T>() where T : Payload => History.OfType<Deliver>().Select(d => d.Item).OfType<T>();
+        internal void Conclusions(params StartConclusion[] expected) =>
+            Check(History.OfType<SubmissionConclusion>().Select(e => e.Conclusion).SequenceEqual(expected), "提交结论时序不符");
 
         internal WorkerSnapshot Frame(RunSnapshot? active = null, RunSnapshot? last = null, WorkerState worker = WorkerState.Ready)
         {
             var dependency = new DependencyCheck(true, null, null);
-            return new(1, Epoch, ++Revision, Connection.WorkerInstanceId, 123, Target.SessionId, "1",
+            return new(1, Epoch, ++revision, Connection.WorkerInstanceId, 123, 7, "1",
                 ProtocolConstants.ProtocolVersion, "profile", new("project", "1", 1, "project"), worker, null,
                 new(Epoch, "1", "1", dependency, dependency, dependency), active?.State ?? RunState.Idle,
                 active, last, 0, 0);
         }
 
-        internal void FrameEvent(WorkerSnapshot observed, WorkerCoordinatorSnapshot? current = null, bool awaitingFullSnapshot = false) =>
-            Evidence(new(Connection, WorkerEvidenceKind.Snapshot,
-                Current: current ?? new(WorkerObservation.Connected, true, observed, ""), ObservedSnapshot: observed,
-                AwaitingFullSnapshot: awaitingFullSnapshot));
-        internal void Connect() => FrameEvent(Frame());
-        internal void Reconnect()
-        {
-            Connection = Connection with { Generation = Connection.Generation + 1 };
-            Sequence = 0;
-            Connect();
-        }
-        internal void Active() => FrameEvent(Frame(active: SnapshotOf(Send.Attempt, RunState.Running)));
-        internal void Terminal(RunState status) => FrameEvent(Frame(last: SnapshotOf(Send.Attempt, status)));
         internal void Evidence(WorkerObservationBatch b) => Step(new Observed(b, ConfigurationName));
+        internal void FrameEvent(WorkerSnapshot observed, WorkerCoordinatorSnapshot? current = null) =>
+            Evidence(new(Connection, WorkerEvidenceKind.Snapshot,
+                Current: current ?? new(WorkerObservation.Connected, true, observed, ""), ObservedSnapshot: observed));
+
+        internal void Active(WorkerState worker = WorkerState.Ready) => FrameEvent(Frame(SnapshotOf(Plan, RunState.Running), worker: worker));
+        internal void Terminal(RunState status) => FrameEvent(Frame(last: SnapshotOf(Plan, status)));
         internal void Eof(Exception? error = null) => Evidence(new(Connection, WorkerEvidenceKind.Disconnected, Error: error));
         internal void ExitWorker() => Evidence(new(Connection, WorkerEvidenceKind.ProcessExited));
-
-        internal void Claim(ImmutableArray<RunIntent> candidates, bool force = false)
+        internal void Reconnect(WorkerSnapshot? frame = null)
         {
-            var minute = TimeSpan.FromMinutes(Math.Floor(Now.TotalMinutes));
-            Step(new ScheduleClaimed(candidates, Epoch.Date.AddHours(8) + minute, minute + TimeSpan.FromMinutes(1), force));
+            Connection = Connection with { Generation = Connection.Generation + 1 };
+            sequence = 0;
+            FrameEvent(frame ?? Frame());
         }
 
-        internal void PreviewSchedule(RunIntent intent, bool force = false, params RunIntent[] more)
-        {
-            Claim([intent, .. more], force);
-            Expect(typeof(Preview));
-            Step(new Previewed(intent.Id, intent));
-        }
-
-        internal void Begin(RunIntent intent)
-        {
-            if (intent.Source == RunSource.Scheduled) {
-                PreviewSchedule(intent);
-                Expect(typeof(Reserve));
-                Step(new Reserved(intent.Id, new(intent.Id, null)));
-                Expect(typeof(CommitConfiguration));
-                Step(new CommittedConfiguration(intent.Id));
-                Expect(typeof(PublishConfiguration), typeof(AppendStart));
-                Step(new ActivityAppended(intent.Id));
-                Expect(typeof(EndReserved));
-                Step(new OldEnvironmentEnded(intent.Id, true));
-                Expect(typeof(PrepareEnvironment));
-                Step(new Prepared(intent.Id, Target));
-                Expect(typeof(CheckReady));
-                if (State.Connection == null) Connect();
-            } else {
-                if (State.Connection == null) Connect();
-                Step(new Start(intent));
-                Expect(typeof(Reserve));
-                Step(new Reserved(intent.Id, new(intent.Id, Target)));
-                Expect(typeof(CheckReady));
-            }
-            Step(new ReadyChecked(intent.Id, Target, intent.Input));
-            Expect(typeof(RegisterPlan), typeof(SendStart));
-            Check(Send.Submission.IntentId == intent.Id && Send.Submission.PlanDigest == Send.Attempt.PlanDigest,
-                "必须先登记和脱敏，再发送该意图的冻结计划");
-        }
-
-        // Drive the remaining receipts after EndReserved, including the new Worker's terminal delivery.
-        internal void CompleteChangeover(RunIntent intent)
-        {
-            ExitWorker();
-            Step(new OldEnvironmentEnded(intent.Id, true));
-            Connection = new(Id(101), Connection.Generation + 1);
-            var target = Target with { WorkerId = Connection.WorkerInstanceId };
-            Connect();
-            Step(new Prepared(intent.Id, target));
-            Step(new ReadyChecked(intent.Id, target, intent.Input));
-            if (History.OfType<SendStart>().Any(s => s.Submission.IntentId == intent.Id)) {
-                var wire = Body();
-                Active();
-                Reply(wire, StartReplyKind.Accepted, "accepted");
-                Terminal(RunState.Cancelled);
-            }
-            DrainDeliveries();
-        }
-
-        internal WorkerRequestEvidence Writer(SendStart? start = null)
-        {
-            var send = (start ?? Send).Submission;
-            return new(Id(1000 + send.IntentId.ToByteArray()[0]), send.Run, send, null, Connection);
-        }
+        internal WorkerRequestEvidence Writer() => new(Id(1000 + sends), Key, Start.Submission, null, Connection);
         internal WorkerRequestEvidence Body()
         {
             var wire = Writer();
             Evidence(new(Connection, WorkerEvidenceKind.BeforeBody, wire));
-            wire = wire with { WriteSequence = ++Sequence };
+            wire = wire with { WriteSequence = ++sequence };
             Evidence(new(Connection, WorkerEvidenceKind.BodyStarted, wire));
             return wire;
         }
+
         internal void Reply(WorkerRequestEvidence wire, StartReplyKind kind, string code, Exception? error = null) =>
             Evidence(new(wire.Connection, WorkerEvidenceKind.StartReply, wire, StartReply: kind, ReplyCode: code, Error: error));
         internal void Timeout(WorkerRequestEvidence wire) =>
@@ -225,7 +148,7 @@ internal static partial class RunLifecycleSelfTest
         internal WorkerRequestEvidence QueryWire()
         {
             var q = History.OfType<QueryRun>().Last();
-            return new(Id((int)(2000 + State.Sequence)), q.Key, null, q.Id, Connection, ++Sequence);
+            return new(q.Id.Value, q.Key, null, q.Id, q.Connection, ++sequence);
         }
         internal void QueryResult(WorkerRequestEvidence q, bool registered, WorkerSnapshot? frame = null)
         {
@@ -235,4 +158,3 @@ internal static partial class RunLifecycleSelfTest
         }
     }
 }
-

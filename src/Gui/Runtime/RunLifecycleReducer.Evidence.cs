@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Gui.Worker;
 using Protocol;
 using static Gui.Runtime.LifecycleEffect;
@@ -32,6 +31,10 @@ internal sealed partial class RunLifecycleReducer
             Disconnect(closed, exited: false, b.Error);
             return;
         }
+        // The caller may start observing after the initial full snapshot. A writer on a new
+        // generation is also positive evidence of a live connection.
+        if (b.Kind is WorkerEvidenceKind.BeforeBody or WorkerEvidenceKind.BodyStarted && b.Connection is { } writer
+            && writer.Generation > state.LastGeneration) Connect(writer);
         // Local write boundaries and failures can arrive without a connection (or after detachment).
         if (b.Request?.Submission is { } submission && state.Runs.TryGetValue(submission.Run, out var owner)
             && owner.Sends.TryGetValue(submission.SubmissionId, out var send) && send.Identity == submission) {
@@ -46,25 +49,20 @@ internal sealed partial class RunLifecycleReducer
         if (b.Kind is not (WorkerEvidenceKind.Snapshot or WorkerEvidenceKind.QueryReply) || b.Connection is not { } id) return;
         if (id != state.Connection) {
             if (id.Generation <= state.LastGeneration || b.Current == null) return;
-            if (state.Connection is { } previous) Disconnect(previous, exited: false);
-            state = state with { Connection = id, LastGeneration = id.Generation };
+            Connect(id);
         }
 
         // Current is the coordinator's monotonic projection. A low revision or a gap on this live
         // connection can still carry a genuine terminal, but cannot make a stale environment ready.
         if (b.Current is { } view && view.WorkerSnapshot?.WorkerInstanceId == id.WorkerInstanceId) {
-            state = state with { Current = view, AwaitingFullSnapshot = b.AwaitingFullSnapshot };
+            state = state with { Current = view };
         }
-        var answered = b.Kind == WorkerEvidenceKind.QueryReply && b.Request is { QueryId: not null } answeredRequest
-            && state.Runs.TryGetValue(answeredRequest.Run, out var waiting)
-            && waiting.Confirmation.InFlight == answeredRequest.QueryId;
-        if (answered && b.RunRegistered.HasValue) {
-            var waitingRun = state.Runs[b.Request!.Run];
-            Save(waitingRun with { Confirmation = waitingRun.Confirmation with { InFlight = null } });
-        }
-        if (b.Kind == WorkerEvidenceKind.QueryReply && b.RunRegistered.HasValue && b.Request is { QueryId: not null } target
-            && target.Connection == id && state.Runs.TryGetValue(target.Run, out var reconciling)) {
-            ApplyReconnectEvidence(reconciling);
+        var query = b.Kind == WorkerEvidenceKind.QueryReply ? b.Request : null;
+        var answered = false;
+        if (query?.QueryId is { } queryId && query.Connection == id && state.Runs.TryGetValue(query.Run, out var waiting)) {
+            answered = waiting.Confirmation.InFlight == queryId;
+            if (answered) Save(waiting with { Confirmation = waiting.Confirmation with { InFlight = null } });
+            if (b.RunRegistered.HasValue) ApplyReconnectEvidence(state.Runs[query.Run]);
         }
         if (b.ObservedSnapshot is { } frame && frame.WorkerInstanceId == id.WorkerInstanceId) {
             if (frame.LastRun != null) ObserveRun(frame, frame.LastRun, false);
@@ -74,17 +72,22 @@ internal sealed partial class RunLifecycleReducer
                     Save(r with { NeedQuery = true });
             }
         }
-        if (b.Kind == WorkerEvidenceKind.QueryReply && b.Request is { QueryId: { } query } q
-            && q.Connection == id && state.Runs.TryGetValue(q.Run, out var run)) {
-            QueryReply(run, query, q, b, answered);
+        if (query?.QueryId != null && query.Connection == id && state.Runs.TryGetValue(query.Run, out var run)) {
+            QueryReply(run, query, b, answered);
         }
+    }
+
+    private void Connect(WorkerConnectionId id)
+    {
+        if (state.Connection is { } previous) Disconnect(previous, exited: false);
+        state = state with { Connection = id, LastGeneration = id.Generation, Current = WorkerCoordinatorSnapshot.Empty };
     }
 
     private void Disconnect(WorkerConnectionId id, bool exited, Exception? error = null)
     {
         var current = state.Connection;
-        if (current == id || exited && state.Current.WorkerSnapshot?.WorkerInstanceId == id.WorkerInstanceId) {
-            state = state with { Connection = null, AwaitingFullSnapshot = false, Current = exited
+        if (current == id || exited && (current?.WorkerInstanceId ?? state.Current.WorkerSnapshot?.WorkerInstanceId) == id.WorkerInstanceId) {
+            state = state with { Connection = null, Current = exited
                 ? new(WorkerObservation.WorkerExited, false, null, "Worker 已退出")
                 : state.Current with { Observation = WorkerObservation.IpcDisconnected, SnapshotFresh = false,
                     Detail = error?.Message ?? "Worker IPC 已断开" } };
@@ -92,19 +95,13 @@ internal sealed partial class RunLifecycleReducer
         if (id.Generation > state.LastGeneration) state = state with { LastGeneration = id.Generation };
         if (!exited && current != null && current != id) return;
         foreach (var r in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == id.WorkerInstanceId && !r.Settled)) {
-            CancelTimer(r);
-            if (r.Confirmation.InFlight is { } query) effects.Add(new CancelQuery(r.Key, query));
+            CancelConfirmation(r);
             Save(r with { NeedQuery = true, Confirmation = new(), AwaitingReconnectQuery = true });
         }
     }
 
-    private void EndSending(TrackedRun r, Exception? error = null)
-    {
-        if (r.Owner != null && At(r.Owner.Id, OperationStage.Sending) is { } op) Finish(op, r.Key, error);
-    }
-
-    private static Exception? LastError(TrackedRun r) => r.Owner != null
-        ? r.Sends.Values.FirstOrDefault(s => s.Intent.Id == r.Owner.Id)?.Error : null;
+    private static Exception? LastError(TrackedRun r) =>
+        r.Submission is { } send ? r.Sends[send.SubmissionId].Error : null;
 
     private bool CurrentShowsActive(TrackedRun r) =>
         state.Current is { Fresh: true, WorkerSnapshot: { ActiveRun: { } active } worker }
@@ -114,9 +111,9 @@ internal sealed partial class RunLifecycleReducer
     {
         if (r.Retired || b.Request == null) return;
         if (s.Wire != null && s.Wire.RequestId != b.Request.RequestId) return;
-        var next = s with { Wire = b.Request, Error = s.Error ?? b.Error, Reply = b.StartReply ?? s.Reply,
-            ReplyCode = b.ReplyCode ?? s.ReplyCode, ReplyError = b.StartReply != null ? b.Error : s.ReplyError };
-        if (r.Settled || r.Owner?.Id != s.Intent.Id) {
+        var next = s with { Wire = b.Request, Error = b.Error ?? s.Error };
+        if (b.StartReply == StartReplyKind.RejectedBeforeRegistration) next = next with { RejectionCode = b.ReplyCode };
+        if (r.Settled || r.Submission != s.Identity) {
             // A late live reply belongs to its original send, even after an explicit retry.
             // It cannot reopen the Run, remove a different sender, or transfer quit eligibility.
             Save(r with { Sends = r.Sends.SetItem(s.Identity.SubmissionId, next) });
@@ -126,7 +123,7 @@ internal sealed partial class RunLifecycleReducer
             case WorkerEvidenceKind.BeforeBody when s.Boundary == SendBoundary.BeforeBody: break;
             case WorkerEvidenceKind.BodyStarted when s.Boundary == SendBoundary.BeforeBody:
                 next = next with { Boundary = SendBoundary.PossiblySent };
-                if (s.Intent is { Source: RunSource.Launch, QuitAfterRun: true }) r = r with { Quit = QuitStage.Bound };
+                if (r.Owner is { Source: RunSource.Launch, QuitAfterRun: true }) r = r with { QuitBound = true };
                 break;
             case WorkerEvidenceKind.NotSent:
             case WorkerEvidenceKind.StartReply when b.StartReply == StartReplyKind.RejectedBeforeRegistration:
@@ -134,8 +131,7 @@ internal sealed partial class RunLifecycleReducer
                 break;
             case WorkerEvidenceKind.StartReply when b.StartReply is StartReplyKind.Accepted or StartReplyKind.AlreadyAccepted:
                 next = next with { Boundary = SendBoundary.Accepted };
-                r = r with { Conclusion = StartConclusion.Accepted,
-                    NeedQuery = !CurrentShowsActive(r) };
+                r = Conclude(r, StartConclusion.Accepted) with { NeedQuery = r.AwaitingReconnectQuery || !CurrentShowsActive(r) };
                 break;
             case WorkerEvidenceKind.StartReply:
             case WorkerEvidenceKind.RequestFailed:
@@ -147,8 +143,6 @@ internal sealed partial class RunLifecycleReducer
         Save(r);
         if (r.Conclusion != StartConclusion.Accepted && r.Sends.Values.All(item => item.Boundary == SendBoundary.Excluded)) {
             Settle(r, StartConclusion.NotStarted, b.Error ?? next.Error);
-        } else if (b.Kind is WorkerEvidenceKind.StartReply or WorkerEvidenceKind.RequestFailed or WorkerEvidenceKind.NotSent) {
-            EndSending(r, r.Conclusion == StartConclusion.Accepted ? null : b.Error);
         }
     }
 
@@ -158,20 +152,19 @@ internal sealed partial class RunLifecycleReducer
         var r = state.Runs.GetValueOrDefault(key);
         if (r == null) {
             // A historical Last observed on takeover never acquires notification eligibility.
-            if (!active || state.Current.WorkerSnapshot?.ActiveRun?.RunId != key.RunId || !state.Current.Fresh) return;
-            r = new(key, snapshot.PlanDigest, new(frame.ChildSessionId, key.WorkerInstanceId), null,
-                ImmutableDictionary<Guid, SendRecord>.Empty) { TakeoverConfigurationName = configurationName };
+            r = new(key, snapshot.PlanDigest);
+            if (!active || !CurrentShowsActive(r)) return;
         }
         if (r.Settled || r.Digest != snapshot.PlanDigest) return;
         if (r.AwaitingReconnectQuery && r.ReconnectEvidence?.LastRun is { } terminal
             && terminal.RunId == key.RunId && terminal.PlanDigest == r.Digest) return;
-        if (active) {
-            var faulted = frame.WorkerState == WorkerState.Faulted;
+        if (active && CurrentShowsActive(r)) {
+            if (r.Owner == null && r.TakeoverConfigurationName == null && !string.IsNullOrWhiteSpace(configurationName))
+                r = r with { TakeoverConfigurationName = configurationName };
+            var faulted = state.Current.WorkerSnapshot!.WorkerState == WorkerState.Faulted;
             if (r.SeenActive && faulted && !r.SeenFaulted && r.Notification == NotificationSlot.Open)
                 r = r.AwaitingReconnectQuery ? r with { ReconnectFaultPending = true } : NotifyFault(r);
-            r = r with { SeenActive = true, SeenFaulted = r.SeenFaulted || faulted,
-                StopProgress = r.ManualStop != null && snapshot.State == RunState.Stopping
-                    ? StopProgress.Stopping : r.StopProgress };
+            r = r with { SeenActive = true, SeenFaulted = r.SeenFaulted || faulted };
         }
         if (r.AwaitingReconnectQuery) {
             // On the new live connection keep genuine positive evidence, but let the ordered
@@ -179,17 +172,16 @@ internal sealed partial class RunLifecycleReducer
             Save(r with { ReconnectEvidence = frame });
             return;
         }
-        r = r with { Conclusion = StartConclusion.Accepted };
-        if (!active || CurrentShowsActive(r)) {
+        r = Conclude(r, StartConclusion.Accepted);
+        if (!active) {
+            Terminal(r, snapshot);
+            return;
+        }
+        if (CurrentShowsActive(r)) {
             CancelTimer(r);
             r = r with { NeedQuery = false, Confirmation = r.Confirmation with { Failures = 0, Due = null, Timer = 0 } };
         }
-        if (active) {
-            Save(r);
-            EndSending(r);
-        } else {
-            Terminal(r, snapshot);
-        }
+        Save(r);
     }
 
     private TrackedRun NotifyFault(TrackedRun r)
@@ -208,18 +200,18 @@ internal sealed partial class RunLifecycleReducer
         else if (frame.ActiveRun is { } active && active.RunId == r.Key.RunId) ObserveRun(frame, active, true);
     }
 
-    private void QueryReply(TrackedRun r, QueryId id, WorkerRequestEvidence q, WorkerObservationBatch b, bool answered)
+    private void QueryReply(TrackedRun r, WorkerRequestEvidence q, WorkerObservationBatch b, bool answered)
     {
         if (r.Settled) return;
         if (b.RunRegistered is not bool registered || b.ObservedSnapshot is not { } snapshot) {
-            QueryFailed(r, id);
+            if (answered && r.NeedQuery) Backoff(r);
             return;
         }
         var otherDigest = (snapshot.ActiveRun?.RunId == r.Key.RunId && snapshot.ActiveRun.PlanDigest != r.Digest)
             || (snapshot.LastRun?.RunId == r.Key.RunId && snapshot.LastRun.PlanDigest != r.Digest);
         if (registered && !otherDigest) {
             if (snapshot.ActiveRun?.RunId == r.Key.RunId || snapshot.LastRun?.RunId == r.Key.RunId) {
-                Save(r);
+                if (answered && r.NeedQuery) Backoff(r);
                 return;
             }
             // The registry and both slots were read under the same Worker lock. A registered Run
@@ -228,7 +220,7 @@ internal sealed partial class RunLifecycleReducer
                 Settle(r, StartConclusion.EndUnconfirmed, LastError(r));
                 return;
             }
-            r = r with { Conclusion = StartConclusion.Accepted, NeedQuery = true };
+            r = Conclude(r, StartConclusion.Accepted) with { NeedQuery = true };
         } else if (r.Conclusion != StartConclusion.Accepted) {
             var reason = new InvalidOperationException(otherDigest ? "Run ID 与已登记的计划冲突" : "Worker 未登记本次启动", LastError(r));
             foreach (var s in r.Sends.Values) {
@@ -238,7 +230,7 @@ internal sealed partial class RunLifecycleReducer
                 if (!q.Covers(wire) && !(source.WorkerInstanceId == q.Run.WorkerInstanceId
                     && source.Generation < q.Connection!.Value.Generation)) continue;
                 r = r with { Sends = r.Sends.SetItem(s.Identity.SubmissionId, s with { Boundary = SendBoundary.Excluded,
-                    ReplyCode = otherDigest ? "run_id_conflict" : s.ReplyCode, ReplyError = otherDigest ? reason : s.ReplyError }) };
+                    RejectionCode = otherDigest ? "run_id_conflict" : s.RejectionCode }) };
             }
             if (r.Sends.Values.All(s => s.Boundary == SendBoundary.Excluded)) {
                 Settle(r, StartConclusion.NotStarted, reason);
@@ -267,6 +259,12 @@ internal sealed partial class RunLifecycleReducer
         effects.Add(new ArmRetry(r.Key, token, due));
     }
 
+    private void CancelConfirmation(TrackedRun r)
+    {
+        CancelTimer(r);
+        if (r.Confirmation.InFlight is { } query) effects.Add(new CancelQuery(r.Key, query));
+    }
+
     private void CancelTimer(TrackedRun r)
     {
         if (r.Confirmation.Timer != 0) effects.Add(new CancelRetry(r.Key, r.Confirmation.Timer));
@@ -277,10 +275,9 @@ internal sealed partial class RunLifecycleReducer
         if (state.Connection is not { } live) return;
         foreach (var r in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == live.WorkerInstanceId && !r.Settled
             && r.NeedQuery && r.Confirmation is { InFlight: null, Due: null }).OrderBy(r => r.Key.RunId)) {
-            var id = new QueryId(NextId());
+            var id = new QueryId(new Guid(0, 0, 0, BitConverter.GetBytes(Next())));
             Save(r with { Confirmation = r.Confirmation with { InFlight = id } });
             effects.Add(new QueryRun(r.Key, id, live));
         }
     }
 }
-
