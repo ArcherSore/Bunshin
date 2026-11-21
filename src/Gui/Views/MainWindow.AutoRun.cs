@@ -21,30 +21,17 @@ public partial class MainWindow
             && _presentation.ShowBalloon?.Invoke(notice) == true;
     }
 
-    private bool DeliverRunAction(Payload item)
+    private void RequestQuitAfterRun()
     {
-        switch (item) {
-            case Present notice:
-                return PresentRunOutcome(notice);
-            case PresentCleanupFailure failure:
-                return Notify(new($"「{failure.Name}」收尾失败", failure.Detail, true));
-            case CompleteScheduled completed:
-                ScheduledRunCompleted?.Invoke(this, completed.Terminal);
-                break;
-            case RequestCleanup cleanup:
-                if (_scheduledSubmission is { } own && own.Key == cleanup.Key) {
-                    own.CleanupRequested = true;
-                    // A clock tick already entering the environment gate may service this request there.
-                    Dispatcher.InvokeAsync(ResumeScheduledCleanup);
-                }
-                break;
-            case RequestQuit:
-                _logger.Info("--quit-after-run：任务已结束，正在退出程序。");
-                _quitAfterRun?.Invoke();
-                break;
-        }
-        return true;
+        _logger.Info("--quit-after-run：任务已结束，正在退出程序。");
+        _quitAfterRun?.Invoke();
     }
+
+    private bool PresentRunAction(Payload item) => item switch {
+        Present notice => PresentRunOutcome(notice),
+        PresentCleanupFailure failure => Notify(new($"「{failure.Name}」收尾失败", failure.Detail, true)),
+        _ => throw new ArgumentOutOfRangeException(nameof(item))
+    };
 
     private bool PresentRunOutcome(Present notice)
     {
@@ -115,13 +102,14 @@ public partial class MainWindow
 
     private bool SkipLaunchForPendingQuit()
     {
-        if (_lifecycle.PendingQuitReason() is not { } reason) return false;
+        if (_lifecycle.ReadOrchestration().PendingQuitReason is not { } reason) return false;
         _logger.Info($"自动执行已跳过：{reason}。");
         return true;
     }
 
     private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)
     {
+        if (SkipLaunchForPendingQuit()) return;
         // A refusal is reported by the change itself: the other configuration must never be run instead.
         if (!TaskPlanEditor.ChangeConfiguration(() => project.ActivateConfiguration(id),
                 failure => ReportUnattendedFailure("自动执行", failure))) {

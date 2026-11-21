@@ -278,9 +278,7 @@ internal static partial class SelfTestRunner
                                         pair.First.PipelineOverride, pair.Second.PipelineOverride)),
                                 "自动运行必须提交当前任务计划及其参数。");
                         }
-                        PumpUntil(() => typeof(MainWindow).GetField("_pendingOperation",
-                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                            .GetValue(window) is PendingOperation.None, "准备/启动操作完成后未释放操作锁。");
+                        PumpUntil(() => window.CurrentOperation is PendingOperation.None, "准备/启动操作完成后未释放操作锁。");
                         Require(requests == (runs ? 1 : 0),
                             "仅启动或取消准备不得提交任务，一键启动只能提交一次。");
                     }, session: session, coordinator: coordinator, environment: environment,
@@ -507,7 +505,8 @@ internal static partial class SelfTestRunner
     // workerListed, when given, decides whether process inspection still finds that Worker.
     private static void WithFakeWorker(AppLogger logger, string directory,
         Action<WorkerCoordinator, WorkerAdmissionRecord, string> verify, Func<bool>? workerListed = null,
-        string runtimeProfileDigest = "self-test-runtime", TimeProvider? requestClock = null)
+        string runtimeProfileDigest = "self-test-runtime", TimeProvider? requestClock = null,
+        Action<WorkerAdmissionRecord, string>? launchPeer = null)
     {
         Directory.CreateDirectory(directory);
         using var process = Process.GetCurrentProcess();
@@ -520,7 +519,11 @@ internal static partial class SelfTestRunner
         var path = process.MainModule?.FileName ?? throw new InvalidOperationException("无法取得自检进程路径。");
         WorkerProcessEntry[] worker = [new(Environment.ProcessId, record.ChildSessionId, Path.GetFileName(path))];
         var coordinator = new WorkerCoordinator(logger, directory, path, pipeName, usePipeAcl: false,
-            workerListed is null ? null : () => workerListed() ? worker : [], requestClock: requestClock);
+            workerListed is null ? null : () => workerListed() ? worker : [], requestClock: requestClock,
+            launchWorker: launchPeer == null ? null : (id, instance, secret, _, _) => {
+                launchPeer(new(instance, secret, id, process.Id, runtimeProfileDigest, DateTime.UtcNow), pipeName);
+                return Task.FromResult(new VerifiedChildSessionProcessLaunch((uint)process.Id, id, null, null));
+            });
         try {
             Task.Run(() => coordinator.WaitForServerReadyAsync(CancellationToken.None)).GetAwaiter().GetResult();
             verify(coordinator, record, pipeName);

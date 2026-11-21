@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Gui.Worker;
 using ProjectModel;
 using Protocol;
+using static Gui.Runtime.LifecycleEffect;
 
 namespace Gui.Runtime;
 
@@ -63,7 +64,7 @@ internal sealed record RunLifecycleState
 {
     internal ImmutableDictionary<RunKey, TrackedRun> Runs { get; init; } = ImmutableDictionary<RunKey, TrackedRun>.Empty;
     internal ImmutableList<LifecycleEffect.Deliver> Deliveries { get; init; } = [];
-    internal LifecycleEffect.Deliver? InFlightDelivery { get; init; }
+    internal ImmutableDictionary<RunKey, LifecycleEffect.Deliver> InFlight { get; init; } = ImmutableDictionary<RunKey, LifecycleEffect.Deliver>.Empty;
     // A quit request can outlive its Worker's retirement and its delivery receipt.
     internal ImmutableDictionary<RunKey, QuitStage> Quits { get; init; } = ImmutableDictionary<RunKey, QuitStage>.Empty;
     internal WorkerCoordinatorSnapshot Current { get; init; } = WorkerCoordinatorSnapshot.Empty;
@@ -74,6 +75,22 @@ internal sealed record RunLifecycleState
     internal RunKey? DeferredQuit { get; init; }
     internal Guid? Closing { get; init; }
     internal bool ExitCommitted { get; init; }
+
+    internal bool IsManualError(Deliver delivery) => delivery.Item is Present { IsManualError: true }
+        || delivery.Item is Present { Intent.Source: RunSource.Manual, Kind: NoticeKind.Faulted } fault
+            && Runs[fault.Key] is { Retired: true, Terminal: null };
+
+    // A quit can close the dispatcher synchronously. Issue queued notices first, including
+    // those for other Runs, but an already open dialog only owns its own Run's slot.
+    internal IEnumerable<Deliver> ReadyDeliveries(bool holdManualErrors)
+    {
+        if (Closing != null || Deliveries.IsEmpty) return [];
+        var available = Deliveries.Where(d => !InFlight.ContainsKey(d.Item.Key));
+        var notices = available.Where(d => d.Item is not RequestQuit).DistinctBy(d => d.Item.Key)
+            .Where(d => !holdManualErrors || !IsManualError(d)).ToArray();
+        return notices.Length != 0 ? notices : available.Where(d => d.Item is RequestQuit && d.Item.Key != DeferredQuit
+            && !Deliveries.Any(other => other.Item.Key == d.Item.Key && other.Item is not RequestQuit));
+    }
 
     // The caller chooses the entry point and creates a fresh submission ID. Reuse the whole
     // frozen attempt (including its plan item IDs and redactions) only after exclusion.

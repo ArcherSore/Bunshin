@@ -52,6 +52,11 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyQuitAfterRunTracker), _ => VerifyQuitAfterRunTracker()),
         new(Group.Project, "VerifyRunDeliveryTerminalDuringEnumeration", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, terminalDuringEnumeration: true)),
+        new(Group.Project, "VerifyRunDeliveryCleanupCollision", c => {
+            foreach (var (force, fail) in new[] { (false, false), (false, true), (true, true) })
+                VerifyScheduledTerminal(c.Logger, Path.Combine(c.Directory, $"collision-{force}-{fail}"), RunState.Succeeded,
+                    tickBeforeDispatch: true, forceCollision: force, failCleanup: fail);
+        }),
         new(Group.Project, "VerifyRunDeliveryCleanupDuringExit", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, cleanupDuringExit: true)),
         new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
@@ -59,6 +64,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),
         new(Group.Project, "VerifyRunDeliveryNotRegistered", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.NotRegistered)),
         new(Group.Project, "VerifyRunDeliveryDialogGate", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.DialogGate)),
+        new(Group.Project, "VerifyRunDeliveryOrdinaryDialog", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.OrdinaryDialog)),
         new(Group.Project, "VerifyRunDeliveryHiddenRetry", c => VerifyRunDeliveryScenario(c.Logger, c.Directory, "hidden-retry")),
         new(Group.Project, "VerifyQuitRecoveryBeforeSchedule", c => {
             VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "force"), "quit-recovery", forceScheduledStart: true);
@@ -683,14 +689,12 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("重新打开面板应重新统计本次添加。");
             }
             VerifyAddedTasksPerConfiguration(window);
-            SetOnboardingField(window, "_pendingOperation", PendingOperation.PreparingEnvironment);
-            InvokeOnboarding(window, "RefreshRuntimeControls");
+            window.SetPendingOperation(PendingOperation.PreparingEnvironment);
             if (shelf.Visibility != System.Windows.Visibility.Collapsed
                 || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskShelfHeaderButton")).IsEnabled) {
                 throw new InvalidOperationException("锁定时添加任务面板应收起且按钮禁用。");
             }
-            SetOnboardingField(window, "_pendingOperation", PendingOperation.None);
-            InvokeOnboarding(window, "RefreshRuntimeControls");
+            window.SetPendingOperation(PendingOperation.None);
             ClickOnboarding(window, "TaskShelfHeaderButton");
             var screenshotDirectory = Environment.GetEnvironmentVariable("BUNSHIN_TASK_SCREENSHOTS");
             if (!string.IsNullOrEmpty(screenshotDirectory)) {

@@ -11,13 +11,13 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private readonly ImmutableArray<LifecycleEffect>.Builder effects = ImmutableArray.CreateBuilder<LifecycleEffect>();
 
     internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input, bool dispatchDelivery = true,
-        bool deferManualErrors = false)
+        bool holdManualErrors = false)
     {
         if (state.ExitCommitted) return new(state, []);
         var step = new RunLifecycleReducer(state with { Now = input.At > state.Now ? input.At : state.Now });
         step.Apply(input);
         step.DispatchQueries();
-        if (dispatchDelivery) step.DispatchDelivery(deferManualErrors);
+        if (dispatchDelivery) step.DispatchDelivery((input as DispatchPending)?.Key, holdManualErrors);
         step.ReleaseCompletedRuns();
         return new(step.state, step.effects.ToImmutable());
     }
@@ -52,7 +52,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;
             case ClosingCancelled e when state.Closing == e.Id:
                 state = state with { Closing = null,
-                    InFlightDelivery = state.InFlightDelivery?.Item is RequestQuit ? null : state.InFlightDelivery };
+                    InFlight = state.InFlight.RemoveRange(state.InFlight.Where(p => p.Value.Item is RequestQuit).Select(p => p.Key)) };
                 foreach (var (key, stage) in state.Quits) {
                     if (stage == QuitStage.Requested) SetQuit(key, QuitStage.AwaitingRecovery);
                     else if (stage == QuitStage.RecoveredWhileClosing) QueueQuit(key);
@@ -99,7 +99,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private void ReleaseCompletedRuns()
     {
         foreach (var r in state.Runs.Values) {
-            if (!r.Settled || r.ReusableAttempt != null || state.InFlightDelivery?.Item.Key == r.Key
+            if (!r.Settled || r.ReusableAttempt != null || state.InFlight.ContainsKey(r.Key)
                 || state.Deliveries.Any(d => d.Item.Key == r.Key)) continue;
             if (r.Retired) {
                 state = state with { Runs = state.Runs.Remove(r.Key) };

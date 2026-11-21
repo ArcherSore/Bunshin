@@ -64,7 +64,6 @@ public partial class MainWindow : FluentWindow
     private ScrollViewer? _homeLogScrollViewer;
     private readonly RunLogFeed _runLog;
     private bool _allowClose;
-    private PendingOperation _pendingOperation;
     private bool _environmentPreparationFailed;
     private bool _exitInProgress;
     private bool _followLogs = true;
@@ -138,10 +137,12 @@ public partial class MainWindow : FluentWindow
         OnFrameworkOptionsChanged(_settings.SaveDraw);
         ClearDebugFilesOnStartup();
         _environment = environment;
-        _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, DeliverRunAction, logger, scheduleClock);
+        _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, PresentRunAction, RequestQuitAfterRun, logger, scheduleClock);
         _lifecycle.Changed += RefreshRuntimeControls;
+        _lifecycle.ScheduledCompleted += terminal => ScheduledRunCompleted?.Invoke(this, terminal);
+        _lifecycle.CleanupPending += () => Dispatcher.InvokeAsync(ResumeScheduledCleanup);
         _environment.Ended += _lifecycle.EnvironmentRecovered;
-        _environment.PendingLifecycleStart = view => _lifecycle.PendingStart(view)?.RunId;
+        _environment.PendingLifecycleStart = view => _lifecycle.ReadOrchestration().PendingStart(view)?.RunId;
         _prepareEnvironment = prepareEnvironment ?? environment.PrepareAsync;
         _requestExitAsync = requestExitAsync;
         _endEnvironmentAsync = endEnvironmentAsync;
@@ -599,7 +600,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async Task<bool> WaitForRunStartAsync()
+    private async Task<bool> WaitForRunStartAsync(bool scheduled = false)
     {
         _logger.Info("等待 Worker 依赖检查完成后自动开始当前任务计划。");
         using var readyWait = new CancellationTokenSource();
@@ -612,7 +613,7 @@ public partial class MainWindow : FluentWindow
         if (_exitInProgress || _environment.Closing) {
             return false;
         }
-        SetPendingOperation(PendingOperation.StartingRun);
+        SetPendingOperation(PendingOperation.StartingRun, scheduled);
         return true;
     }
 
@@ -660,16 +661,16 @@ public partial class MainWindow : FluentWindow
             throw new InvalidOperationException(
                 "当前 任务配置尚未通过正式 PI Resolver 校验。 ");
         }
-        _lifecycle.Drain();
-        if (source == RunSource.Launch && SkipLaunchForPendingQuit()) return;
-        var view = _workerCoordinator.Snapshot;
+        var view = _workerCoordinator.ReadPublishedSnapshot();
+        var orchestration = _lifecycle.ReadOrchestration();
+        if (orchestration.PendingQuitReason != null || orchestration.ManualErrorPending) return;
         var worker = view.WorkerSnapshot ?? throw new InvalidOperationException("Worker 快照已失效。");
-        if (_lifecycle.PendingStart(view) != null || _lifecycle.State.Quits.Values.Contains(QuitStage.Requested)
+        if (orchestration.PendingStart(view) != null
             || _exitInProgress || _environment.Closing) return;
 
         var intent = CreateRunIntent(source, project.ActiveConfigurationId, ActiveConfigurationName, operation);
         var retry = intent with { RetryOf = _lastStartKey };
-        var attempt = _lifecycle.State.ReusableAttempt(retry, worker.WorkerInstanceId);
+        var attempt = orchestration.Lifecycle.ReusableAttempt(retry, worker.WorkerInstanceId);
         if (attempt != null) intent = retry;
         else attempt = CreateConfigurationAttempt(project, project.ActiveConfigurationId);
         var key = new RunKey(worker.WorkerInstanceId, attempt.RunId);
@@ -820,7 +821,7 @@ public partial class MainWindow : FluentWindow
     // A control can stay clickable for a moment after its state changes; "nothing happened" is then still in the log.
     private void LogIgnoredAction([CallerMemberName] string action = "") => _logger.Debug(
         $"操作未执行{AppLogger.Field("action", action)}{AppLogger.Field("current", CurrentControls.Action)}"
-        + $"{AppLogger.Field("pending", _pendingOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
+        + $"{AppLogger.Field("pending", CurrentOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
 
     // An unattended operation (started by the launch itself) reports its failure without a dialog nobody can answer.
     private async Task RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false,
@@ -833,13 +834,10 @@ public partial class MainWindow : FluentWindow
 
         if (pending is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment) {
             await RunWindowOperationAsync(pending, async () => {
-                // IPC can publish the error on another dispatcher turn before the awaited submission returns.
-                _lifecycle.DeferManualErrors(true);
-                try {
-                    if (!await _environment.TryRunExclusiveAsync(operation)) LogIgnoredAction(caller);
-                } finally {
-                    _lifecycle.DeferManualErrors(false);
-                }
+                if (!await _environment.TryRunExclusiveAsync(async () => {
+                    var view = _lifecycle.ReadOrchestration();
+                    if (view.PendingQuitReason == null && !view.ManualErrorPending) await operation();
+                })) LogIgnoredAction(caller);
             }, unattended);
         } else {
             await RunWindowOperationAsync(pending, () => _environment.RunExclusiveAsync(operation), unattended);
@@ -1165,11 +1163,13 @@ public partial class MainWindow : FluentWindow
     }
 
     // Another operation is running or the application is exiting, so a new operation must not start.
-    private bool OperationOrExitInProgress => _pendingOperation != PendingOperation.None || _exitInProgress;
+    private bool OperationOrExitInProgress => CurrentOperation != PendingOperation.None || _exitInProgress;
 
-    private void SetPendingOperation(PendingOperation operation)
+    internal PendingOperation CurrentOperation => _lifecycle.Orchestration.Operation;
+
+    internal void SetPendingOperation(PendingOperation operation, bool scheduled = false)
     {
-        _pendingOperation = operation;
+        _lifecycle.SetOperation(operation, scheduled);
         Mouse.OverrideCursor = operation != PendingOperation.None ? System.Windows.Input.Cursors.Wait : null;
         RefreshRuntimeControls();
     }
@@ -1180,9 +1180,9 @@ public partial class MainWindow : FluentWindow
             ? new ProjectReadiness(true, project.EnabledItems.Count, _projectConfigurationValid,
                 project.RuntimeProfileDigest)
             : ProjectReadiness.NotLoaded,
-        _pendingOperation == PendingOperation.None && _lifecycle.PendingStart(_workerSnapshot) != null
+        CurrentOperation == PendingOperation.None && _lifecycle.Orchestration.PendingStart(_workerSnapshot) != null
             && _workerSnapshot.Fresh
-            ? PendingOperation.StartingRun : _pendingOperation,
+            ? PendingOperation.StartingRun : CurrentOperation,
         _environmentPreparationFailed, _exitInProgress, _environment.Ending,
         _environment.EndUnconfirmed));
 

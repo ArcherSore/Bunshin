@@ -91,12 +91,11 @@ internal static partial class SelfTestRunner
         VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle, lostReply: true);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "next-tick"),
             RunState.Failed, tickBeforeDispatch: true);
-        VerifyScheduledTerminal(logger, Path.Combine(directory, "cleanup-collision"),
-            RunState.Succeeded, tickBeforeDispatch: true);
     }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
-        bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false, bool cleanupDuringExit = false)
+        bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false,
+        bool cleanupDuringExit = false, bool forceCollision = true, bool failCleanup = true)
     {
         using var process = Process.GetCurrentProcess();
         var sessionId = (uint)process.SessionId;
@@ -113,7 +112,7 @@ internal static partial class SelfTestRunner
         var probe = new PresentationProbe();
         var cleanupCollision = tickBeforeDispatch && terminal == RunState.Succeeded;
         var clock = new ScheduleTestClock();
-        if (cleanupCollision) {
+        if (cleanupCollision && forceCollision) {
             CreateIdleSettings(CreateProjectFixture(directory), logger).ForceScheduledStart.Value = true;
         }
         var failPreparation = terminal == RunState.Cancelled;
@@ -237,7 +236,7 @@ internal static partial class SelfTestRunner
                     // Keep IPC up and omit only the start reply: the state event is authoritative.
                     var running = snapshot with { StateRevision = 3, RunState = RunState.Running, ActiveRun = own };
                     Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
-                    if (bufferExit || cleanupDuringExit)
+                    if (bufferExit || cleanupDuringExit || cleanupCollision)
                         Task.Run(() => pipe.WriteAsync(WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
                             new RunStartResponse("accepted")), token)).GetAwaiter().GetResult();
                     // The observed Active already proves acceptance even with the start reply missing.
@@ -298,9 +297,15 @@ internal static partial class SelfTestRunner
                 } else if (tickBeforeDispatch) {
                     // Advance IPC on the pool while the dispatcher is still handling the clock tick.
                     var received = snapshot with { LastRun = done, StateRevision = cleanupCollision ? 4 : 3 };
+                    Guid nextTarget = target;
                     if (cleanupCollision) {
-                        project.AddSchedulePolicy(target, "早班");
-                        wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
+                        var task = project.SelectedTaskNames.First();
+                        nextTarget = project.CreateConfiguration();
+                        project.RenameConfiguration(nextTarget, "下一班");
+                        project.AddItem(PlanItemKind.MaaTask, task);
+                        project.AddSchedulePolicy(nextTarget, "早班");
+                        project.ActivateConfiguration(target);
+                        if (failCleanup) wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
                     }
                     Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
                     // 迁移至 VerifyRunLifecycle / next-tick、cleanup-collision
@@ -314,11 +319,21 @@ internal static partial class SelfTestRunner
                         // 迁移至 VerifyRunLifecycle / cleanup-collision
                         PumpUntil(() => check.IsCompleted, "旧定时 Run 收尾失败后应结束新的定时机会。");
                         check.GetAwaiter().GetResult();
-                        // 迁移至 VerifyRunLifecycle / cleanup-collision
-                        Require(preparations == 1 && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
-                            && completed.SequenceEqual([own.RunId])
-                            && failures.Count(line => line.StartsWith("定时任务未能启动 / ")) == 1,
-                            "上次定时成功的收尾与新机会相遇，注销失败只允许尝试一次并报告本次未能启动。");
+                        var activity = window.LogLines.OfType<LogEntry>().Where(e => e.TaskLabel == "定时")
+                            .Reverse().Select(e => e.Message).ToList();
+                        var cleanup = activity.IndexOf(failCleanup ? "任务已完成，桌面分身未能关闭" : "全部完成，已关闭桌面分身");
+                        var nextAction = activity.FindIndex(line => line.Contains("下一班") && (line.Contains("跳过")
+                            || line.Contains("未能启动") || line.StartsWith("启动")));
+                        Require(completed.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
+                            && cleanup >= 0 && nextAction > cleanup && preparations == (failCleanup ? 1 : 2)
+                            && project.ActiveConfigurationId == (failCleanup ? target : nextTarget),
+                            "下一班到点时必须先完成原 Run 的收尾动态，再决定是否激活新配置。");
+                        var expected = new List<string> { $"「{name}」已完成" };
+                        if (failCleanup) expected.Add($"「{name}」收尾失败");
+                        if (!failCleanup || forceCollision) expected.Add("定时任务未能启动");
+                        Require(failures.Select(line => line.Split(" / ")[0]).SequenceEqual(expected)
+                            && (!failCleanup || forceCollision || activity[nextAction].Contains("运行环境状态未知")),
+                            "应按原任务成功、收尾结果、下一班处置的顺序交付；普通定时在注销失败后按环境状态未知跳过。");
                         return;
                     }
                     var next = window.TryStartScheduledRunAsync(target);

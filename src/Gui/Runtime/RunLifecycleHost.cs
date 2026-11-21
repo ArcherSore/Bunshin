@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Windows.Threading;
 using Gui.Infrastructure;
 using Gui.Worker;
+using Gui.Views;
 using ProjectModel;
 using Protocol;
 using static Gui.Runtime.LifecycleEffect;
@@ -15,26 +16,32 @@ internal sealed class RunLifecycleHost : IDisposable
     private readonly WorkerCoordinator _worker;
     private readonly Dispatcher _dispatcher;
     private readonly Func<string> _configurationName;
-    private readonly Func<Payload, bool> _deliver;
+    private readonly Func<Payload, bool> _present;
+    private readonly Action _requestQuit;
     private readonly AppLogger _logger;
     private readonly TimeProvider _clock;
     private readonly long _origin;
     private readonly ConcurrentQueue<LifecycleEvent> _events = new();
     private readonly Dictionary<QueryId, (CancellationTokenSource Cancellation, Task Completion)> _queries = [];
     private readonly Dictionary<long, ITimer> _timers = [];
-    private bool _deferManualErrors;
     private bool _disposed;
 
-    internal RunLifecycleState State { get; private set; } = new();
+    private readonly Dictionary<RunKey, TaskCompletionSource> _posted = [];
+    private readonly Queue<CompleteScheduled> _completed = new();
+    internal RunOrchestration Orchestration { get; private set; } = new(new());
+    private RunLifecycleState State => Orchestration.Lifecycle;
+    internal event Action<RunSnapshot>? ScheduledCompleted;
+    internal event Action? CleanupPending;
     internal event Action? Changed;
 
     internal RunLifecycleHost(WorkerCoordinator worker, Dispatcher dispatcher, Func<string> configurationName,
-        Func<Payload, bool> deliver, AppLogger logger, TimeProvider? clock = null)
+        Func<Payload, bool> present, Action requestQuit, AppLogger logger, TimeProvider? clock = null)
     {
         _worker = worker;
         _dispatcher = dispatcher;
         _configurationName = configurationName;
-        _deliver = deliver;
+        _present = present;
+        _requestQuit = requestQuit;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _origin = _clock.GetTimestamp();
@@ -48,107 +55,152 @@ internal sealed class RunLifecycleHost : IDisposable
     private void Enqueue(LifecycleEvent input)
     {
         _events.Enqueue(input);
-        _dispatcher.BeginInvoke(DrainAndDeliver);
+        _dispatcher.BeginInvoke(Drain);
     }
 
     internal void Apply(LifecycleEvent input)
     {
         _dispatcher.VerifyAccess();
-        Enqueue(input);
+        _events.Enqueue(input);
         Drain();
     }
 
-    // Callers inside the environment gate may need the latest state. Present only on a dispatcher turn.
-    internal void Drain() => Drain(dispatchDelivery: false);
-
-    internal void DeferManualErrors(bool defer)
+    internal RunOrchestration ReadOrchestration()
     {
-        _deferManualErrors = defer;
-        if (!defer && !State.Deliveries.IsEmpty) _dispatcher.BeginInvoke(DrainAndDeliver);
+        CommitEvidence();
+        return Orchestration;
     }
 
-    private void DrainAndDeliver()
+    internal void SetOperation(PendingOperation operation, bool scheduled)
     {
-        if (_events.IsEmpty && !State.Deliveries.IsEmpty && State.InFlightDelivery == null && State.Closing == null)
-            _events.Enqueue(new LifecycleEvent.DispatchPending());
-        Drain(dispatchDelivery: true);
+        Orchestration = scheduled ? Orchestration with { ScheduledOperation = operation }
+            : Orchestration with { WindowOperation = operation };
+        PostDeliveries();
     }
 
-    private void Drain(bool dispatchDelivery)
+    internal void SetCleanup(RunKey key, CleanupStage stage, Exception? failure = null)
     {
-        _dispatcher.VerifyAccess();
-        while (!_disposed && _events.TryDequeue(out var input)) {
-            if (input is LifecycleEvent.Observed { Batch.ObservedSnapshot.ActiveRun: not null } observed)
-                input = observed with { ConfigurationName = _configurationName() };
-            if (input is LifecycleEvent.RetryDue due) CancelTimer(due.Token);
-            var transition = RunLifecycleReducer.Reduce(State, input with { At = _clock.GetElapsedTime(_origin) },
-                dispatchDelivery: dispatchDelivery && _events.IsEmpty, deferManualErrors: _deferManualErrors);
-            State = transition.State;
-            foreach (var effect in transition.Effects) {
-                switch (effect) {
-                    case QueryRun query: _ = QueryAsync(query); break;
-                    case CancelQuery cancel:
-                        if (_queries.TryGetValue(cancel.Id, out var request)) request.Cancellation.Cancel();
-                        break;
-                    case ArmRetry retry:
-                        var delay = retry.Due - _clock.GetElapsedTime(_origin);
-                        _timers.Add(retry.Token, _clock.CreateTimer(_ => Enqueue(new LifecycleEvent.RetryDue(retry.Key, retry.Token)),
-                            null, delay > TimeSpan.Zero ? delay : TimeSpan.Zero, Timeout.InfiniteTimeSpan));
-                        break;
-                    case CancelRetry cancel: CancelTimer(cancel.Token); break;
-                    case SubmissionConclusion result:
-                        _logger.Info($"启动确认 {result.Conclusion}：runId={result.Submission.Run.RunId:D}。");
-                        break;
-                    case Deliver delivery:
-                        var presented = false;
-                        try {
-                            presented = _deliver(delivery.Item);
-                        } catch (Exception error) {
-                            _logger.Error($"交付 {delivery.Item.GetType().Name} 失败：Run {delivery.Item.Key.RunId:D}。", error);
-                        } finally {
-                            _events.Enqueue(new LifecycleEvent.Delivered(delivery.Id, presented));
-                        }
-                        break;
-                }
-            }
-            Changed?.Invoke();
+        if (Orchestration.Scheduled is { } own && own.Key == key)
+            Orchestration = Orchestration with { Scheduled = own with { Cleanup = stage, Failure = failure } };
+    }
+
+    // A modal presenter pumps the Dispatcher. Signal entry, so a replacement can proceed
+    // inside that frame and never depends on a user's receipt.
+    internal async Task IssuePendingPresentationsAsync()
+    {
+        CommitEvidence();
+        while (State.Closing == null) {
+            var waiting = Orchestration.PendingConclusions.Select(d => d.Item.Key).Distinct()
+                .Where(_posted.ContainsKey).Select(key => _posted[key].Task).ToArray();
+            if (waiting.Length == 0) return;
+            await Task.WhenAll(waiting);
+            CommitEvidence();
         }
     }
 
-    internal RunKey? PendingStart(WorkerCoordinatorSnapshot view) =>
-        State.Runs.Values.FirstOrDefault(r => r.Owner != null && !r.Settled
-            && (view.WorkerSnapshot == null || view.WorkerSnapshot.WorkerInstanceId == r.Key.WorkerInstanceId)
-            && !(view.Fresh && view.WorkerSnapshot is { } snapshot
-                && (Matches(snapshot.ActiveRun, r) || Matches(snapshot.LastRun, r))))?.Key;
+    // Gate reads commit the quit reservation without re-entering the application exit routine.
+    // The worker callback (or presentation receipt) invokes it on its normal dispatcher turn.
+    private void Drain()
+    {
+        CommitEvidence();
+        while (!_disposed && State.ReadyDeliveries(HoldManualErrors).FirstOrDefault() is { Item: RequestQuit quit })
+            Reduce(new LifecycleEvent.DispatchPending(quit.Key));
+    }
 
-    private static bool Matches(RunSnapshot? snapshot, TrackedRun run) =>
-        snapshot?.RunId == run.Key.RunId && snapshot.PlanDigest == run.Digest;
+    private void CommitEvidence()
+    {
+        _dispatcher.VerifyAccess();
+        while (!_disposed && _events.TryDequeue(out var input)) Reduce(input);
+        PostDeliveries();
+    }
+
+    private bool HoldManualErrors => Orchestration.WindowOperation is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment;
+
+    private void PostDeliveries()
+    {
+        if (_disposed) return;
+        foreach (var item in State.ReadyDeliveries(HoldManualErrors)) {
+            var key = item.Item.Key;
+            if (item.Item is RequestQuit || _posted.ContainsKey(key)) continue;
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _posted.Add(key, started);
+            _dispatcher.BeginInvoke(() => {
+                Drain();
+                _posted.Remove(key);
+                started.SetResult();
+                if (!_disposed) Reduce(new LifecycleEvent.DispatchPending(key));
+                PostDeliveries();
+            });
+        }
+    }
+
+    private void Reduce(LifecycleEvent input)
+    {
+        if (input is LifecycleEvent.Observed { Batch.ObservedSnapshot.ActiveRun: not null } observed)
+            input = observed with { ConfigurationName = _configurationName() };
+        if (input is LifecycleEvent.RetryDue due) CancelTimer(due.Token);
+        var transition = RunLifecycleReducer.Reduce(State, input with { At = _clock.GetElapsedTime(_origin) },
+            dispatchDelivery: input is LifecycleEvent.DispatchPending, holdManualErrors: HoldManualErrors);
+        Orchestration = Orchestration with { Lifecycle = transition.State };
+        if (input is LifecycleEvent.SubmissionStarted { Intent.Source: RunSource.Scheduled } submission)
+            Orchestration = Orchestration with { Scheduled = new(submission.Key, submission.Intent.ConfigurationName) };
+        foreach (var completion in transition.Effects.OfType<CompleteScheduled>()) {
+            if (Orchestration.Scheduled is { } own && own.Key == completion.Run)
+                Orchestration = Orchestration with { Scheduled = own with { Completion = completion.Terminal.State,
+                    Cleanup = completion.Terminal.State == RunState.Succeeded ? CleanupStage.Pending : CleanupStage.None } };
+            _completed.Enqueue(completion);
+        }
+        if (State.ExitCommitted) {
+            Orchestration = new(State);
+            _completed.Clear();
+        }
+        PostDeliveries();
+        while (State.Closing == null && _completed.TryDequeue(out var completed)) {
+            ScheduledCompleted?.Invoke(completed.Terminal);
+            if (completed.Terminal.State == RunState.Succeeded) CleanupPending?.Invoke();
+        }
+        foreach (var effect in transition.Effects) {
+            switch (effect) {
+                case QueryRun query: _ = QueryAsync(query); break;
+                case CancelQuery cancel:
+                    if (_queries.TryGetValue(cancel.Id, out var request)) request.Cancellation.Cancel();
+                    break;
+                case ArmRetry retry:
+                    var delay = retry.Due - _clock.GetElapsedTime(_origin);
+                    _timers.Add(retry.Token, _clock.CreateTimer(_ => Enqueue(new LifecycleEvent.RetryDue(retry.Key, retry.Token)),
+                        null, delay > TimeSpan.Zero ? delay : TimeSpan.Zero, Timeout.InfiniteTimeSpan));
+                    break;
+                case CancelRetry cancel: CancelTimer(cancel.Token); break;
+                case SubmissionConclusion result:
+                    _logger.Info($"启动确认 {result.Conclusion}：runId={result.Submission.Run.RunId:D}。");
+                    break;
+                case Deliver delivery:
+                    var presented = false;
+                    try {
+                        if (delivery.Item is RequestQuit) _requestQuit();
+                    else presented = _present(delivery.Item);
+                    } catch (Exception error) {
+                        _logger.Error($"交付 {delivery.Item.GetType().Name} 失败：Run {delivery.Item.Key.RunId:D}。", error);
+                    } finally {
+                        Apply(new LifecycleEvent.Delivered(delivery.Id, presented));
+                    }
+                    break;
+            }
+        }
+        Changed?.Invoke();
+    }
 
     // Reuse an in-flight ordered read and its original deadline. During backoff, issue one now.
     internal async Task ConfirmPendingStartAsync()
     {
-        Drain();
-        if (PendingStart(_worker.ReadPublishedSnapshot()) is not { } key) return;
+        CommitEvidence();
+        if (Orchestration.PendingStart(_worker.ReadPublishedSnapshot()) is not { } key) return;
         Apply(new LifecycleEvent.ConfirmNow(key));
         if (State.Runs.GetValueOrDefault(key)?.Confirmation.InFlight is { } id
             && _queries.TryGetValue(id, out var query)) {
             await query.Completion;
             Drain();
         }
-    }
-
-    internal bool WaitingForQuit(RunKey key) => State.Quits.ContainsKey(key)
-        || State.Deliveries.Any(d => d.Item is RequestQuit quit && quit.Key == key);
-
-    // A bound boot Run can still be replaced. Its exit takes priority once the terminal arrives.
-    internal string? PendingQuitReason()
-    {
-        Drain();
-        return State.Deliveries.Any(d => d.Item is RequestQuit)
-            || State.Quits.Values.Any(stage => stage is QuitStage.Requested or QuitStage.AwaitingRecovery or QuitStage.RecoveredWhileClosing)
-            || State.Current is { Fresh: true, WorkerSnapshot: { LastRun: { } last } worker }
-                && WaitingForQuit(new(worker.WorkerInstanceId, last.RunId))
-            ? "开机任务已结束，正在等待退出" : null;
     }
 
     internal async Task SubmitAsync(RunIntent intent, RunKey key, RunStartAttempt attempt)

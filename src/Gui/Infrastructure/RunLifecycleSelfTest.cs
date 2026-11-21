@@ -19,7 +19,7 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleObservedRuns, VerifyRunLifecycleFaultedSlot,
         VerifyRunLifecycleReconnectFault, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleExitBuffer,
         VerifyRunLifecycleAbandonQuit, VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleCompletedPlans,
-        VerifyRunLifecycleRejectedPlans
+        VerifyRunLifecycleRejectedPlans, VerifyRunLifecycleIndependentPresentations
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
@@ -99,7 +99,7 @@ internal static partial class RunLifecycleSelfTest
             }
             var sent = History.OfType<Deliver>().ToArray();
             var actual = sent.Select(d => d.Item.GetType()).ToArray();
-            Check(State.InFlightDelivery == null && State.Deliveries.IsEmpty && acknowledged.Count == sent.Length
+            Check(State.InFlight.IsEmpty && State.Deliveries.IsEmpty && acknowledged.Count == sent.Length
                 && actual.SequenceEqual(expected), $"交付历史 [{string.Join(", ", actual.Select(t => t.Name))}]，"
                 + $"期望 [{string.Join(", ", expected.Select(t => t.Name))}]");
         }

@@ -28,8 +28,8 @@ internal static partial class RunLifecycleSelfTest
             }
             var expected = new List<Type> { typeof(Present) };
             if (conclusion == StartConclusion.Accepted && source == RunSource.Launch) expected.Add(typeof(RequestQuit));
-            if (conclusion == StartConclusion.Accepted && source == RunSource.Scheduled)
-                expected.AddRange([typeof(CompleteScheduled), typeof(RequestCleanup)]);
+            Check(f.History.OfType<CompleteScheduled>().Count() == (conclusion == StartConclusion.Accepted && source == RunSource.Scheduled ? 1 : 0),
+                "只有已接纳并取得终态的定时提交应完成记账");
             f.Finish(expected.ToArray());
             f.Conclusions(conclusion == StartConclusion.EndUnconfirmed ? [StartConclusion.Accepted, conclusion] : [conclusion]);
             var notice = f.Items<Present>().Single();
@@ -135,7 +135,8 @@ internal static partial class RunLifecycleSelfTest
             var beforePositive = f.History.Count;
             f.Terminal(RunState.Failed);
             f.Terminal(RunState.Failed);
-            f.Finish(typeof(Present), source == RunSource.Launch ? typeof(RequestQuit) : typeof(CompleteScheduled));
+            f.Finish(source == RunSource.Launch ? [typeof(Present), typeof(RequestQuit)] : [typeof(Present)]);
+            Check(f.History.OfType<CompleteScheduled>().Count() == (source == RunSource.Scheduled ? 1 : 0), "定时终态应完成一次");
             f.Conclusions(StartConclusion.Accepted);
             var notice = f.Items<Present>().Single();
             Check(f.History.Take(beforePositive).Single() is QueryRun && notice.Kind == NoticeKind.Failed

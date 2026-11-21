@@ -213,8 +213,28 @@ internal static partial class SelfTestRunner
                 Require(exitRequests == 0, "断线本身不能触发退出。");
                 await using var restored = await WorkerCoordinatorSelfTest.OpenConnectionAsync(
                     pipeName, record, 0, token, lastRun: last, stateRevision: 2);
-                await WorkerCoordinatorSelfTest.AnswerRunQueryAsync(restored,
-                    WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with { LastRun = last, StateRevision = 2 }, token);
+                var query = await WorkerCoordinatorSelfTest.ReadRequestAsync(restored, ProtocolOperations.WorkerGetSnapshot, token);
+                Require(ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId == last.RunId, "应复核原开机 Run。");
+                if (scenario == "retry-ended") {
+                    var starts = 0;
+                    void CountStart(object? _, WorkerObservationBatch batch)
+                    {
+                        if (batch.Kind == WorkerEvidenceKind.BodyStarted) Interlocked.Increment(ref starts);
+                    }
+                    coordinator.ObservationReceived += CountStart;
+                    try {
+                        PumpUntil(() => coordinator.Snapshot.Fresh && window.StartTaskHeaderButton.IsEnabled,
+                            "重连首帧应已允许点击开始。");
+                        Click(window, "StartTaskHeaderButton");
+                        Require(starts == 0 && window.CurrentOperation == PendingOperation.None && exitRequests == 0,
+                            "待定向查询的 LastRun 已绑定退出，手动开始不能发出第二次提交。");
+                    } finally {
+                        coordinator.ObservationReceived -= CountStart;
+                    }
+                }
+                await restored.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+                    new GetSnapshotResponse(WorkerCoordinatorSelfTest.CreateSnapshot(record, 0)
+                        with { LastRun = last, StateRevision = 2 }, true)), token);
                 PumpUntil(() => exitRequests == 1, "重连后的有序查询应确认目标 Run 并退出。");
                 if (scenario == "retry-ended") {
                     PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");

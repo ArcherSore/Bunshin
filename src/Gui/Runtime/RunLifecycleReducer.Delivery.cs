@@ -55,8 +55,7 @@ internal sealed partial class RunLifecycleReducer
             }
         }
         if (r.Owner is { Source: RunSource.Scheduled } scheduled) {
-            Queue(new CompleteScheduled(r.Key, scheduled, terminal));
-            if (terminal.State == RunState.Succeeded) Queue(new RequestCleanup(r.Key));
+            effects.Add(new CompleteScheduled(r.Key, scheduled, terminal));
         }
         if (state.Quits.TryGetValue(r.Key, out var quit) && quit == QuitStage.Bound) QueueQuit(r.Key);
         else state = state with { Quits = state.Quits.Remove(r.Key) };
@@ -72,14 +71,9 @@ internal sealed partial class RunLifecycleReducer
             subject + (succeeded ? "已完成" : "运行失败"), Terminal: terminal);
     }
 
-    private void DispatchDelivery(bool deferManualErrors)
+    private void DispatchDelivery(RunKey? key, bool holdManualErrors)
     {
-        if (state.Closing != null || state.InFlightDelivery != null) return;
-        while (!state.Deliveries.IsEmpty) {
-            // A synchronous quit callback may start Closing. Finish the other consumers first.
-            var d = state.Deliveries.FirstOrDefault(d => d.Item is not RequestQuit)
-                ?? state.Deliveries.FirstOrDefault(d => d.Item.Key != state.DeferredQuit);
-            if (d == null) return;
+        while (state.ReadyDeliveries(holdManualErrors).FirstOrDefault(d => key == null || d.Item.Key == key) is { } d) {
             var queued = d;
             if (d.Item is Present { Kind: NoticeKind.Faulted } fault && state.Runs[fault.Key] is { Retired: true } r) {
                 if (FinalNoticeAfterFault(r, fault) is not { } final) {
@@ -88,8 +82,6 @@ internal sealed partial class RunLifecycleReducer
                 }
                 d = d with { Item = final };
             }
-            if (deferManualErrors && d.Item is Present { Intent.Source: RunSource.Manual,
-                Kind: NoticeKind.NotStarted or NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed }) return;
             state = state with { Deliveries = state.Deliveries.Remove(queued) };
             if (d.Item is Present { Intent: { Source: RunSource.Manual, RetryOf: not null } retry } notice
                 && state.Runs[notice.Key] is { } run && run.NotificationIntent != retry.Id) {
@@ -98,7 +90,7 @@ internal sealed partial class RunLifecycleReducer
                 else
                     d = d with { Item = notice with { ForegroundOnly = true } };
             }
-            state = state with { InFlightDelivery = d };
+            state = state with { InFlight = state.InFlight.Add(d.Item.Key, d) };
             if (d.Item is RequestQuit) SetQuit(d.Item.Key, QuitStage.Requested);
             effects.Add(d);
             return;
@@ -107,8 +99,8 @@ internal sealed partial class RunLifecycleReducer
 
     private void Acknowledge(LifecycleEvent.Delivered receipt)
     {
-        if (state.InFlightDelivery is not { } d || d.Id != receipt.Id) return;
-        state = state with { InFlightDelivery = null };
+        if (state.InFlight.Values.FirstOrDefault(d => d.Id == receipt.Id) is not { } d) return;
+        state = state with { InFlight = state.InFlight.Remove(d.Item.Key) };
         if (d.Item is not Present notice || state.Runs[notice.Key] is not { Notification: NotificationSlot.Claimed } r
             || r.NotificationIntent != notice.Intent?.Id) return;
 

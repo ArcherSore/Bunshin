@@ -50,19 +50,25 @@ internal static partial class SelfTestRunner
         }, () => Volatile.Read(ref listed), project.RuntimeProfileDigest, clock);
     }
 
-    private enum ManualSettlement { ForegroundFault, HiddenFailure, ForcedQuery, NotRegistered, DialogGate }
+    private enum ManualSettlement { ForegroundFault, HiddenFailure, ForcedQuery, NotRegistered, DialogGate, OrdinaryDialog }
 
     private static void VerifyManualSettlement(AppLogger logger, string directory, ManualSettlement scenario)
     {
         var root = CreateProjectFixture(directory);
-        if (scenario == ManualSettlement.DialogGate) TwoConfigurations()(root);
+        var dialogScenario = scenario is ManualSettlement.DialogGate or ManualSettlement.OrdinaryDialog;
+        if (dialogScenario) TwoConfigurations()(root);
         var project = ProjectPlanModule.Open(root, Path.Combine(root, "config", "configurations.json"));
         if (scenario is ManualSettlement.ForcedQuery or ManualSettlement.DialogGate)
             CreateIdleSettings(root, logger).ForceScheduledStart.Value = true;
         var clock = new ScheduleTestClock();
         var probe = new PresentationProbe();
         var preparations = 0;
-        using var session = new SimulatedWts().CreateManager(logger);
+        var listed = true;
+        var wts = new SimulatedWts();
+        using var session = wts.CreateManager(logger);
+        var finishScheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePeer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? peer = null;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var token = deadline.Token;
         WithFakeWorker(logger, Path.Combine(directory, "worker"), (worker, record, pipeName) => {
@@ -78,22 +84,41 @@ internal static partial class SelfTestRunner
                     ConnectTestDesktop(session, record.ChildSessionId);
                     SetOnboardingField(window, "_sessionSnapshot", session.Snapshot);
                     await Dispatcher.Yield(DispatcherPriority.Background);
-                    if (scenario == ManualSettlement.DialogGate) {
+                    if (dialogScenario) {
                         var weekly = project.Configurations.Single(c => c.Name == "周常").Id;
+                        var completed = new List<Guid>();
+                        window.ScheduledRunCompleted += (_, run) => completed.Add(run.RunId);
                         Task<ScheduledRunResult>? duringDialog = null;
-                        var preparedWhileOpen = false;
+                        var notices = new List<RunTerminalNotification>();
+                        window.NotificationRequested += (_, notice) => notices.Add(notice);
+                        var cleaned = false;
                         probe.DuringDialog = () => {
                             duringDialog = window.TryStartScheduledRunAsync(weekly);
-                            PumpOnboarding();
-                            preparedWhileOpen = preparations == 1;
+                            PumpUntil(() => duringDialog.IsCompleted, "手动错误框打开期间定时准入应返回。");
+                            if (scenario == ManualSettlement.DialogGate && duringDialog.Result.RunId.HasValue) {
+                                finishScheduled.SetResult();
+                                PumpUntil(() => window.LogLines.OfType<Gui.Models.LogEntry>()
+                                    .Any(e => e.Message == "全部完成，已关闭桌面分身"), "新 Run 成功后应在旧错误框内完成收尾。");
+                                cleaned = !session.HasChildSession && completed.SequenceEqual([duringDialog.Result.RunId.Value])
+                                    && notices.Count(n => n.Title == "「周常」已完成") == 1;
+                            }
                         };
-                        // The UI still shows Ready when the user clicks, but the sender already lost the pipe.
+                        // The button still shows Ready, but the sender has already lost the Worker.
+                        Volatile.Write(ref listed, false);
                         Task.Run(() => worker.ChildSessionEnded(record)).GetAwaiter().GetResult();
                         Click(window, "StartTaskHeaderButton");
                         PumpUntil(() => duringDialog != null, "正文前失败应打开手动启动错误框。");
-                        await duringDialog!.WaitAsync(token);
-                        Require(preparedWhileOpen && probe.Dialogs.Count == 1,
-                            "同步 NotSent 的错误框仍打开时，强制定时应已取得环境闸门并开始准备。");
+                        var result = await duringDialog!.WaitAsync(token);
+                        if (peer?.IsFaulted == true) await peer;
+                        if (scenario == ManualSettlement.OrdinaryDialog) {
+                            Require(result.Disposition == ScheduledRunDisposition.Busy && preparations == 0
+                                && ProjectOf(window).ActiveConfigurationId == project.ActiveConfigurationId
+                                && wts.LogoffAttempts.Count == 0 && probe.Dialogs.Count == 1,
+                                "普通定时应遇忙跳过，保留原配置和环境。");
+                        } else {
+                            Require(cleaned && preparations == 1 && wts.LogoffAttempts.SequenceEqual([record.ChildSessionId])
+                                && probe.Dialogs.Count == 1, $"旧错误框未关闭时强制定时应完成一次收尾：{result}，准备 {preparations}，完成 {completed.Count}，注销 {wts.LogoffAttempts.Count}，{worker.Snapshot.Detail}。");
+                        }
                         return;
                     }
                     Click(window, "StartTaskHeaderButton");
@@ -159,11 +184,30 @@ internal static partial class SelfTestRunner
                 }
             }, session: session, coordinator: worker, presentation: probe.Presentation, scheduleClock: clock,
                 environment: CreateEnvironment(logger, session, worker, (_, _) => Task.CompletedTask),
-                prepareEnvironment: (_, _, _) => {
+                prepareEnvironment: async (plan, options, _) => {
                     preparations++;
-                    throw new InvalidOperationException("模拟新环境准备结束");
+                    if (scenario != ManualSettlement.DialogGate) throw new InvalidOperationException("模拟新环境准备结束");
+                    wts.ReportedId = record.ChildSessionId;
+                    wts.Sessions.Add(record.ChildSessionId);
+                    await worker.PrepareWorkerAsync(record.ChildSessionId, plan, token, options());
                 });
-        }, () => true, project.RuntimeProfileDigest, clock);
+        }, () => Volatile.Read(ref listed), project.RuntimeProfileDigest, clock, launchPeer: (next, pipeName) => {
+            Volatile.Write(ref listed, true);
+            peer = Task.Run(async () => {
+                await using var pipe = await WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, next, 0, token);
+                var start = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.RunStart, token);
+                var request = ProtocolJson.Deserialize<RunStartRequest>(start.Data);
+                var active = WorkerCoordinatorSelfTest.CreateActiveRun(new(request.RunId, request.Plan, request.PlanDigest));
+                var idle = WorkerCoordinatorSelfTest.CreateSnapshot(next, 0);
+                await pipe.WriteAsync(StateEvent(idle with { StateRevision = 2, RunState = active.State, ActiveRun = active }), token);
+                await pipe.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value, new RunStartResponse("accepted")), token);
+                await finishScheduled.Task.WaitAsync(token);
+                await pipe.WriteAsync(StateEvent(idle with { StateRevision = 3, LastRun = SucceededRun(request) }), token);
+                await releasePeer.Task.WaitAsync(token);
+            });
+        });
+        releasePeer.SetResult();
+        peer?.GetAwaiter().GetResult();
     }
 
     private static bool ShowsNotRegistered(string message) =>

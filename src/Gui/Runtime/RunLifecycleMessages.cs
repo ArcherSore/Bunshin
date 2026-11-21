@@ -12,7 +12,7 @@ internal abstract record LifecycleEvent
     internal sealed record ConfirmNow(RunKey Key) : LifecycleEvent;
     internal sealed record RetryDue(RunKey Key, long Token) : LifecycleEvent;
     internal sealed record Delivered(long Id, bool Presented = true) : LifecycleEvent;
-    internal sealed record DispatchPending : LifecycleEvent;
+    internal sealed record DispatchPending(RunKey Key) : LifecycleEvent;
     internal sealed record CleanupFailed(RunKey Key, string Name, string Detail) : LifecycleEvent;
     internal sealed record DeferQuit(RunKey Key, bool Deferred) : LifecycleEvent;
     internal sealed record AbandonQuit(RunKey Key) : LifecycleEvent;
@@ -35,6 +35,8 @@ internal abstract record LifecycleEffect
     internal abstract record Payload(RunKey Key);
     internal sealed record Present(RunKey Run, RunIntent? Intent, NoticeKind Kind, string Operation, Exception? Error = null, RunSnapshot? Terminal = null) : Payload(Run)
     {
+        internal bool IsManualError => Intent?.Source == RunSource.Manual
+            && Kind is NoticeKind.NotStarted or NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed;
         internal bool ForegroundOnly { get; init; }
         internal string? ConfirmedStartDetail { get; init; }
         internal string Detail => Kind switch {
@@ -54,9 +56,8 @@ internal abstract record LifecycleEffect
             return Terminal?.Plan.Items.FirstOrDefault(i => i.PlanItemId == id)?.TaskLabel;
         }
     }
-    internal sealed record CompleteScheduled(RunKey Run, RunIntent Intent, RunSnapshot Terminal) : Payload(Run);
+    internal sealed record CompleteScheduled(RunKey Run, RunIntent Intent, RunSnapshot Terminal) : LifecycleEffect;
     internal sealed record PresentCleanupFailure(RunKey Run, string Name, string Detail) : Payload(Run);
-    internal sealed record RequestCleanup(RunKey Run) : Payload(Run);
     internal sealed record RequestQuit(RunKey Run) : Payload(Run);
     internal sealed record Deliver(long Id, Payload Item) : LifecycleEffect;
 }

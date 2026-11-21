@@ -280,13 +280,13 @@ internal static partial class WorkerCoordinatorSelfTest
         var latest = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         Require(latest.Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 3 },
             "重连后较高修订的就绪事件应更新生产快照。");
-        var initialStart = StartDuringSync();
+        var initialStart = StartDuringSync(out var initialStarts);
         await peer.WriteAsync(WireEnvelope.Response(initial.Operation, initial.RequestId!.Value,
             new GetSnapshotResponse(running)), f.Token);
         var older = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         Require(older.ObservedSnapshot?.StateRevision == 2 && older.Current == latest.Current
             && older.Current == f.Coordinator.Snapshot, "较旧的完整回包应保留其证据，当前可启动状态应维持修订 3。");
-        await RequireStartAcceptedAsync(initialStart);
+        await RequireStartAcceptedAsync(initialStart, initialStarts);
 
         var gap = running with { StateRevision = 5 };
         await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
@@ -299,24 +299,24 @@ internal static partial class WorkerCoordinatorSelfTest
             new StateChangedEvent(f.Run.WorkerInstanceId, 6, ready)), f.Token);
         Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 6 },
             "补查回包前的 Ready/Idle 事件应照常更新生产快照。");
-        var gapStart = StartDuringSync();
+        var gapStart = StartDuringSync(out var gapStarts);
         await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value, new GetSnapshotResponse(gap)), f.Token);
         await f.NextAsync(WorkerEvidenceKind.Snapshot);
-        await RequireStartAcceptedAsync(gapStart);
+        await RequireStartAcceptedAsync(gapStart, gapStarts);
 
-        Task<WorkerObservationBatch> StartDuringSync()
+        Task<WorkerObservationBatch> StartDuringSync(out int starts)
         {
-            var starts = f.WireStarts;
+            starts = f.WireStarts;
             var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
             Require(!send.IsCompleted && f.WireStarts == starts, "完整快照尚未返回时，本次点击应等待同步。");
             return send;
         }
 
-        async Task RequireStartAcceptedAsync(Task<WorkerObservationBatch> send)
+        async Task RequireStartAcceptedAsync(Task<WorkerObservationBatch> send, int starts)
         {
             var frame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
             await peer.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
-            Require((await send.WaitAsync(f.Token)).StartReply == StartReplyKind.Accepted,
+            Require((await send.WaitAsync(f.Token)).StartReply == StartReplyKind.Accepted && f.WireStarts == starts + 1,
                 "完整回包到达且生产快照允许启动时，同一次点击应取得接纳应答。");
         }
     }
