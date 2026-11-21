@@ -13,15 +13,17 @@ internal static class SelfTestSuite
     private static readonly TimeSpan CheckLimit = TimeSpan.FromMinutes(5);
 
     internal static int Run(string title, IEnumerable<(string Name, Action Body)> checks, string[] args,
-        string? environment = null)
+        string? environment = null, Predicate<string>? retryFailure = null)
     {
         UseUtf8WhenRedirected();
         if (environment is not null) {
             Console.WriteLine(environment);
         }
         var only = OnlyFilter(args);
+        var focusRerun = args.Contains("--focus-rerun");
         var selected = checks
-            .Where(check => only is null || check.Name.Contains(only, StringComparison.OrdinalIgnoreCase)).ToArray();
+            .Where(check => focusRerun ? check.Name == only
+                : only is null || check.Name.Contains(only, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (selected.Length == 0) {
             Console.Error.WriteLine($"{title} FAIL: 没有匹配 --only {only} 的自检。");
             return 1;
@@ -44,11 +46,14 @@ internal static class SelfTestSuite
                 Console.Error.WriteLine($"FAIL {name} ({Seconds(timer)}s): {exception}");
             }
         }
+        // Keep the first failure in the logs. Retry only after all checks and their watchdogs have finished.
+        if (retryFailure is not null) failed.RemoveAll(retryFailure);
         var summary = $"{selected.Length} 项，{skipped} 项跳过，{Seconds(total)}s";
         if (failed.Count != 0) {
             Console.Error.WriteLine($"{title} FAIL: {failed.Count} 项失败（{summary}）：{string.Join("、", failed)}");
             return 1;
         }
+        if (focusRerun && skipped != 0) return 1;
         Console.WriteLine($"{title} PASS: {summary}");
         return 0;
     }

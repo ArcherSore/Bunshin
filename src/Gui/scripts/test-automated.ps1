@@ -3,7 +3,8 @@ param(
     [string]$GuiDll,
     [string]$WorkerDll,
     [string]$Configuration = 'Release',
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$RetryFocus
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +63,7 @@ $workerExe = [IO.Path]::ChangeExtension((Resolve-Path -LiteralPath $WorkerDll).P
 foreach ($entry in @(@{ Dll = $GuiDll; Extra = @('--worker-exe', $workerExe) }, @{ Dll = $WorkerDll; Extra = @() })) {
     $entryPath = (Resolve-Path -LiteralPath $entry.Dll).Path
     $extra = $entry.Extra
+    if ($RetryFocus -and $entry.Dll -eq $GuiDll) { $extra += '--retry-focus' }
     Push-Location (Split-Path $entryPath)
     try {
         dotnet $entryPath --self-test @extra

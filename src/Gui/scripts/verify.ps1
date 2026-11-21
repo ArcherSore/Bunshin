@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Gui', 'Project', 'Support', 'RuntimeControls', 'Worker', 'Updater', 'Engine', 'All')]
+    [ValidateSet('FixedWait', 'Gui', 'Project', 'Support', 'RuntimeControls', 'Worker', 'Updater', 'Engine', 'All')]
     [string]$Suite = 'Gui',
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
@@ -56,10 +56,12 @@ function Invoke-VerificationStep
     }
     $timer.Stop()
     $seconds = $timer.Elapsed.TotalSeconds.ToString('F2', [Globalization.CultureInfo]::InvariantCulture)
+    Select-String -LiteralPath $stdout -Pattern '^FOCUS-RERUN (PASS|FAIL) ' -Encoding UTF8 |
+        ForEach-Object { Write-Host $_.Line }
     if ($code -ne 0) {
         Write-Host "FAIL $Name (${seconds}s, exit=$code)"
         $lines = @(Get-Content -LiteralPath $stdout, $stderr -Encoding UTF8 |
-            Where-Object { $_.Trim() -and $_ -notmatch '^\s+at ' } | Select-Object -Unique)
+            Where-Object { $_.Trim() -and $_ -notmatch '^(?:\s+at |FOCUS-RERUN )' } | Select-Object -Unique)
         $errors = @($lines | Where-Object { $_ -cmatch '\berror\b|^FAIL |SELF-TEST FAIL|Exception' } |
             Select-Object -First 8)
         @($errors + @($lines | Select-Object -Last 12)) | Select-Object -Unique | ForEach-Object {
@@ -89,11 +91,14 @@ function Invoke-SelfTest
 
     $binary = Join-Path $repositoryRoot "src\$Project\bin\x64\$Configuration\net10.0-windows\win-x64\$Assembly.dll"
     if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Missing build output: $binary" }
+    if ($Project -eq 'Gui') { $Selection += '--retry-focus' }
     if ($Only) { $Selection += @('--only', $Only) }
     Invoke-VerificationStep $Name 'dotnet' (@($binary, '--self-test') + $Selection) (Split-Path $binary)
 }
 
 try {
+    $shell = (Get-Process -Id $PID).Path
+    Invoke-VerificationStep 'fixed-waits' $shell @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'check-fixed-waits.ps1'))
     switch ($Suite) {
         { $_ -in @('Gui', 'Project', 'Support', 'RuntimeControls') } {
             Build-ManagedProject 'gui' 'Gui'
@@ -136,10 +141,9 @@ try {
         'All' {
             Build-ManagedProject 'gui' 'Gui'
             Build-ManagedProject 'worker' 'Worker'
-            $shell = (Get-Process -Id $PID).Path
             $arguments = @(
                 '-NoProfile', '-File', (Join-Path $PSScriptRoot 'test-automated.ps1'),
-                '-Configuration', $Configuration
+                '-Configuration', $Configuration, '-RetryFocus'
             )
             if ($NoBuild) { $arguments += '-NoBuild' }
             Invoke-VerificationStep 'automated' $shell $arguments

@@ -19,7 +19,7 @@ internal static partial class SelfTestRunner
 
     private sealed record Context(AppLogger Logger, string Directory, string Project);
 
-    private sealed record Check(Group Group, string Name, Action<Context> Body);
+    private sealed record Check(Group Group, string Name, Action<Context> Body, bool RequiresFocus = false);
 
     // A check owns its directory, project fixture and logger, so it runs the same alone as in the full list.
     private static readonly Check[] Checks = [
@@ -37,7 +37,7 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyChildSessionCredentials),
             c => VerifyChildSessionCredentials(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyDiagnosticSettings), c => VerifyDiagnosticSettings(c.Logger, c.Directory)),
-        new(Group.Support, nameof(VerifySettingsNavigation), c => VerifySettingsNavigation(c.Logger, c.Directory)),
+        new(Group.Support, nameof(VerifySettingsNavigation), c => VerifySettingsNavigation(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Support, nameof(VerifyProjectAboutContent), c => VerifyProjectAboutContent(c.Directory)),
         new(Group.Support, nameof(VerifyProjectAboutView), c => VerifyProjectAboutView(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyNavigationRail), c => VerifyNavigationRail(c.Logger, c.Directory)),
@@ -65,7 +65,7 @@ internal static partial class SelfTestRunner
                     tickBeforeDispatch: true, forceCollision: false, failCleanup: fail, order: SettlementOrder.Reconnect);
         }),
         new(Group.Project, "VerifyScheduledPreviewSettlement", c =>
-            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview)),
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview), RequiresFocus: true),
         new(Group.Project, "VerifyScheduledTraySettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Tray)),
         new(Group.Project, "VerifyScheduledGapSettlement", c =>
@@ -80,7 +80,8 @@ internal static partial class SelfTestRunner
             PumpUntil(() => check.IsCompleted, "终态取消确认查询后应能继续启动。");
             check.GetAwaiter().GetResult();
         }),
-        new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
+        new(Group.Project, "VerifyRunDeliveryForegroundFault", c =>
+            VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault), RequiresFocus: true),
         new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),
         new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),
         new(Group.Project, "VerifyRunDeliveryNotRegistered", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.NotRegistered)),
@@ -97,7 +98,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyScheduledBootReplacement),
             c => VerifyScheduledBootReplacement(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyStartupSettings), c => VerifyStartupSettings(c.Logger, c.Directory)),
-        new(Group.Project, nameof(VerifyScheduledEdits), c => VerifyScheduledEdits(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduledEdits), c => VerifyScheduledEdits(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Project, nameof(VerifyScheduledActivationSaveFailure),
             c => VerifyScheduledActivationSaveFailure(c.Logger, c.Directory, c.Project)),
         new(Group.Project, nameof(VerifyScheduledIdleNotReady),
@@ -107,7 +108,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyScheduledRunRecovery), c => VerifyScheduledRunRecovery(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledRunBeforeWorkerReconnect),
             c => VerifyScheduledRunBeforeWorkerReconnect(c.Logger, c.Directory)),
-        new(Group.Project, nameof(VerifyScheduleClock), c => VerifyScheduleClock(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduleClock), c => VerifyScheduleClock(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Project, nameof(VerifyScheduleClockSelection),
             c => VerifyScheduleClockSelection(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduleClockAtLogon), c => VerifyScheduleClockAtLogon(c.Logger, c.Directory)),
@@ -174,7 +175,7 @@ internal static partial class SelfTestRunner
             c => VerifyUnsupportedProjectConstraints(c.Directory, c.Project)),
         new(Group.Other, nameof(VerifyInvalidProjectInterfaces),
             c => VerifyInvalidProjectInterfaces(c.Directory, c.Project)),
-        new(Group.Other, nameof(VerifyRdpViewingModes), _ => VerifyRdpViewingModes()),
+        new(Group.Other, nameof(VerifyRdpViewingModes), _ => VerifyRdpViewingModes(), RequiresFocus: true),
         new(Group.Other, nameof(VerifyWorkerLogSequenceTracker), _ => VerifyWorkerLogSequenceTracker()),
         new(Group.Other, nameof(VerifyRunLogRouting), c => VerifyRunLogRouting(c.Directory)),
 
@@ -249,7 +250,8 @@ internal static partial class SelfTestRunner
             if (groups.Contains(Group.Project)) {
                 selected = RunLifecycleSelfTest.Cases.Select(test => (test.Method.Name, test)).Concat(selected);
             }
-            return SelfTestSuite.Run("GUI SELF-TEST", selected, args, DescribeMachine());
+            return SelfTestSuite.Run("GUI SELF-TEST", selected, args, DescribeMachine(),
+                args.Contains("--retry-focus") ? name => RetryFocusCheck(name, args) : null);
         } finally {
             try {
                 Directory.Delete(root, recursive: true);
@@ -259,11 +261,36 @@ internal static partial class SelfTestRunner
         }
     }
 
+    private static bool RetryFocusCheck(string name, string[] args)
+    {
+        if (!Checks.Any(check => check.Name == name && check.RequiresFocus)) return false;
+
+        var start = new System.Diagnostics.ProcessStartInfo("dotnet") {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            ArgumentList = { typeof(SelfTestRunner).Assembly.Location, "--self-test", "--only", name, "--focus-rerun" }
+        };
+        var worker = Array.IndexOf(args, "--worker-exe");
+        if (worker >= 0 && worker + 1 < args.Length) {
+            start.ArgumentList.Add("--worker-exe");
+            start.ArgumentList.Add(args[worker + 1]);
+        }
+        using var child = System.Diagnostics.Process.Start(start)!;
+        // Preserve both UTF-8 streams in verify.ps1's logs, including the isolated attempt's exception.
+        Task.WaitAll(child.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput()),
+            child.StandardError.BaseStream.CopyToAsync(Console.OpenStandardError()));
+        child.WaitForExit();
+        var passed = child.ExitCode == 0;
+        Console.WriteLine($"FOCUS-RERUN {(passed ? "PASS" : "FAIL")} {name}");
+        return passed;
+    }
+
     // Names what results depend on, and how far window-width checks can reach on this screen.
     private static string DescribeMachine()
     {
+        if (Forms.Screen.PrimaryScreen is not { } screen) return "ENV 无主显示器";
         var workArea = System.Windows.SystemParameters.WorkArea;
-        var scale = Forms.Screen.PrimaryScreen!.Bounds.Width / System.Windows.SystemParameters.PrimaryScreenWidth;
+        var scale = screen.Bounds.Width / System.Windows.SystemParameters.PrimaryScreenWidth;
         return $"ENV 工作区={workArea.Width}x{workArea.Height} DIP，缩放={scale:P0}，"
             + $"区域={System.Globalization.CultureInfo.CurrentCulture.Name}，"
             + $"动画={System.Windows.SystemParameters.ClientAreaAnimation}，"

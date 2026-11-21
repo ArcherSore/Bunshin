@@ -40,6 +40,8 @@
   完整 GUI 自检会创建本机 RDP 控件验证输入禁用和窗口模式。
 
 编写自检时，断言应对应用户能感知的缺陷，不固定文案、颜色或私有成员；几何比较用 `PixelTolerance`，等待用 `PumpUntil`。
+每个套件先检查固定等待，超出既有基线即失败；标记为依赖前台焦点的失败用例会单独重跑一次，通过时摘要显示 `FOCUS-RERUN PASS <名称>`。
+审查时请阅读仓库根目录的 [CODING_STANDARDS.md](CODING_STANDARDS.md)。
 
 ## 发布包
 
