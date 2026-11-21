@@ -22,6 +22,10 @@ Worker 的 worker.stateChanged、run.stateChanged 和 log.entry 是可丢失的�
 
 `worker.getSnapshot` 可携带 `runId`。携带时，成功响应必须包含布尔字段 `runRegistered`，表示该 ID 是否曾在本 Worker 实例登记。Worker 在同一把锁内读取完整快照和登记表，因此即使后续 Run 已覆盖 LastRun，历史登记仍返回 `true`。省略 `runId` 时，响应仅包含 `snapshot`。
 
+每次连接都要完成首次全量同步。首次查询超时，GUI 关闭该连接，等待同一 Worker 重连。同步完成后，状态修订号断档会触发普通全量补查。该补查的应答超时只记警告并保留连接，后续状态帧仍可更新视图。
+
+定向查询与 `run.start` 共用连接写锁。GUI 按连接、请求 ID 和操作关联应答，校验协议版本、快照的 Worker 身份、状态与 `stateRevision`。定向成功应答缺少修订号或布尔型 `runRegistered`，或声称未登记但 ActiveRun / LastRun 含目标 ID，均视为协议错误并关闭连接。有效的 `false` 只能排除查询顺序覆盖的发送，普通快照中缺少目标 Run 不能证明未登记。坏连接上的迟到帧丢弃，待确认的 Run 在原 Worker 重连后继续查询。
+
 ## 身份与持久边界
 
 GUI 使用 Pipe 对端真实 PID、Windows Session ID、Worker 映像和 Admission Record 核验连接，并核对 Worker Instance ID 与 Launch Token。Pipe 连接本身不是 Worker 身份。GUI 只持久化最小接纳信息；Run 和日志保留在 Worker 进程内，不在 GUI 重启时重放计划。

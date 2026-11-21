@@ -22,6 +22,16 @@ internal static partial class WorkerCoordinatorSelfTest
         ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "configurations.json"));
 
     internal static (string Name, Func<AppLogger, string, string, Task> Body)[] Checks => [
+        (nameof(VerifyStartEvidenceSyncReconnectAsync), VerifyStartEvidenceSyncReconnectAsync),
+        (nameof(VerifyInitialSnapshotBeforeEofAsync), VerifyInitialSnapshotBeforeEofAsync),
+        (nameof(VerifyInitialLogPageBeforeEofAsync), VerifyInitialLogPageBeforeEofAsync),
+        (nameof(VerifyLiveLogPageBeforeInitialSyncEofAsync), VerifyLiveLogPageBeforeInitialSyncEofAsync),
+        (nameof(VerifyStartEvidenceRevisionOrderAsync), VerifyStartEvidenceRevisionOrderAsync),
+        (nameof(VerifySnapshotGapTimeoutAsync), VerifySnapshotGapTimeoutAsync),
+        (nameof(VerifyQueuedStartSnapshotGapAsync), VerifyQueuedStartSnapshotGapAsync),
+        (nameof(VerifyStartEvidenceWritesAsync), VerifyStartEvidenceWritesAsync),
+        (nameof(VerifyStartEvidenceRepliesAsync), VerifyStartEvidenceRepliesAsync),
+        (nameof(VerifyStartEvidenceQueryAsync), VerifyStartEvidenceQueryAsync),
         (nameof(VerifyConnectionLifecycleAsync),
             (logger, directory, _) => VerifyConnectionLifecycleAsync(logger, directory)),
         (nameof(VerifyAdmissionRecoveryAsync), (logger, directory, project) => VerifyAdmissionRecoveryAsync(
@@ -151,9 +161,11 @@ internal static partial class WorkerCoordinatorSelfTest
         await pipe.WriteAsync(CreateLogEvent(record.WorkerInstanceId, stranded), cancellationToken);
         var recoveryRequest = await ReadRequestAsync(pipe, ProtocolOperations.LogGetSince, cancellationToken);
         coordinator.ChildSessionEnded();
+        Require(await pipe.ReadAsync(cancellationToken) is null, "摘除 Admission 应立即关闭仍有日志查询在途的管道。");
         var missing = CreateEntry(9, ProtocolConstants.RunLogSource, "also-hidden", timestamp);
-        await WriteLogPageAsync(pipe, recoveryRequest, [missing, stranded], lastSequence: 10, cancellationToken);
-        await Task.Delay(200, cancellationToken);
+        await ExpectAsync<IOException>(
+            () => WriteLogPageAsync(pipe, recoveryRequest, [missing, stranded], lastSequence: 10, cancellationToken),
+            "旧 Worker 不能再通过已关闭的管道写回日志页。");
         if (received.Count != 7 || received.Last().Sequence != 8) {
             throw new InvalidOperationException("失效 Worker 的在途 recovery 结果仍被发布。 ");
         }
@@ -195,7 +207,7 @@ internal static partial class WorkerCoordinatorSelfTest
         string pipeName, WorkerAdmissionRecord record, long lastLogSequence,
         CancellationToken cancellationToken, RunSnapshot? activeRun = null,
         WorkerState initialState = WorkerState.Ready, RunSnapshot? lastRun = null, long stateRevision = 1,
-        Action<Stream>? connected = null)
+        Action<Stream>? connected = null, Func<ProtocolConnection, Task>? beforeSnapshotReply = null)
     {
         var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
@@ -217,6 +229,7 @@ internal static partial class WorkerCoordinatorSelfTest
 
             var snapshotRequest = await ReadRequestAsync(
                 connection, ProtocolOperations.WorkerGetSnapshot, cancellationToken);
+            if (beforeSnapshotReply != null) await beforeSnapshotReply(connection);
             await connection.WriteAsync(
                 WireEnvelope.Response(
                     ProtocolOperations.WorkerGetSnapshot, snapshotRequest.RequestId!.Value,
@@ -289,7 +302,7 @@ internal static partial class WorkerCoordinatorSelfTest
             if (currentSnapshot is not null && request is { Operation: ProtocolOperations.WorkerGetSnapshot,
                 RequestId: { } snapshotId } && operation != ProtocolOperations.WorkerGetSnapshot) {
                 await connection.WriteAsync(WireEnvelope.Response(request.Operation, snapshotId,
-                    new GetSnapshotResponse(currentSnapshot)), cancellationToken);
+                    SnapshotResponse(request, currentSnapshot)), cancellationToken);
                 continue;
             }
             // The GUI synchronises the debug switches whenever it likes; no scenario here is about that ordering.
@@ -305,6 +318,19 @@ internal static partial class WorkerCoordinatorSelfTest
             }
             return request;
         }
+    }
+
+    internal static GetSnapshotResponse SnapshotResponse(WireEnvelope query, WorkerSnapshot snapshot)
+    {
+        var id = ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId;
+        return new(snapshot, id.HasValue ? snapshot.ActiveRun?.RunId == id || snapshot.LastRun?.RunId == id : null);
+    }
+
+    internal static async Task AnswerRunQueryAsync(ProtocolConnection pipe, WorkerSnapshot snapshot, CancellationToken token)
+    {
+        var query = await ReadRequestAsync(pipe, ProtocolOperations.WorkerGetSnapshot, token);
+        await pipe.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+            SnapshotResponse(query, snapshot)), token);
     }
 
     private static Task WriteLogPageAsync(

@@ -12,7 +12,13 @@ public sealed class ProtocolConnection : IAsyncDisposable
 
     private readonly Stream _stream;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private bool _disposed;
+    private readonly TaskCompletionSource<Exception?> _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _disposed;
+    private IOException? _writeFailure;
+
+    public Task<Exception?> Closed => _closed.Task;
+    public bool IsClosed => Volatile.Read(ref _disposed) != 0;
+    public IOException? WriteFailure => Volatile.Read(ref _writeFailure);
 
     public ProtocolConnection(Stream stream)
     {
@@ -53,11 +59,12 @@ public sealed class ProtocolConnection : IAsyncDisposable
     }
 
     public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken) =>
-        WriteAsync(envelope, cancellationToken, null);
+        WriteAsync(envelope, cancellationToken, null, null, cancellationToken);
 
-    public async Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending)
+    public async Task<bool> WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending,
+        Func<bool>? canWrite, CancellationToken frameCancellationToken)
     {
-        ThrowIfDisposed();
+        ThrowIfWriteUnavailable();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
         if (payload.Length == 0 || payload.Length > ProtocolConstants.MaximumFramePayloadBytes) {
             throw new ProtocolException($"IPC frame payload 越界：{payload.Length} bytes。 ");
@@ -67,35 +74,65 @@ public sealed class ProtocolConnection : IAsyncDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(prefix, (uint)payload.Length);
 
         await _writeGate.WaitAsync(cancellationToken);
+        var incomplete = false;
         try {
-            await _stream.WriteAsync(prefix, cancellationToken);
+            ThrowIfWriteUnavailable();
+            if (canWrite?.Invoke() == false) {
+                return false;
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            // A caller may abandon a reply while the transport finishes its frame.
+            // Stream.WriteAsync returns no byte count on cancellation. A one-byte write
+            // distinguishes an untouched stream from a partially written length prefix.
+            await _stream.WriteAsync(prefix.AsMemory(0, 1), frameCancellationToken);
+            incomplete = true;
+            // Even a writer slow to acknowledge cancellation cannot complete the frame here.
+            await _stream.WriteAsync(prefix.AsMemory(1), frameCancellationToken).AsTask().WaitAsync(frameCancellationToken);
             // A length prefix alone cannot deliver a request. Once the payload write starts, delivery is uncertain
             // even if the write or flush subsequently fails.
             ThrowIfDisposed();
-            cancellationToken.ThrowIfCancellationRequested();
+            frameCancellationToken.ThrowIfCancellationRequested();
             onSending?.Invoke();
-            await _stream.WriteAsync(payload, cancellationToken);
-            await _stream.FlushAsync(cancellationToken);
+            await _stream.WriteAsync(payload, frameCancellationToken);
+            incomplete = false;
+            await _stream.FlushAsync(frameCancellationToken);
+            return true;
+        } catch (Exception error) when (incomplete) {
+            // A second frame would corrupt the wire. Only the owner may close the concurrent reader.
+            Volatile.Write(ref _writeFailure, error as IOException ?? new IOException("IPC 帧未写完整。", error));
+            throw;
         } finally {
             _writeGate.Release();
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public void Close(Exception? reason = null)
     {
-        if (_disposed) {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) {
             return;
         }
-
-        _disposed = true;
-        _writeGate.Dispose();
-        await _stream.DisposeAsync();
+        try {
+            _stream.Dispose();
+        } finally {
+            _closed.TrySetResult(reason);
+        }
     }
 
-    private void ThrowIfDisposed()
+    public ValueTask DisposeAsync()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        Close();
+        return ValueTask.CompletedTask;
     }
+
+    private void ThrowIfWriteUnavailable()
+    {
+        if (WriteFailure is { } error) {
+            throw new IOException(error.Message, error);
+        }
+        ThrowIfDisposed();
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(IsClosed, this);
 }
 
 public sealed class ProtocolException : Exception

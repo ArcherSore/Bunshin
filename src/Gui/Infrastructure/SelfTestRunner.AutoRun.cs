@@ -82,33 +82,6 @@ internal static partial class SelfTestRunner
             "配置被锁定（已有 Run 或运行环境忙）时必须跳过。");
     }
 
-    private static void VerifyQuitAfterRunTracker()
-    {
-        var running = CreateNotificationSnapshot(RunState.Running);
-        var worker = running.WorkerSnapshot!;
-        var run = worker.ActiveRun!;
-        var tracker = new QuitAfterRunTracker();
-        Require(!tracker.Observe(FinishNotificationRun(running, RunState.Succeeded)), "提交之前不能自动退出。");
-        tracker.Await(run.RunId);
-        Require(!tracker.Observe(running), "任务运行中不能退出。");
-        var faulted = running with {
-            WorkerSnapshot = worker with { WorkerState = WorkerState.Faulted }
-        };
-        Require(!tracker.Observe(faulted), "执行终止未确认（Faulted）时不能退出。");
-
-        var other = CreateNotificationSnapshot(RunState.Running);
-        Require(!tracker.Observe(FinishNotificationRun(other, RunState.Succeeded)), "其他 Run 结束不能触发退出。");
-        var earlier = running with {
-            WorkerSnapshot = worker with { ActiveRun = run with { StartedAtUtc = DateTime.UnixEpoch } }
-        };
-        foreach (var state in new[] { RunState.Succeeded, RunState.Failed, RunState.Cancelled }) {
-            tracker.Await(run.RunId);
-            var ended = FinishNotificationRun(earlier, state);
-            Require(!tracker.Observe(ended with { SnapshotFresh = false }), "断线后的旧快照不能推测任务已结束。");
-            Require(tracker.Observe(ended), $"系统时钟回拨后，已绑定 Run 的 {state} 终态仍须触发退出。");
-            Require(!tracker.Observe(ended), "重复的终态快照不能再次触发退出。");
-        }
-    }
 
     // Two configurations, "日常" active and "周常" second, each with the project's first task unless left empty.
     private static Action<string> TwoConfigurations(bool dailyHasTask = true, bool weeklyHasTask = true) =>

@@ -305,88 +305,82 @@ internal static partial class SelfTestRunner
             $"手动停止不应写成错误：{string.Join(" | ", written)}");
     }
 
-    private static void VerifyTerminalNotifications()
+    private static void VerifyTerminalNotifications(AppLogger logger, string directory)
     {
-        var tracker = new RunTerminalNotificationTracker();
-        var active = CreateNotificationSnapshot(RunState.Running);
-        tracker.Register(active.WorkerSnapshot!.ActiveRun!.RunId, "日常");
-        if (tracker.Observe(active, "另一配置") is not null) {
-            throw new InvalidOperationException("活动 Run 不应通知。");
-        }
-        var terminal = FinishNotificationRun(active, RunState.Succeeded);
-        var notification = tracker.Observe(terminal);
-        if (notification is not { Title: "「日常」已完成", Message: "所有任务已执行完成。", Failed: false }
-            || tracker.Observe(terminal) is not null) {
-            throw new InvalidOperationException("成功 Run 应恰好通知一次。");
-        }
-        if (tracker.Observe(terminal with { SnapshotFresh = false }) is not null
-            || tracker.Observe(terminal) is not null
-            || new RunTerminalNotificationTracker().Observe(terminal) is not null) {
-            throw new InvalidOperationException("重连和 GUI 重启不得重发历史通知。");
-        }
-        foreach (var state in new[] { RunState.Failed, RunState.Cancelled }) {
-            tracker = new RunTerminalNotificationTracker();
-            active = CreateNotificationSnapshot(RunState.Running);
-            tracker.Observe(active, "周常");
-            if (state == RunState.Cancelled) {
-                tracker.Observe(active with {
-                    WorkerSnapshot = active.WorkerSnapshot! with {
-                        RunState = RunState.Stopping,
-                        ActiveRun = active.WorkerSnapshot.ActiveRun! with { State = RunState.Stopping }
+        var root = CreateProjectFixture(directory);
+        TwoConfigurations()(root);
+        var probe = new PresentationProbe();
+        var sample = CreateNotificationSnapshot(RunState.Running);
+        var active = sample.WorkerSnapshot!.ActiveRun!;
+        var success = FinishNotificationRun(sample, RunState.Succeeded).WorkerSnapshot!.LastRun!;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var token = timeout.Token;
+        WithFakeWorker(logger, Path.Combine(directory, "worker"), (worker, record, name) => {
+            WithRuntimeControlWindow(logger, directory, window => {
+                window.Hide();
+                long revision = 1;
+                var pipe = OnPool(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(name, record, 0, token,
+                    lastRun: success with { RunId = Guid.NewGuid() }));
+                void Publish(RunSnapshot? running = null, RunSnapshot? last = null, WorkerState state = WorkerState.Ready)
+                {
+                    var frame = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0, running) with {
+                        StateRevision = ++revision, WorkerState = state, LastRun = last
+                    };
+                    Task.Run(() => pipe.WriteAsync(StateEvent(frame), token)).GetAwaiter().GetResult();
+                    AwaitWorker(worker, v => v.WorkerSnapshot?.StateRevision == revision, "窗口应收到新的快照。");
+                    PumpOnboarding(20);
+                }
+                try {
+                    AwaitWorker(worker, v => v.Fresh, "应完成首次同步。");
+                    Publish(active);
+                    Require(probe.Balloons.Count == 0, "启动时已有的历史终态和活动 Run 均不应提醒。");
+                    var project = ProjectOf(window);
+                    project.ActivateConfiguration(project.Configurations.Single(c => c.Name == "周常").Id);
+                    Publish(last: success);
+                    Publish(last: success);
+                    Require(probe.Balloons is [{ Title: "「日常」已完成", Message: "所有任务已执行完成。", Failed: false }],
+                        "成功应使用观察 Run 时的配置名并恰好发出一次气泡。");
+                    probe.Balloons.Clear();
+                    foreach (var (result, reconnect) in new[] {
+                        (RunState.Failed, false), (RunState.Cancelled, false), (RunState.Failed, true)
+                    }) {
+                        var fixture = CreateNotificationSnapshot(RunState.Running);
+                        var run = fixture.WorkerSnapshot!.ActiveRun!;
+                        var terminal = FinishNotificationRun(fixture, result).WorkerSnapshot!.LastRun!;
+                        Publish(run);
+                        if (result == RunState.Cancelled) Publish(run with { State = RunState.Stopping });
+                        if (reconnect) {
+                            terminal = terminal with { Items = [] };
+                            pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                            AwaitWorker(worker, v => !v.Fresh, "断线应使快照失效。");
+                            PumpOnboarding(20);
+                            Require(probe.Balloons.Count == 1, "停止和断线均不得多发提醒。");
+                            pipe = OnPool(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(name, record, 0, token,
+                                lastRun: terminal, stateRevision: ++revision));
+                        }
+                        Publish(last: terminal);
+                        Publish(last: terminal);
                     }
-                });
-            }
-            terminal = FinishNotificationRun(active, state);
-            notification = tracker.Observe(terminal);
-            if (state == RunState.Failed
-                ? notification is not { Title: "「周常」运行失败", Failed: true,
-                    Message: "失败任务：日常任务。打开 Bunshin 查看运行动态。" }
-                : notification is not null) {
-                throw new InvalidOperationException("失败通知必须解析 Plan 标签，取消不通知。");
-            }
-            if (tracker.Observe(terminal) is not null) {
-                throw new InvalidOperationException("重复终态不能通知。");
-            }
-        }
-        tracker = new RunTerminalNotificationTracker();
-        active = CreateNotificationSnapshot(RunState.Running);
-        tracker.Observe(active);
-        terminal = FinishNotificationRun(active, RunState.Failed);
-        if (tracker.Observe(active with {
-                Observation = WorkerObservation.IpcDisconnected, SnapshotFresh = false
-            }) is not null || tracker.Observe(terminal with { SnapshotFresh = false }) is not null
-            || tracker.Observe(terminal) is not { Failed: true } || tracker.Observe(terminal) is not null) {
-            throw new InvalidOperationException("断线时不能推测终态，恢复后应通知一次。");
-        }
-        tracker = new RunTerminalNotificationTracker();
-        tracker.Observe(active);
-        terminal = terminal with { WorkerSnapshot = terminal.WorkerSnapshot! with {
-            LastRun = terminal.WorkerSnapshot.LastRun! with { Items = [] }
-        } };
-        if (tracker.Observe(terminal)?.Message != "任务运行失败。打开 Bunshin 查看运行动态。") {
-            throw new InvalidOperationException("缺少失败项时须使用简短后备文案。");
-        }
-
-        // A Worker that faults during an observed Active Run is announced once. One already Faulted when its Run is
-        // first seen is not, since nothing was observed to change.
-        foreach (var state in new[] { RunState.Stopping, RunState.Running }) {
-            tracker = new RunTerminalNotificationTracker();
-            active = CreateNotificationSnapshot(state);
-            var faulted = active with {
-                WorkerSnapshot = active.WorkerSnapshot! with { WorkerState = WorkerState.Faulted }
-            };
-            tracker.Observe(active);
-            if (tracker.Observe(faulted) is not { Title: "任务未能确认结束", Failed: true,
-                    Message: "任务可能仍在运行。打开 Bunshin 结束桌面分身以恢复。" }
-                || tracker.Observe(faulted) is not null
-                || tracker.Observe(faulted with { SnapshotFresh = false }) is not null
-                || tracker.Observe(faulted) is not null) {
-                throw new InvalidOperationException($"{state} 的 Run 期间 Worker 故障应恰好提醒一次。");
-            }
-            if (new RunTerminalNotificationTracker().Observe(faulted) is not null) {
-                throw new InvalidOperationException("没有已观察的 Run 时 Worker 故障不应提醒。");
-            }
-        }
+                    Require(probe.Balloons is [
+                        { Title: "「周常」运行失败", Failed: true, Message: "失败任务：日常任务。打开 Bunshin 查看运行动态。" },
+                        { Title: "「周常」运行失败", Failed: true, Message: "任务运行失败。打开 Bunshin 查看运行动态。" }],
+                        "失败项取计划标签，缺少失败项使用后备文案，各提醒一次。");
+                    foreach (var status in new[] { RunState.Running, RunState.Stopping }) {
+                        probe.Balloons.Clear();
+                        var run = active with { RunId = Guid.NewGuid(), State = status };
+                        Publish(run);
+                        Publish(run, state: WorkerState.Faulted);
+                        Publish(run, state: WorkerState.Faulted);
+                        Publish(run with { RunId = Guid.NewGuid() }, state: WorkerState.Faulted);
+                        Require(probe.Balloons is [{ Title: "任务未能确认结束", Failed: true,
+                            Message: "任务可能仍在运行。打开 Bunshin 结束桌面分身以恢复。" }],
+                            $"{status} 期间故障应恰好提醒一次，接管时已经 Faulted 的 Run 不补发。");
+                    }
+                } finally {
+                    pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+            }, coordinator: worker, presentation: probe.Presentation);
+        }, () => true);
     }
 
     private static void VerifyDiagnosticPackage(AppLogger logger, string testDirectory)

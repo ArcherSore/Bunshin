@@ -46,6 +46,7 @@ internal sealed class RuntimeEnvironment
 
     // Raised when Ending or EndUnconfirmed changes, on the thread running the end.
     internal event EventHandler? StateChanged;
+    internal event Action? Ended;
 
     internal Task RunExclusiveAsync(Func<Task> operation) => RunGatedAsync(operation, refuseWhileClosing: true);
 
@@ -63,6 +64,14 @@ internal sealed class RuntimeEnvironment
         }
     }
 
+    internal Func<WorkerCoordinatorSnapshot, Guid?>? PendingLifecycleStart { private get; set; }
+
+    internal (WorkerCoordinatorSnapshot State, Guid? PendingStart) ReadRunObservation()
+    {
+        var view = _coordinator.ReadPublishedSnapshot();
+        return (view, PendingLifecycleStart?.Invoke(view));
+    }
+
     internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation, out bool hasSession)
     {
         observation = WorkerCoordinatorSnapshot.Empty;
@@ -74,11 +83,11 @@ internal sealed class RuntimeEnvironment
         try {
             var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
             hasSession = sessionId.HasValue;
-            var (current, awaitingStart) = _coordinator.ReadRunObservation();
+            var (current, awaitingStart) = ReadRunObservation();
             if (sessionId is uint id && current.NoLiveAdmission) {
                 // With no live Admission a surviving, untracked Worker cannot be known idle.
                 _coordinator.EnsureSessionHasNoWorker(id);
-                (current, awaitingStart) = _coordinator.ReadRunObservation();
+                (current, awaitingStart) = ReadRunObservation();
             }
             observation = current;
             if (current.NoLiveAdmission) {
@@ -100,7 +109,7 @@ internal sealed class RuntimeEnvironment
     internal bool CanEndSuccessfulRun(Guid workerId, Guid runId)
     {
         var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
-        var (current, awaitingStart) = _coordinator.ReadRunObservation();
+        var (current, awaitingStart) = ReadRunObservation();
         return !Closing && !EndUnconfirmed && awaitingStart is null
             && current is { FreshIdleForEnvironmentEnd: true,
                 WorkerSnapshot: { LastRun: { State: RunState.Succeeded } last } idle }
@@ -145,7 +154,9 @@ internal sealed class RuntimeEnvironment
     {
         SetState(ending: true, EndUnconfirmed);
         try {
-            return await EndInGateAsync(confirm);
+            var result = await EndInGateAsync(confirm);
+            if (result.Outcome == EnvironmentEndOutcome.Ended) Ended?.Invoke();
+            return result;
         } finally {
             SetState(ending: false, EndUnconfirmed);
         }
@@ -176,7 +187,8 @@ internal sealed class RuntimeEnvironment
         var failure = "无法确认 Worker 已退出。";
         try {
             // Capture the already verified Worker before WTS teardown, so a reused PID cannot pass for its exit.
-            var workerExit = _coordinator.TrackedWorkerPid is int pid ? _waitForWorkerExit(pid, exitWait.Token) : null;
+            var tracked = _coordinator.TrackedAdmission;
+            var workerExit = tracked?.WorkerPid is int pid ? _waitForWorkerExit(pid, exitWait.Token) : null;
             _logger.Info("开始结束桌面分身：先停止任务，随后注销 Child Session。");
             using (_logger.Scope("停止 Active Run")) {
                 await StopActiveRunAsync();
@@ -195,7 +207,7 @@ internal sealed class RuntimeEnvironment
                 }
             }
             failure = "丢弃 Worker Admission 失败。";
-            _coordinator.ChildSessionEnded();
+            _coordinator.ChildSessionEnded(workerExit is null ? null : tracked);
         } catch (Exception exception) {
             return Unconfirmed(failure, exception);
         } finally {

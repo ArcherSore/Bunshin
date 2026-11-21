@@ -60,7 +60,9 @@ internal static partial class WorkerCoordinatorSelfTest
             var attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId) with {
                 RedactionValues = [RedactionValue]
             };
-            var starting = coordinator.StartRunAsync(attempt, timeout.Token);
+            var key = new RunKey(record.WorkerInstanceId, attempt.RunId);
+            var starting = coordinator.SendStartAsync(new(Guid.NewGuid(), Guid.NewGuid(), key, attempt.PlanDigest),
+                attempt, timeout.Token);
             var start = await ReadRequestAsync(worker, ProtocolOperations.RunStart, timeout.Token);
             await worker.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value,
                 new RunStartResponse("accepted")), timeout.Token);

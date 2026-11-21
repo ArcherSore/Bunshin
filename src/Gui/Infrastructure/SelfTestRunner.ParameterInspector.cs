@@ -120,8 +120,7 @@ internal static partial class SelfTestRunner
             Require(Expanded().Length == 0 && InspectorRows() == 0, "再次点击已展开的标题区必须收起。");
 
             Click("Stress task，已折叠");
-            SetOnboardingField(window, "_pendingOperation", PendingOperation.PreparingEnvironment);
-            InvokeOnboarding(window, "RefreshRuntimeControls");
+            window.SetPendingOperation(PendingOperation.PreparingEnvironment);
             var rows = ConfigurationDescendants(items).OfType<ParameterRowPanel>().ToArray();
             var editors = rows.SelectMany(ConfigurationDescendants).OfType<System.Windows.Controls.Control>()
                 .Where(control => control is System.Windows.Controls.TextBox or System.Windows.Controls.ComboBox

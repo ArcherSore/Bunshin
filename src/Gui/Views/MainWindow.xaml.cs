@@ -15,6 +15,7 @@ using Gui.Models;
 using ProjectModel;
 using Protocol;
 using Gui.Settings;
+using Gui.Runtime;
 using Updates;
 using Gui.Worker;
 using WpfBrush = System.Windows.Media.Brush;
@@ -54,11 +55,15 @@ public partial class MainWindow : FluentWindow
     private ChildSessionSnapshot _sessionSnapshot = ChildSessionSnapshot.Empty;
     private WorkerCoordinatorSnapshot _workerSnapshot = WorkerCoordinatorSnapshot.Empty;
     private ProjectPlanModule? _projectPlan;
-    private RunStartAttempt? _pendingStartAttempt;
+    private RunKey? _lastStartKey;
+    private long _projectVersion;
+    private long _editVersion;
+    private readonly RunLifecycleHost _lifecycle;
+    private readonly RunPresentation _presentation;
+    private Guid? _closingId;
     private ScrollViewer? _homeLogScrollViewer;
     private readonly RunLogFeed _runLog;
     private bool _allowClose;
-    private PendingOperation _pendingOperation;
     private bool _environmentPreparationFailed;
     private bool _exitInProgress;
     private bool _followLogs = true;
@@ -82,11 +87,12 @@ public partial class MainWindow : FluentWindow
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
-        GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null, QuitAfterRunTracker? quitAfterRun = null,
-        DispatcherTimer? scheduleTimer = null)
+        GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null, Action? quitAfterRun = null,
+        DispatcherTimer? scheduleTimer = null, RunPresentation? presentation = null)
     {
         _launchCommand = launchCommand ?? new LaunchCommand();
         _quitAfterRun = quitAfterRun;
+        _presentation = presentation ?? new();
         _scheduleClock = scheduleClock ?? TimeProvider.System;
         _scheduleTimer = scheduleTimer ?? new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         InitializeComponent();
@@ -107,7 +113,10 @@ public partial class MainWindow : FluentWindow
         ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
             () => CurrentControls.ConfigurationLock, HandleOperationError);
-        TaskPlanEditor.PlanEdited += (_, _) => _pendingStartAttempt = null;
+        TaskPlanEditor.PlanEdited += (_, _) => {
+            _lastStartKey = null;
+            _editVersion++;
+        };
         TaskPlanEditor.ConfigurationValidated += (_, valid) => {
             _projectConfigurationValid = valid;
             RefreshRuntimeControls();
@@ -128,6 +137,13 @@ public partial class MainWindow : FluentWindow
         OnFrameworkOptionsChanged(_settings.SaveDraw);
         ClearDebugFilesOnStartup();
         _environment = environment;
+        _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, PresentRunAction, RequestQuitAfterRun, logger, scheduleClock);
+        _lifecycle.Changed += RefreshRuntimeControls;
+        _lifecycle.ScheduledCompleted += terminal => ScheduledRunCompleted?.Invoke(this, terminal);
+        _lifecycle.ScheduledCleanupCompleted += () => AddScheduleActivity("全部完成，已关闭桌面分身");
+        _lifecycle.CleanupPending += EndScheduledRunAsync;
+        _environment.Ended += _lifecycle.EnvironmentRecovered;
+        _environment.PendingLifecycleStart = view => _lifecycle.ReadOrchestration().PendingStart(view)?.RunId;
         _prepareEnvironment = prepareEnvironment ?? environment.PrepareAsync;
         _requestExitAsync = requestExitAsync;
         _endEnvironmentAsync = endEnvironmentAsync;
@@ -172,6 +188,10 @@ public partial class MainWindow : FluentWindow
 
     internal void SetExitInProgress(bool exitInProgress)
     {
+        if (exitInProgress && _closingId == null) {
+            _closingId = Guid.NewGuid();
+            _lifecycle.Apply(new LifecycleEvent.ClosingStarted(_closingId.Value));
+        }
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
             _exitGeneration++;
@@ -181,6 +201,15 @@ public partial class MainWindow : FluentWindow
         }
         UpdateUpdaterControls();
         RefreshRuntimeControls();
+        if (!exitInProgress && _closingId is Guid id) {
+            _closingId = null;
+            _lifecycle.Apply(new LifecycleEvent.ClosingCancelled(id));
+        }
+    }
+
+    internal void CommitExit()
+    {
+        if (_closingId is Guid id) _lifecycle.Apply(new LifecycleEvent.ClosingCommitted(id));
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -262,6 +291,8 @@ public partial class MainWindow : FluentWindow
             return;
         }
         if (_allowClose) {
+            _lifecycle.Dispose();
+            _environment.PendingLifecycleStart = null;
             _onboardingClosed = true;
             EndOnboarding(handled: false);
             RemoveModalWindowHook();
@@ -275,6 +306,7 @@ public partial class MainWindow : FluentWindow
             _sessionManager.StateChanged -= OnSessionStateChanged;
             _workerCoordinator.StateChanged -= OnWorkerStateChanged;
             _environment.StateChanged -= OnEnvironmentStateChanged;
+            _environment.Ended -= _lifecycle.EnvironmentRecovered;
             _workerCoordinator.LogReceived -= OnWorkerLogReceived;
             IsVisibleChanged -= MainWindow_IsVisibleChanged;
             StateChanged -= MainWindow_StateChanged;
@@ -545,11 +577,11 @@ public partial class MainWindow : FluentWindow
     }
 
     private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool showDesktop = false,
-        QuitAfterRunTracker? quitAfterRun = null)
+        RunSource source = RunSource.Manual)
     {
         await PrepareProjectEnvironmentAsync(project: null, showDesktop);
         if (startRun && !_exitInProgress && !_environment.Closing && await WaitForRunStartAsync()) {
-            await StartCurrentPlanAsync(quitAfterRun);
+            await StartCurrentPlanAsync(source, PendingOperation.PreparingEnvironment);
         }
     }
 
@@ -568,7 +600,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async Task<bool> WaitForRunStartAsync()
+    private async Task<bool> WaitForRunStartAsync(bool scheduled = false)
     {
         _logger.Info("等待 Worker 依赖检查完成后自动开始当前任务计划。");
         using var readyWait = new CancellationTokenSource();
@@ -581,7 +613,7 @@ public partial class MainWindow : FluentWindow
         if (_exitInProgress || _environment.Closing) {
             return false;
         }
-        SetPendingOperation(PendingOperation.StartingRun);
+        SetPendingOperation(PendingOperation.StartingRun, scheduled);
         return true;
     }
 
@@ -617,7 +649,8 @@ public partial class MainWindow : FluentWindow
     }
 
     // Called only while the application operation gate is held, after preparation or a direct Start.
-    private async Task StartCurrentPlanAsync(QuitAfterRunTracker? quitAfterRun = null)
+    private async Task StartCurrentPlanAsync(RunSource source = RunSource.Manual,
+        PendingOperation operation = PendingOperation.StartingRun)
     {
         // The operation may wait behind another one, so the session is checked again when it runs.
         if (_sessionManager.Snapshot.State != ChildSessionState.Connected) {
@@ -628,42 +661,34 @@ public partial class MainWindow : FluentWindow
             throw new InvalidOperationException(
                 "当前 任务配置尚未通过正式 PI Resolver 校验。 ");
         }
-        var attempt = _pendingStartAttempt ??= CreateConfigurationAttempt(project, project.ActiveConfigurationId);
-        if (quitAfterRun is null && _quitAfterRun?.IsWaitingFor(attempt.RunId) == true) {
-            // A retry reuses its Run ID. Only replay once the original start was ruled out.
-            var (current, awaitingStart) = _workerCoordinator.ReadRunObservation();
-            if (current is not { Fresh: true, WorkerSnapshot: { } w }
-                || awaitingStart.HasValue) {
-                return;
-            }
-            if (w.ActiveRun?.RunId == attempt.RunId || w.LastRun?.RunId == attempt.RunId) {
-                _pendingStartAttempt = null;
-                return;
-            }
-            _quitAfterRun.Abandon();
-        }
-        try {
-            await SubmitRunAsync(attempt, ActiveConfigurationName,
-                onSending: quitAfterRun is null ? null : () => quitAfterRun.Await(attempt.RunId));
-        } catch (WorkerProtocolErrorException) {
-            quitAfterRun?.Abandon();
-            throw;
-        }
-        _pendingStartAttempt = null;
+        var view = _workerCoordinator.ReadPublishedSnapshot();
+        var orchestration = _lifecycle.ReadOrchestration();
+        if (orchestration.PendingQuitReason != null || orchestration.ManualErrorPending) return;
+        var worker = view.WorkerSnapshot ?? throw new InvalidOperationException("Worker 快照已失效。");
+        if (orchestration.PendingStart(view) != null
+            || _exitInProgress || _environment.Closing) return;
+
+        var intent = CreateRunIntent(source, project.ActiveConfigurationId, ActiveConfigurationName, operation);
+        var retry = intent with { RetryOf = _lastStartKey };
+        var attempt = orchestration.Lifecycle.ReusableAttempt(retry, worker.WorkerInstanceId);
+        if (attempt != null) intent = retry;
+        else attempt = CreateConfigurationAttempt(project, project.ActiveConfigurationId);
+        var key = new RunKey(worker.WorkerInstanceId, attempt.RunId);
+        _lastStartKey = key;
+        await SubmitRunAsync(intent, key, attempt);
     }
 
-    private async Task SubmitRunAsync(RunStartAttempt attempt, string name, Action? onSending = null)
+    private RunIntent CreateRunIntent(RunSource source, Guid configurationId, string name,
+        PendingOperation operation = PendingOperation.StartingRun) =>
+        new(Guid.NewGuid(), source, OperationLabel(operation) + "失败",
+            new(configurationId, _projectVersion, _editVersion), name,
+            QuitAfterRun: source == RunSource.Launch && _launchCommand.QuitAfterRun);
+
+    private Task SubmitRunAsync(RunIntent intent, RunKey key, RunStartAttempt attempt)
     {
-        _terminalNotifications.Register(attempt.RunId, name);
-        RunResultLog.WritePlan(_logger, attempt, name);
+        RunResultLog.WritePlan(_logger, attempt, intent.ConfigurationName);
         _telemetry.Register(attempt.RedactionValues);
-        var response = await _workerCoordinator.StartRunAsync(attempt, onSending: onSending);
-        if (response.Disposition is not ("accepted" or "already_accepted")) {
-            throw new InvalidDataException($"未知 run.start disposition：{response.Disposition}。 ");
-        }
-        _logger.Info(
-            $"run.start {response.Disposition}：runId={attempt.RunId:D}；"
-            + $"planDigest={attempt.PlanDigest}。 ");
+        return _lifecycle.SubmitAsync(intent, key, attempt);
     }
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
@@ -796,7 +821,7 @@ public partial class MainWindow : FluentWindow
     // A control can stay clickable for a moment after its state changes; "nothing happened" is then still in the log.
     private void LogIgnoredAction([CallerMemberName] string action = "") => _logger.Debug(
         $"操作未执行{AppLogger.Field("action", action)}{AppLogger.Field("current", CurrentControls.Action)}"
-        + $"{AppLogger.Field("pending", _pendingOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
+        + $"{AppLogger.Field("pending", CurrentOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
 
     // An unattended operation (started by the launch itself) reports its failure without a dialog nobody can answer.
     private async Task RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false,
@@ -809,14 +834,14 @@ public partial class MainWindow : FluentWindow
 
         if (pending is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment) {
             await RunWindowOperationAsync(pending, async () => {
-                if (!await _environment.TryRunExclusiveAsync(operation)) {
-                    LogIgnoredAction(caller);
-                }
+                if (!await _environment.TryRunExclusiveAsync(async () => {
+                    var view = _lifecycle.ReadOrchestration();
+                    if (view.PendingQuitReason == null && !view.ManualErrorPending) await operation();
+                })) LogIgnoredAction(caller);
             }, unattended);
         } else {
             await RunWindowOperationAsync(pending, () => _environment.RunExclusiveAsync(operation), unattended);
         }
-        await ObserveScheduledRunAsync();
     }
 
     private async Task RunWindowOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended)
@@ -846,16 +871,19 @@ public partial class MainWindow : FluentWindow
         _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null)
     };
 
-    private void HandleOperationError(string operation, Exception exception)
+    private void HandleOperationError(string operation, Exception exception) =>
+        PresentOperationError(operation, exception);
+
+    private void PresentOperationError(string operation, Exception exception, string? detail = null)
     {
         _logger.Error($"{operation}。", exception);
         var helloGuidance = GetWindowsHelloGuidance(
-            operation, exception, ChildSessionEnvironment.RequiresWindowsHelloSignIn());
+            operation, exception, _presentation.RequiresWindowsHello());
         if (helloGuidance is not null) {
-            WpfMessageBox.Show(this, helloGuidance, operation, MessageBoxButton.OK, MessageBoxImage.Error);
+            _presentation.ShowError(this, operation, exception, helloGuidance, MessageBoxButton.OK);
             return;
         }
-        ShowActionableError(operation, exception, GetRecoveryGuidance(operation), offerLogDirectory: true);
+        ShowActionableError(operation, exception, GetRecoveryGuidance(operation), offerLogDirectory: true, detail);
     }
 
     internal static string? GetWindowsHelloGuidance(string operation, Exception exception, bool windowsHelloOnly)
@@ -894,7 +922,8 @@ public partial class MainWindow : FluentWindow
         _projectPlan = project;
         _settings.ViewWelcome.IsVisible = project.HasWelcome;
         ShowProjectIdentity(project);
-        _pendingStartAttempt = null;
+        _lastStartKey = null;
+        _projectVersion++;
         CloseTaskDescriptionDrawer();
         var expanded = project.InitializedTaskName
             ?? (_onboardingPreferences.ShouldOfferAutomatically && !_onboardingAutoEnded
@@ -923,7 +952,8 @@ public partial class MainWindow : FluentWindow
         _projectPlan = null;
         _settings.ViewWelcome.IsVisible = false;
         ShowProjectIdentity(null);
-        _pendingStartAttempt = null;
+        _lastStartKey = null;
+        _projectVersion++;
         _projectConfigurationValid = false;
         TaskPlanEditor.ShowProjectUnavailable(emptyStateTitle, emptyStateDetail);
         CloseTaskDescriptionDrawer();
@@ -1001,7 +1031,6 @@ public partial class MainWindow : FluentWindow
         // coordinator's current snapshot is applied rather than the one the event carried.
         _workerSnapshot = _workerCoordinator.Snapshot;
         RefreshRuntimeControls();
-        _ = ObserveScheduledRunAsync();
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -1132,11 +1161,13 @@ public partial class MainWindow : FluentWindow
     }
 
     // Another operation is running or the application is exiting, so a new operation must not start.
-    private bool OperationOrExitInProgress => _pendingOperation != PendingOperation.None || _exitInProgress;
+    private bool OperationOrExitInProgress => CurrentOperation != PendingOperation.None || _exitInProgress;
 
-    private void SetPendingOperation(PendingOperation operation)
+    internal PendingOperation CurrentOperation => _lifecycle.Orchestration.Operation;
+
+    internal void SetPendingOperation(PendingOperation operation, bool scheduled = false)
     {
-        _pendingOperation = operation;
+        _lifecycle.SetOperation(operation, scheduled);
         Mouse.OverrideCursor = operation != PendingOperation.None ? System.Windows.Input.Cursors.Wait : null;
         RefreshRuntimeControls();
     }
@@ -1147,9 +1178,9 @@ public partial class MainWindow : FluentWindow
             ? new ProjectReadiness(true, project.EnabledItems.Count, _projectConfigurationValid,
                 project.RuntimeProfileDigest)
             : ProjectReadiness.NotLoaded,
-        _pendingOperation == PendingOperation.None && _workerCoordinator.StartAwaitingObservation
+        CurrentOperation == PendingOperation.None && _lifecycle.Orchestration.PendingStart(_workerSnapshot) != null
             && _workerSnapshot.Fresh
-            ? PendingOperation.StartingRun : _pendingOperation,
+            ? PendingOperation.StartingRun : CurrentOperation,
         _environmentPreparationFailed, _exitInProgress, _environment.Ending,
         _environment.EndUnconfirmed));
 
@@ -1472,20 +1503,16 @@ public partial class MainWindow : FluentWindow
         RunProgressBar.Clip = new RectangleGeometry(new Rect(0, 0, width, 6), 3, 3);
     }
 
-    private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory)
+    private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory, string? detail = null)
     {
-        var message = $"{exception.GetBaseException().Message}\n\n{recovery}";
+        var message = $"{detail ?? exception.GetBaseException().Message}\n\n{recovery}";
         if (!offerLogDirectory) {
-            WpfMessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+            _presentation.ShowError(null, title, exception, message, MessageBoxButton.OK);
             return;
         }
 
-        var answer = WpfMessageBox.Show(
-            $"{message}\n\n是否打开日志目录查看详细信息？",
-            title,
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Error,
-            MessageBoxResult.No);
+        var answer = _presentation.ShowError(null, title, exception, $"{message}\n\n是否打开日志目录查看详细信息？",
+            MessageBoxButton.YesNo);
         if (answer == MessageBoxResult.Yes) {
             TryOpenLogsDirectory();
         }

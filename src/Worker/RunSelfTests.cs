@@ -42,17 +42,19 @@ internal static partial class RunSelfTests
         Scenario("C4", VerifyCompletionRacesStopAsync),
         Scenario("C5", VerifyConcurrentSnapshotsAsync),
         Scenario("W2", VerifyStopSurvivesWriteFailureAsync),
+        Scenario("IPC", VerifyRunSurvivesPartialEventReconnectAsync, reconnect: true),
+        Scenario("IPC", VerifyRunSurvivesPartialRequestReconnectAsync, reconnect: true),
         Scenario("W5", VerifyUnknownOperationRejectedAsync)
     ];
 
     private static (string Name, Action Body) Scenario(
-        string id, Func<RunHarness, Task> body, bool initialize = true) =>
-        ($"Run.{id}.{body.Method.Name}", () => ScenarioAsync(id, body, initialize).GetAwaiter().GetResult());
+        string id, Func<RunHarness, Task> body, bool initialize = true, bool reconnect = false) =>
+        ($"Run.{id}.{body.Method.Name}", () => ScenarioAsync(id, body, initialize, reconnect).GetAwaiter().GetResult());
 
     // C1 applies to every scenario: no execution member may be called while the state lock is held.
-    private static async Task ScenarioAsync(string id, Func<RunHarness, Task> body, bool initialize = true)
+    private static async Task ScenarioAsync(string id, Func<RunHarness, Task> body, bool initialize, bool reconnect)
     {
-        await using var harness = await RunHarness.CreateAsync(initialize);
+        await using var harness = await RunHarness.CreateAsync(initialize, reconnect: reconnect);
         try {
             await body(harness);
         } catch (Exception exception) {
@@ -328,7 +330,7 @@ internal static partial class RunSelfTests
         var revision = (await harness.SnapshotAsync()).StateRevision;
         // W1 holds the Stopping event write for a while, so MaaFramework Stop started early from another thread is
         // caught too. Correct code waits out the hold, because Stop cannot start until that write completes.
-        harness.Wire.HoldWrite = bytes => IsStoppingEvent(bytes)
+        harness.Wire.HoldWrite = bytes => IsRunStateEvent(bytes, RunState.Stopping)
             ? Task.WhenAny(first.StopCalled, Task.Delay(StoppingWriteHold)) : null;
         Expect(await harness.StopAsync(request.RunId) == "stop_requested", "Running 中停止应为 stop_requested。");
         var stopping = await harness.SnapshotAsync();
@@ -655,6 +657,78 @@ internal static partial class RunSelfTests
         Expect(response is { Success: false, Error.Code: "invalid_request" }, "未知 operation 应返回 invalid_request。");
     }
 
+    private static Task VerifyRunSurvivesPartialEventReconnectAsync(RunHarness harness) =>
+        VerifyEventWriteFailureAsync(harness, partialRequest: false);
+
+    private static Task VerifyRunSurvivesPartialRequestReconnectAsync(RunHarness harness) =>
+        VerifyEventWriteFailureAsync(harness, partialRequest: true);
+
+    private static async Task VerifyEventWriteFailureAsync(RunHarness harness, bool partialRequest)
+    {
+        var (request, item) = await StartRunningAsync(harness, 1, running: false);
+        var prefixWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBody = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.Wire.HoldWrite = bytes => {
+            if (!IsRunStateEvent(bytes, RunState.Running)) {
+                return null;
+            }
+            prefixWritten.TrySetResult();
+            return releaseBody.Task;
+        };
+        var readingRemainder = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumeRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try {
+            item.ReportRunning();
+            await prefixWritten.Task.WaitAsync(RunHarness.WaitLimit);
+            Task<WireEnvelope>? reply = null;
+            var logQuery = WireEnvelope.Request(ProtocolOperations.LogGetSince, Guid.NewGuid(), new LogGetSinceRequest(0, 10));
+            if (partialRequest) {
+                var bodyReads = 0;
+                harness.Wire.HoldRead = count => {
+                    if (count > sizeof(uint) && ++bodyReads == 2) {
+                        readingRemainder.TrySetResult();
+                        return resumeRead.Task;
+                    }
+                    return null;
+                };
+                await harness.WritePartialRequestAsync(logQuery);
+                await readingRemainder.Task.WaitAsync(RunHarness.WaitLimit);
+            } else {
+                reply = harness.RequestAsync(ProtocolOperations.FrameworkSetOptions, new FrameworkSetOptionsRequest(new(), false));
+                await harness.OptionsApplied.Task.WaitAsync(RunHarness.WaitLimit);
+            }
+            // This writer cannot leave the gate until the event writer has recorded its failure.
+            var queued = harness.WorkerConnection.WriteAsync(
+                WireEnvelope.Response(logQuery.Operation, logQuery.RequestId!.Value, new { }), CancellationToken.None);
+            Expect(!queued.IsCompleted, "事件帧正文阻塞时，后续写入必须在写锁上排队。");
+            harness.DisconnectGui();
+            releaseBody.TrySetResult();
+            try {
+                await queued.WaitAsync(RunHarness.WaitLimit);
+                throw new InvalidOperationException("断管后排队的写者必须收到 IOException。");
+            } catch (IOException) {
+            }
+            if (reply is not null) {
+                try {
+                    await reply.WaitAsync(RunHarness.WaitLimit);
+                    throw new InvalidOperationException("已断开的 GUI 不应收到应答。");
+                } catch (System.Threading.Channels.ChannelClosedException) {
+                }
+            }
+        } finally {
+            releaseBody.TrySetResult();
+            resumeRead.TrySetResult();
+        }
+        await harness.WaitForConnectionAsync();
+        var restored = await harness.QuerySnapshotAsync(request.RunId);
+        Expect(restored.Snapshot.WorkerPid == Environment.ProcessId && restored.RunRegistered == true
+            && restored.Snapshot.ActiveRun?.RunId == request.RunId
+            && restored.Snapshot.RunState == RunState.Running, "同一 Worker 重连后应继续原 Run。");
+        item.Complete(RuntimeExecutionOutcome.Succeeded);
+        Expect((await TerminalAsync(harness, request.RunId)).LastRun?.State == RunState.Succeeded,
+            "断管前执行的 Plan Item 应能在重连后正常完成。");
+    }
+
     private static async Task<(RunStartRequest Request, ScriptedExecution First)> StartRunningAsync(
         RunHarness harness, int count, bool running = true, int pipelineBytes = 0)
     {
@@ -674,14 +748,14 @@ internal static partial class RunSelfTests
         ProtocolJson.Deserialize<StateChangedEvent>(stateEvent.Data).Snapshot.StateRevision;
 
     // Frames are written as a length prefix followed by the JSON payload; only the payload can match.
-    private static bool IsStoppingEvent(ReadOnlyMemory<byte> bytes)
+    private static bool IsRunStateEvent(ReadOnlyMemory<byte> bytes, RunState state)
     {
         if (bytes.Length == 0 || bytes.Span[0] != (byte)'{') {
             return false;
         }
         var frame = JsonSerializer.Deserialize<WireEnvelope>(bytes.Span, ProtocolJson.Options)!;
         return frame.Operation == ProtocolOperations.RunStateChanged
-            && ProtocolJson.Deserialize<StateChangedEvent>(frame.Data).Snapshot.RunState == RunState.Stopping;
+            && ProtocolJson.Deserialize<StateChangedEvent>(frame.Data).Snapshot.RunState == state;
     }
 
     private static bool IsStopResponse(WireEnvelope frame) =>

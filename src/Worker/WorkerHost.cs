@@ -45,10 +45,10 @@ internal sealed class WorkerHost
     }
 
     // An exception that ends the Worker is reported, and what telemetry queued leaves, however the loop ends.
-    internal async Task RunAsync(CancellationToken cancellationToken)
+    internal async Task RunAsync(CancellationToken cancellationToken, Func<CancellationToken, Task>? connectAndServe = null)
     {
         try {
-            await ServeAsync(cancellationToken);
+            await ServeAsync(connectAndServe ?? ConnectAndServeAsync, cancellationToken);
         } catch (Exception exception) {
             ReportUnhandledException(exception);
             throw;
@@ -57,7 +57,7 @@ internal sealed class WorkerHost
         }
     }
 
-    private async Task ServeAsync(CancellationToken cancellationToken)
+    private async Task ServeAsync(Func<CancellationToken, Task> connectAndServe, CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
         var initialization = InitializeAsync(linked.Token);
@@ -66,7 +66,7 @@ internal sealed class WorkerHost
 
         while (!linked.IsCancellationRequested) {
             try {
-                await ConnectAndServeAsync(linked.Token);
+                await connectAndServe(linked.Token);
             } catch (OperationCanceledException) when (linked.IsCancellationRequested) {
                 break;
             } catch (Exception exception) when (exception is IOException

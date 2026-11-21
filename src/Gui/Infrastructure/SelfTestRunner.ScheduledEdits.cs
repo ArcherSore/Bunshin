@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Input;
+using Gui.Models;
 using Gui.Views;
 using Protocol;
 using Button = System.Windows.Controls.Button;
@@ -11,6 +12,39 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static void VerifyScheduledActivationSaveFailure(AppLogger logger, string directory, string root)
+    {
+        TwoConfigurations()(root);
+        var wts = new SimulatedWts { Sessions = [7] };
+        using var session = wts.CreateManager(logger);
+        WithRuntimeControlWindow(logger, directory, window => {
+            var project = ProjectOf(window);
+            var original = project.ActiveConfigurationId;
+            var target = project.Configurations.Single(c => c.Name == "周常");
+            Require(original != target.Id && project.CreateRunStartAttempt(target.Id).Plan.Items.Count > 0,
+                "目标配置应与当前配置不同且可执行。");
+            wts.ReportedId = 7;
+            var path = Path.Combine(root, "config", "configurations.json");
+            // Allow ordinary reads and writes. Only replacing the destination needs delete sharing.
+            using var locked = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var saved = File.ReadAllBytes(path);
+            var start = window.TryStartScheduledRunAsync(target.Id);
+            PumpUntil(() => start.IsCompleted, "配置替换失败后应结束本次定时启动。");
+            start.GetAwaiter().GetResult();
+            var activity = window.LogLines.OfType<LogEntry>().Where(e => e.TaskLabel == "定时").ToList();
+            Require(activity.Where(e => e.Level == LogLevel.Error).ToArray() is [var failure]
+                && failure.Message.Contains(target.Name)
+                && !activity.Any(e => e.Message.StartsWith("启动「")),
+                "配置替换失败时，运行动态应显示一次目标配置失败且没有启动记录。");
+            Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession
+                && window.TaskPlanEditor.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
+                    { Tag: Guid selected } && selected == original && project.ActiveConfigurationId == original
+                && saved.SequenceEqual(File.ReadAllBytes(path)),
+                "配置替换失败必须保留当前标签和配置文件，且不注销旧分身。");
+        }, session: session, captureProcesses: () => [],
+            prepareEnvironment: (_, _, _) => throw new InvalidOperationException("不应准备新环境"));
+    }
+
     private static void VerifyScheduledEdits(AppLogger logger, string directory)
     {
         RunOnboardingScenario(logger, directory, (window, _) => {

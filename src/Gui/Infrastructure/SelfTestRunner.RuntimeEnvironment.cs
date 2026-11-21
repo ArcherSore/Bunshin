@@ -157,6 +157,48 @@ internal static partial class SelfTestRunner
         });
     }
 
+    private static void VerifyStartEvidenceEnvironmentExit(AppLogger logger, string directory)
+    {
+        using var watchdog = new CancellationTokenSource(OnPoolLimit);
+        var confirmed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], DuringLogoff = _ => confirmed.SetResult() };
+        using var session = wts.CreateManager(logger);
+        WithFakeWorker(logger, Path.Combine(directory, "confirmed-pid"), (coordinator, record, name) => {
+            var evidence = new System.Collections.Concurrent.ConcurrentQueue<WorkerObservationBatch>();
+            int? pidAtExit = null;
+            bool removed = false;
+            coordinator.ObservationReceived += (_, batch) => {
+                evidence.Enqueue(batch);
+                if (batch.Kind == WorkerEvidenceKind.ProcessExited) {
+                    pidAtExit = coordinator.TrackedWorkerPid;
+                } else if (batch.Kind == WorkerEvidenceKind.AdmissionRemoved) {
+                    removed = coordinator.TrackedAdmission is null;
+                }
+            };
+            var peer = OnPool(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(name, record, 0, watchdog.Token));
+            AwaitWorker(coordinator, state => state.Fresh, "Worker 未完成首次同步。");
+            peer.Close();
+            AwaitWorker(coordinator, state => state.Observation == WorkerObservation.IpcDisconnected, "存活 PID 断管后应等待重连。");
+            var disconnected = evidence.Single(b => b.Kind == WorkerEvidenceKind.Disconnected);
+            Require(disconnected.Error is null && !evidence.Any(b => b.Kind == WorkerEvidenceKind.ProcessExited),
+                "EOF 时 PID 仍在，不能据此发布进程退出。");
+
+            var environment = CreateEnvironment(logger, session, coordinator, (pid, token) => {
+                Require(pid == record.WorkerPid, "环境等待的应是原 Admission 的 PID。");
+                return confirmed.Task.WaitAsync(token);
+            }, OnPoolLimit);
+            var result = OnPool(() => environment.EndAsync(() => true));
+            var retired = evidence.Where(b => b.Kind is WorkerEvidenceKind.Disconnected
+                or WorkerEvidenceKind.ProcessExited or WorkerEvidenceKind.AdmissionRemoved).ToArray();
+            Require(result == EnvironmentEndResult.Ended && removed && AdmissionDiscarded(coordinator) && pidAtExit == record.WorkerPid
+                && retired.Select(b => b.Kind).SequenceEqual([WorkerEvidenceKind.Disconnected,
+                    WorkerEvidenceKind.ProcessExited, WorkerEvidenceKind.AdmissionRemoved])
+                && retired.All(b => b.Connection == disconnected.Connection)
+                && disconnected.Connection?.WorkerInstanceId == record.WorkerInstanceId,
+                "环境对原 PID 的退出确认必须在该 Admission 摘除前送达一次。");
+        }, workerListed: () => true);
+    }
+
     // U5, U10: a failed logoff, a Child Session that survives logoff and a WTS query that fails all leave the end
     // unconfirmed with the Admission kept. A Child Session that cannot be queried is not asked about.
     private static void VerifyEndUnconfirmed(AppLogger logger, string directory)
