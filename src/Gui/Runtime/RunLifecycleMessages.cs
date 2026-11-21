@@ -11,6 +11,9 @@ internal abstract record LifecycleEvent
     internal sealed record Observed(WorkerObservationBatch Batch, string? ConfigurationName = null) : LifecycleEvent;
     internal sealed record RetryDue(RunKey Key, long Token) : LifecycleEvent;
     internal sealed record Delivered(long Id) : LifecycleEvent;
+    internal sealed record AbandonQuit(RunKey Key) : LifecycleEvent;
+    // A later recovery (or successful environment end) makes a previously failed quit eligible again.
+    internal sealed record EnvironmentRecovered : LifecycleEvent;
     internal sealed record ClosingStarted(Guid Id) : LifecycleEvent;
     internal sealed record ClosingCancelled(Guid Id) : LifecycleEvent;
     internal sealed record ClosingCommitted(Guid Id) : LifecycleEvent;

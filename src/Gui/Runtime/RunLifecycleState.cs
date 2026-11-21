@@ -8,6 +8,7 @@ namespace Gui.Runtime;
 internal enum RunSource { Manual, Launch, Scheduled }
 internal enum StartConclusion { Accepted, NotStarted, StartUnknown, EndUnconfirmed }
 internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
+internal enum QuitStage { AwaitingBody, Bound, Requested, AwaitingRecovery }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
 internal enum PresentationChannel { ForegroundError, Tray }
 internal enum NoticeKind { NotStarted, StartUnknown, EndUnconfirmed, Faulted, Succeeded, Failed }
@@ -24,9 +25,10 @@ internal sealed record TrackedRun(RunKey Key, string Digest)
     internal RunStartAttempt? Attempt { get; init; }
     internal Submission? Submission { get; init; }
     internal ImmutableDictionary<Guid, SendRecord> Sends { get; init; } = ImmutableDictionary<Guid, SendRecord>.Empty;
+    internal ImmutableHashSet<Submission> PriorSubmissions { get; init; } = [];
     internal string? TakeoverConfigurationName { get; init; }
     internal StartConclusion? Conclusion { get; init; }
-    internal bool Settled => Terminal != null || Conclusion is StartConclusion.NotStarted or StartConclusion.StartUnknown
+    internal bool Settled => TerminalState != null || Conclusion is StartConclusion.NotStarted or StartConclusion.StartUnknown
         or StartConclusion.EndUnconfirmed;
     internal bool SeenActive { get; init; }
     internal bool SeenFaulted { get; init; }
@@ -36,9 +38,9 @@ internal sealed record TrackedRun(RunKey Key, string Digest)
     internal bool ReconnectFaultPending { get; init; }
     internal Confirmation Confirmation { get; init; } = new();
     internal RunSnapshot? Terminal { get; init; }
+    internal RunState? TerminalState { get; init; }
     internal NotificationSlot Notification { get; init; }
     internal Guid? NotificationIntent { get; init; }
-    internal bool QuitBound { get; init; }
     internal bool Retired { get; init; }
 }
 
@@ -47,6 +49,8 @@ internal sealed record RunLifecycleState
     internal ImmutableDictionary<RunKey, TrackedRun> Runs { get; init; } = ImmutableDictionary<RunKey, TrackedRun>.Empty;
     internal ImmutableList<LifecycleEffect.Deliver> Deliveries { get; init; } = [];
     internal LifecycleEffect.Deliver? InFlightDelivery { get; init; }
+    // A quit request can outlive its Worker's retirement and its delivery receipt.
+    internal ImmutableDictionary<RunKey, QuitStage> Quits { get; init; } = ImmutableDictionary<RunKey, QuitStage>.Empty;
     internal WorkerCoordinatorSnapshot Current { get; init; } = WorkerCoordinatorSnapshot.Empty;
     internal WorkerConnectionId? Connection { get; init; }
     internal long LastGeneration { get; init; }

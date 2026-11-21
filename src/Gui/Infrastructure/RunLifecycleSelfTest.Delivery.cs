@@ -61,7 +61,7 @@ internal static partial class RunLifecycleSelfTest
             f.Conclusions(StartConclusion.NotStarted, StartConclusion.Accepted);
             Check(f.Items<Present>().Single().Intent?.Id == boot.Submission!.IntentId
                 && f.History.OfType<SubmissionConclusion>().Select(c => c.Submission).SequenceEqual([boot.Submission, f.Start.Submission])
-                && f.State.Runs[f.Key].Terminal?.State == RunState.Succeeded,
+                && f.State.Runs[f.Key].TerminalState == RunState.Succeeded,
                 "开机被排除后手动同 ID 首次登记并丢 ACK，终态不继承 -q 或重开通知槽");
         }
 
@@ -84,6 +84,13 @@ internal static partial class RunLifecycleSelfTest
             var successor = f.Frame(active: SnapshotOf(Attempt(8), RunState.Running), last: terminal);
             f.FrameEvent(successor);
             f.FrameEvent(successor);
+            if (status == RunState.Succeeded) {
+                f.Ack(f.History.OfType<Deliver>().Single(d => d.Item is Present).Id);
+                var complete = f.History.OfType<Deliver>().Single(d => d.Item is CompleteScheduled);
+                Check(!f.Items<RequestCleanup>().Any(), "定时完成尚未回执，不能请求收尾");
+                f.Ack(complete.Id);
+                Check(f.Items<RequestCleanup>().Single().Run == f.Key, "定时完成回执后应恰好请求一次原 Run 的收尾");
+            }
             f.Finish(status switch {
                 RunState.Succeeded => [typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup)],
                 RunState.Failed => [typeof(Present), typeof(CompleteScheduled)],
@@ -94,6 +101,110 @@ internal static partial class RunLifecycleSelfTest
                 && f.Items<Present>().All(p => p.Terminal == terminal && p.Operation.Contains(intent.ConfigurationName)),
                 "定时完成传递原终态，成功才交付对应 Run 的收尾请求");
         }
+    }
+
+    private static void VerifyRunLifecycleAbandonQuit()
+    {
+        foreach (var status in new[] { RunState.Cancelled, RunState.Failed }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Launch));
+            var first = f.Start;
+            var wire = f.Body();
+            f.Step(new AbandonQuit(first.Key));
+            f.Terminal(status);
+            f.Reply(wire, StartReplyKind.Accepted, "accepted");
+            f.Begin(Intent(RunSource.Launch, 2));
+            f.Body();
+            f.Step(new AbandonQuit(first.Key));
+            f.Terminal(RunState.Succeeded);
+            f.Finish(status == RunState.Failed ? [typeof(Present), typeof(Present), typeof(RequestQuit)]
+                : [typeof(Present), typeof(RequestQuit)]);
+            f.Conclusions(StartConclusion.Accepted, StartConclusion.Accepted);
+            Check(f.Items<RequestQuit>().Single().Key == f.Key
+                && f.Items<Present>().Select(p => p.Key).SequenceEqual(status == RunState.Failed ? [first.Key, f.Key] : [f.Key])
+                && f.History.OfType<SubmissionConclusion>().Select(c => c.Submission).SequenceEqual([first.Submission, f.Start.Submission]),
+                "只撤销指定开机 Run 的退出资格，保留原提交结论与终态提醒");
+        }
+    }
+
+    private static void VerifyRunLifecycleQuitRecovery()
+    {
+        var idle = new Scenario();
+        idle.Begin(Intent(RunSource.Launch));
+        idle.Body();
+        idle.Terminal(RunState.Cancelled);
+        idle.Finish(typeof(RequestQuit));
+        idle.Step(new ClosingStarted(Id(69)));
+        idle.Step(new ClosingCancelled(Id(69)));
+        idle.Terminal(RunState.Cancelled);
+        idle.Finish(typeof(RequestQuit));
+        idle.Step(new EnvironmentRecovered());
+        idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+        idle.Step(new EnvironmentRecovered());
+        idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+
+        foreach (var ackFirst in new[] { true, false })
+        foreach (var commit in new[] { false, true }) {
+            var f = new Scenario();
+            f.Begin(Intent(RunSource.Launch));
+            var boot = f.Key;
+            f.Body();
+            f.Terminal(RunState.Succeeded);
+            f.Ack(f.History.OfType<Deliver>().Single().Id);
+            var quit = f.History.OfType<Deliver>().Single(d => d.Item is RequestQuit);
+            if (ackFirst) f.Ack(quit.Id);
+            f.Step(new ClosingStarted(Id(70)));
+            f.Begin(Intent(RunSource.Scheduled, 2));
+            f.Body();
+            f.Terminal(RunState.Succeeded);
+            f.ExitWorker();
+            f.Step(commit ? new ClosingCommitted(Id(70)) : new ClosingCancelled(Id(70)));
+            Check(f.Items<RequestQuit>().Count() == 1, "取消退出不能立即循环请求 -q");
+            f.Step(new EnvironmentRecovered());
+            f.Step(new EnvironmentRecovered());
+            if (!commit) {
+                foreach (var kind in new[] { typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup) }) {
+                    var delivery = f.History.OfType<Deliver>().Single(d => d.Item.Key == f.Key && d.Item.GetType() == kind);
+                    Check(f.Items<RequestQuit>().Count() == 1, "恢复后应先排空所有非退出交付");
+                    f.Ack(delivery.Id);
+                }
+                Check(f.Items<RequestQuit>().Count() == 2, "恢复后应再次派发一次退出请求");
+                var retry = f.History.OfType<Deliver>().Last();
+                f.Ack(quit.Id);
+                Check(f.State.InFlightDelivery == retry, "旧退出回执不能确认重新派发的请求");
+                f.Ack(retry.Id);
+            }
+            f.Step(new EnvironmentRecovered());
+            f.Finish(commit ? [typeof(Present), typeof(RequestQuit)]
+                : [typeof(Present), typeof(RequestQuit), typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup), typeof(RequestQuit)]);
+            Check(f.Items<RequestQuit>().All(q => q.Key == boot) && f.State.ExitCommitted == commit,
+                "恢复只重发原 Run 的退出，提交退出后清除资格");
+        }
+    }
+
+    private static void VerifyRunLifecycleCompletedPlans()
+    {
+        var f = new Scenario();
+        var expected = new List<Type>();
+        var submissions = new List<Submission>();
+        for (int n = 1; n <= 12; ++n) {
+            f.Begin(Intent(RunSource.Manual, n));
+            submissions.Add(f.Start.Submission);
+            var wire = f.Body();
+            f.Terminal(RunState.Succeeded);
+            expected.Add(typeof(Present));
+            f.Finish(expected.ToArray());
+            f.Reply(wire, StartReplyKind.Accepted, "accepted");
+            f.Step(f.Start);
+            f.Terminal(RunState.Succeeded);
+        }
+        f.Finish(expected.ToArray());
+        Check(f.History.OfType<SubmissionConclusion>().Select(c => c.Submission).SequenceEqual(submissions)
+            && f.Items<Present>().Select(p => p.Key).SequenceEqual(submissions.Select(s => s.Run))
+            && f.State.Runs.Count == submissions.Count && f.State.Runs.Values.All(r => r.Settled
+                && r.TerminalState == RunState.Succeeded && r.Notification == NotificationSlot.Delivered
+                && r.Attempt == null && r.Sends.IsEmpty && r.Terminal == null),
+            "同一 Worker 的已完成 Run 只保留轻量身份、结论与通知状态，不累计计划或发送记录");
     }
 
     private static void VerifyRunLifecycleObservedRuns()

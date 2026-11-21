@@ -123,7 +123,8 @@ internal sealed partial class RunLifecycleReducer
             case WorkerEvidenceKind.BeforeBody when s.Boundary == SendBoundary.BeforeBody: break;
             case WorkerEvidenceKind.BodyStarted when s.Boundary == SendBoundary.BeforeBody:
                 next = next with { Boundary = SendBoundary.PossiblySent };
-                if (r.Owner is { Source: RunSource.Launch, QuitAfterRun: true }) r = r with { QuitBound = true };
+                if (state.Quits.TryGetValue(r.Key, out var quit) && quit == QuitStage.AwaitingBody)
+                    SetQuit(r.Key, QuitStage.Bound);
                 break;
             case WorkerEvidenceKind.NotSent:
             case WorkerEvidenceKind.StartReply when b.StartReply == StartReplyKind.RejectedBeforeRegistration:

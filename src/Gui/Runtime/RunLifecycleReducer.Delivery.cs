@@ -1,3 +1,4 @@
+using Gui.Worker;
 using Protocol;
 using static Gui.Runtime.LifecycleEffect;
 
@@ -9,6 +10,14 @@ internal sealed partial class RunLifecycleReducer
     {
         var delivery = new Deliver(Next(), item);
         state = state with { Deliveries = state.Deliveries.Add(delivery) };
+    }
+
+    private void SetQuit(RunKey key, QuitStage stage) => state = state with { Quits = state.Quits.SetItem(key, stage) };
+
+    private void QueueQuit(RunKey key)
+    {
+        state = state with { Quits = state.Quits.Remove(key) };
+        Queue(new RequestQuit(key));
     }
 
     private void Settle(TrackedRun r, StartConclusion conclusion, Exception? error)
@@ -28,14 +37,15 @@ internal sealed partial class RunLifecycleReducer
             if (r.Notification == NotificationSlot.Open)
                 r = r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
         }
+        state = state with { Quits = state.Quits.Remove(r.Key) };
         Save(r with { Confirmation = new(), NeedQuery = false, AwaitingReconnectQuery = false, ReconnectEvidence = null,
-            ReconnectFaultPending = false, QuitBound = false });
+            ReconnectFaultPending = false });
     }
 
     private void Terminal(TrackedRun r, RunSnapshot terminal)
     {
         CancelConfirmation(r);
-        r = r with { Terminal = terminal, Confirmation = new(), NeedQuery = false };
+        r = r with { Terminal = terminal, TerminalState = terminal.State, Confirmation = new(), NeedQuery = false };
         if (r.Notification == NotificationSlot.Open) {
             if (terminal.State == RunState.Cancelled) {
                 r = r with { Notification = NotificationSlot.Silent };
@@ -48,8 +58,9 @@ internal sealed partial class RunLifecycleReducer
             Queue(new CompleteScheduled(r.Key, scheduled, terminal));
             if (terminal.State == RunState.Succeeded) Queue(new RequestCleanup(r.Key));
         }
-        if (r.QuitBound) Queue(new RequestQuit(r.Key));
-        Save(r with { QuitBound = false });
+        if (state.Quits.TryGetValue(r.Key, out var quit) && quit == QuitStage.Bound) QueueQuit(r.Key);
+        else state = state with { Quits = state.Quits.Remove(r.Key) };
+        Save(r);
     }
 
     private static Present TerminalNotice(TrackedRun r, RunSnapshot terminal)
@@ -77,6 +88,7 @@ internal sealed partial class RunLifecycleReducer
                     : fault with { Kind = NoticeKind.EndUnconfirmed, Operation = r.Owner?.OperationName ?? "任务运行" } };
             }
             state = state with { InFlightDelivery = d };
+            if (d.Item is RequestQuit) SetQuit(d.Item.Key, QuitStage.Requested);
             effects.Add(d);
             return;
         }

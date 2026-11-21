@@ -25,11 +25,10 @@ internal enum WorkerEvidenceKind
 
 internal enum StartReplyKind { Accepted, AlreadyAccepted, RejectedBeforeRegistration, Indeterminate }
 
-// With Current, AwaitingFullSnapshot describes the sync barrier on that same connection, under the same lock.
 internal sealed record WorkerObservationBatch(WorkerConnectionId? Connection, WorkerEvidenceKind Kind,
     WorkerRequestEvidence? Request = null, WorkerCoordinatorSnapshot? Current = null,
     WorkerSnapshot? ObservedSnapshot = null, StartReplyKind? StartReply = null, string? ReplyCode = null,
-    bool? RunRegistered = null, Exception? Error = null, bool AwaitingFullSnapshot = false);
+    bool? RunRegistered = null, Exception? Error = null);
 
 internal sealed partial class WorkerCoordinator
 {
@@ -289,8 +288,7 @@ internal sealed partial class WorkerCoordinator
     private bool ObservingEvidence => _evidenceRequested || ObservationReceived is not null;
 
     private WorkerObservationBatch SnapshotBatchLocked(WorkerSnapshot observed) =>
-        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed,
-            AwaitingFullSnapshot: AwaitingFullSnapshotLocked());
+        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed);
 
     private static void ValidateEvidenceSnapshot(WorkerSnapshot snapshot)
     {

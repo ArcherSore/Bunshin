@@ -88,11 +88,14 @@ internal static partial class RunLifecycleSelfTest
             var timer = f.History.OfType<ArmRetry>().Last();
             expected.Add(new ArmRetry(f.Key, timer.Token, f.Now + TimeSpan.FromSeconds(delay)));
             f.Now = timer.Due - TimeSpan.FromTicks(1);
+            var beforeEarly = f.History.Count;
             f.Step(new RetryDue(f.Key, timer.Token));
+            Check(f.History.Skip(beforeEarly).ToArray() is [ArmRetry], "单次计时器提前触发后必须重新设定，不能提前查询");
+            var rearmed = f.History.OfType<ArmRetry>().Last();
+            expected.Add(new ArmRetry(f.Key, rearmed.Token, timer.Due));
             var beforeDue = f.History.Count;
-            f.Now = timer.Due;
-            f.Step(new RetryDue(f.Key, timer.Token));
-            f.Step(new RetryDue(f.Key, timer.Token));
+            f.Now = rearmed.Due;
+            f.Step(new RetryDue(f.Key, rearmed.Token));
             var next = f.History.Skip(beforeDue).OfType<QueryRun>().Single();
             expected.Add(new QueryRun(f.Key, next.Id, f.Connection));
             prior = query;
@@ -274,12 +277,16 @@ internal static partial class RunLifecycleSelfTest
         f.QueryResult(oldQuery, false);
         f.Reply(second, StartReplyKind.Accepted, "accepted");
         f.Reply(send, StartReplyKind.RejectedBeforeRegistration, "invalid_request");
+        var oldRejection = f.State.Runs[f.Key].Sends[first.Submission.SubmissionId].RejectionCode;
         f.Terminal(RunState.Failed);
+        f.Finish(typeof(Present));
+        f.Step(first);
+        f.Step(f.Start);
         f.Finish(typeof(Present));
         f.Conclusions(StartConclusion.NotStarted, StartConclusion.Accepted);
         Check(f.Start.Submission.SubmissionId != first.Submission.SubmissionId && f.Key == first.Key
             && f.History.OfType<SubmissionConclusion>().Select(c => c.Submission).SequenceEqual([first.Submission, f.Start.Submission])
-            && f.State.Runs[f.Key].Sends[first.Submission.SubmissionId].RejectionCode == "invalid_request"
+            && oldRejection == "invalid_request"
             && f.State.ReusableAttempt(retry with { Id = Id(3) }, f.Connection.WorkerInstanceId) == null,
             "旧查询和旧拒绝只归属第一次提交，终态后的新开始必须另建尝试");
     }

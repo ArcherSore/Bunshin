@@ -17,10 +17,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
         step.Apply(input);
         step.DispatchQueries();
         step.DispatchDelivery();
-        foreach (var run in step.state.Runs.Values.Where(r => r.Retired && step.state.InFlightDelivery?.Item.Key != r.Key
-            && !step.state.Deliveries.Any(d => d.Item.Key == r.Key))) {
-            step.state = step.state with { Runs = step.state.Runs.Remove(run.Key) };
-        }
+        step.ReleaseCompletedRuns();
         return new(step.state, step.effects.ToImmutable());
     }
 
@@ -30,11 +27,31 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             case SubmissionStarted e: Register(e); break;
             case Observed e: Observe(e.Batch, e.ConfigurationName); break;
             case RetryDue e when state.Runs.TryGetValue(e.Key, out var run)
-                    && run.Confirmation.Timer == e.Token && state.Now >= run.Confirmation.Due:
-                Save(run with { Confirmation = run.Confirmation with { Timer = 0, Due = null } }); break;
+                    && run.Confirmation.Timer == e.Token && run.Confirmation.Due is { } due:
+                if (state.Now < due) {
+                    var token = Next();
+                    Save(run with { Confirmation = run.Confirmation with { Timer = token } });
+                    effects.Add(new ArmRetry(run.Key, token, due));
+                } else Save(run with { Confirmation = run.Confirmation with { Timer = 0, Due = null } });
+                break;
             case Delivered e: Acknowledge(e.Id); break;
+            case AbandonQuit e:
+                state = state with { Quits = state.Quits.Remove(e.Key),
+                    Deliveries = state.Deliveries.RemoveAll(d => d.Item is RequestQuit q && q.Key == e.Key) };
+                break;
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;
-            case ClosingCancelled e when state.Closing == e.Id: state = state with { Closing = null }; break;
+            case ClosingCancelled e when state.Closing == e.Id:
+                state = state with { Closing = null,
+                    InFlightDelivery = state.InFlightDelivery?.Item is RequestQuit ? null : state.InFlightDelivery };
+                foreach (var (key, stage) in state.Quits) {
+                    if (stage == QuitStage.Requested) SetQuit(key, QuitStage.AwaitingRecovery);
+                }
+                break;
+            case EnvironmentRecovered:
+                foreach (var (key, stage) in state.Quits) {
+                    if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
+                }
+                break;
             case ClosingCommitted e when state.Closing == e.Id:
                 foreach (var r in state.Runs.Values) CancelConfirmation(r);
                 state = new() { ExitCommitted = true };
@@ -50,14 +67,31 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             throw new ArgumentException("提交身份与意图或执行计划不一致");
 
         state.Runs.TryGetValue(key, out var run);
-        if (run?.Sends.GetValueOrDefault(submission.SubmissionId)?.Identity == submission) return;
+        if (run != null && (run.Submission == submission || run.PriorSubmissions.Contains(submission)
+            || run.Sends.GetValueOrDefault(submission.SubmissionId)?.Identity == submission)) return;
         if (run != null || intent.RetryOf?.RunId == key.RunId) {
             if (intent.RetryOf != key || !ReferenceEquals(state.ReusableAttempt(intent, key.WorkerInstanceId), attempt))
                 throw new InvalidOperationException("本次提交不能复用原 Run ID");
         }
         run ??= new(key, attempt.PlanDigest);
+        if (intent is { Source: RunSource.Launch, QuitAfterRun: true }) SetQuit(key, QuitStage.AwaitingBody);
         Save(run with { Owner = intent, Attempt = attempt, Submission = submission, Conclusion = null,
-            QuitBound = false, Sends = run.Sends.Add(submission.SubmissionId, new(submission)) });
+            Sends = run.Sends.Add(submission.SubmissionId, new(submission)) });
+    }
+
+    private void ReleaseCompletedRuns()
+    {
+        foreach (var r in state.Runs.Values) {
+            if ((!r.Retired && r.Terminal == null) || state.InFlightDelivery?.Item.Key == r.Key
+                || state.Deliveries.Any(d => d.Item.Key == r.Key)) continue;
+            if (r.Retired) {
+                state = state with { Runs = state.Runs.Remove(r.Key) };
+            } else {
+                Save(new(r.Key, r.Digest) { Submission = r.Submission, Conclusion = r.Conclusion, TerminalState = r.TerminalState,
+                    PriorSubmissions = r.Sends.Values.Select(s => s.Identity).Where(s => s != r.Submission).ToImmutableHashSet(),
+                    Notification = r.Notification, NotificationIntent = r.NotificationIntent });
+            }
+        }
     }
 
     private void Save(TrackedRun run) => state = state with { Runs = state.Runs.SetItem(run.Key, run) };

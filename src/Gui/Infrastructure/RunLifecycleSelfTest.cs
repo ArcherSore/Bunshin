@@ -17,7 +17,8 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleRetryIdentity, VerifyRunLifecycleRejectedRetry, VerifyRunLifecycleRetryChannels,
         VerifyRunLifecycleBootAttribution, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRegisteredQuery,
         VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleObservedRuns, VerifyRunLifecycleFaultedSlot,
-        VerifyRunLifecycleReconnectFault, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleExitBuffer
+        VerifyRunLifecycleReconnectFault, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleExitBuffer,
+        VerifyRunLifecycleAbandonQuit, VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleCompletedPlans
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
