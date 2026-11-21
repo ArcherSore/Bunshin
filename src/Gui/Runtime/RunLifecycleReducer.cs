@@ -84,15 +84,13 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private void ReleaseCompletedRuns()
     {
         foreach (var r in state.Runs.Values) {
-            var rejection = r is { Conclusion: StartConclusion.NotStarted, Attempt: not null }
-                ? r.ReuseBlockingRejection() : null;
-            if ((!r.Retired && r.Terminal == null && rejection == null) || state.InFlightDelivery?.Item.Key == r.Key
+            if (!r.Settled || r.ReusableAttempt != null || state.InFlightDelivery?.Item.Key == r.Key
                 || state.Deliveries.Any(d => d.Item.Key == r.Key)) continue;
             if (r.Retired) {
                 state = state with { Runs = state.Runs.Remove(r.Key) };
-            } else {
+            } else if (r.Attempt != null || r.Terminal != null) {
                 Save(new(r.Key, r.Digest) { Submission = r.Submission, Conclusion = r.Conclusion, TerminalState = r.TerminalState,
-                    RejectionCode = rejection,
+                    RejectionCode = r.ReuseBlockingRejection(),
                     PriorSubmissions = r.Sends.Values.Select(s => s.Identity).Where(s => s != r.Submission).ToImmutableHashSet(),
                     Notification = r.Notification, NotificationIntent = r.NotificationIntent });
             }

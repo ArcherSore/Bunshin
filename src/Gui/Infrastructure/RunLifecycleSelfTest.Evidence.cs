@@ -113,17 +113,29 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleLatePositive()
     {
-        foreach (var source in new[] { RunSource.Launch, RunSource.Scheduled })
-        foreach (var replyFirst in new[] { false, true }) {
+        var launch = new Scenario();
+        launch.Begin(Intent(RunSource.Launch));
+        var wire = launch.Body();
+        launch.Timeout(wire);
+        launch.Conclusions();
+        launch.Reply(wire, StartReplyKind.Accepted, "accepted");
+        launch.Conclusions(StartConclusion.Accepted);
+        Check(launch.State.Runs[launch.Key].Conclusion == StartConclusion.Accepted && !launch.Items<Present>().Any(),
+            "同一活连接的迟到 ACK 应在收到快照前确认接纳原 Run");
+        launch.ExitWorker();
+        launch.Finish(typeof(Present));
+        launch.Conclusions(StartConclusion.Accepted, StartConclusion.EndUnconfirmed);
+        Check(launch.Items<Present>().Single() is { Kind: NoticeKind.EndUnconfirmed } noticeAfterExit && noticeAfterExit.Key == launch.Key
+            && !launch.Items<RequestQuit>().Any(), "已接纳的 Run 未见快照即退出时，只通知一次结果未确认");
+
+        foreach (var source in new[] { RunSource.Launch, RunSource.Scheduled }) {
             var f = new Scenario();
             f.Begin(Intent(source));
             var send = f.Body();
             f.Reply(send, StartReplyKind.Indeterminate, "internal_error");
             f.FrameEvent(f.Frame());
             var beforePositive = f.History.Count;
-            if (replyFirst) f.Reply(send, StartReplyKind.AlreadyAccepted, "already_accepted");
             f.Terminal(RunState.Failed);
-            f.Reply(send, StartReplyKind.Accepted, "accepted");
             f.Terminal(RunState.Failed);
             f.Finish(typeof(Present), source == RunSource.Launch ? typeof(RequestQuit) : typeof(CompleteScheduled));
             f.Conclusions(StartConclusion.Accepted);
@@ -354,6 +366,11 @@ internal static partial class RunLifecycleSelfTest
             var frame = f.Frame(last: SnapshotOf(other, RunState.Succeeded));
             f.QueryResult(q, true, frame);
             f.Finish(typeof(Present));
+            var released = f.State.Runs[f.Key];
+            Check(released.Attempt == null && released.Sends.IsEmpty && released.Submission == f.Start.Submission,
+                "通知回执后应释放原计划、发送记录和超时异常，并保留提交身份");
+            f.Step(f.Start);
+            Check(f.State.Runs[f.Key] == released, "重投同一提交不能重新登记已结算的 Run");
             f.QueryResult(q, true, frame);
             f.Finish(typeof(Present));
             f.Conclusions(conflict ? StartConclusion.NotStarted : StartConclusion.EndUnconfirmed);

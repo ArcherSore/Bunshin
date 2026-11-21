@@ -44,6 +44,10 @@ internal sealed record TrackedRun(RunKey Key, string Digest)
     internal Guid? NotificationIntent { get; init; }
     internal bool Retired { get; init; }
 
+    internal RunStartAttempt? ReusableAttempt =>
+        !Retired && Conclusion == StartConclusion.NotStarted && Owner != null && Submission != null
+        && ReuseBlockingRejection() == null ? Attempt : null;
+
     internal string? ReuseBlockingRejection()
     {
         if (Submission is not { } last || Sends.IsEmpty) return RejectionCode;
@@ -76,10 +80,10 @@ internal sealed record RunLifecycleState
     internal RunStartAttempt? ReusableAttempt(RunIntent intent, Guid workerId)
     {
         if (intent is not { Source: RunSource.Manual, RetryOf: { } key } || key.WorkerInstanceId != workerId
-            || !Runs.TryGetValue(key, out var run) || run is not { Retired: false, Conclusion: StartConclusion.NotStarted,
-                Owner: { } owner, Submission: not null } || owner.Input != intent.Input || owner.Id == intent.Id)
+            || !Runs.TryGetValue(key, out var run) || run.Owner is not { } owner
+            || owner.Input != intent.Input || owner.Id == intent.Id)
             return null;
-        return run.ReuseBlockingRejection() == null ? run.Attempt : null;
+        return run.ReusableAttempt;
     }
 }
 

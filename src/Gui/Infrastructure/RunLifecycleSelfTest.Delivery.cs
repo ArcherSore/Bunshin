@@ -79,15 +79,18 @@ internal static partial class RunLifecycleSelfTest
             var intent = Intent(RunSource.Scheduled);
             f.Begin(intent);
             f.Body();
+            var active = f.Frame(active: SnapshotOf(f.Plan, RunState.Running));
+            f.FrameEvent(active);
             var terminal = SnapshotOf(f.Plan, status);
-            // A successor is already active. RuntimeEnvironment evaluates the targeted cleanup request.
-            var successor = f.Frame(active: SnapshotOf(Attempt(8), RunState.Running), last: terminal);
-            f.FrameEvent(successor);
-            f.FrameEvent(successor);
+            var gap = f.Frame(last: terminal) with { StateRevision = active.StateRevision + 2 };
+            var stale = f.State.Current with { SnapshotFresh = false };
+            f.FrameEvent(gap, stale);
+            f.FrameEvent(gap, stale);
             if (status == RunState.Succeeded) {
                 f.Ack(f.History.OfType<Deliver>().Single(d => d.Item is Present).Id);
                 var complete = f.History.OfType<Deliver>().Single(d => d.Item is CompleteScheduled);
-                Check(!f.Items<RequestCleanup>().Any(), "定时完成尚未回执，不能请求收尾");
+                Check(complete.Item == new CompleteScheduled(f.Key, intent, terminal)
+                    && !f.Items<RequestCleanup>().Any(), "跳号帧应交付原 Run 的定时完成，回执前不能请求收尾");
                 f.Ack(complete.Id);
                 Check(f.Items<RequestCleanup>().Single().Run == f.Key, "定时完成回执后应恰好请求一次原 Run 的收尾");
             }
