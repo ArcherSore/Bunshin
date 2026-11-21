@@ -105,6 +105,17 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleAbandonQuit()
     {
+        var queued = new Scenario();
+        queued.Begin(Intent(RunSource.Launch));
+        queued.Body();
+        queued.Terminal(RunState.Succeeded);
+        var present = queued.History.OfType<Deliver>().Single();
+        Check(present.Item is Present { Kind: NoticeKind.Succeeded } && present.Item.Key == queued.Key
+            && queued.State.Deliveries.Single().Item == new RequestQuit(queued.Key), "成功通知等待回执时，原 Run 的退出请求应已入队");
+        queued.Step(new AbandonQuit(queued.Key));
+        queued.Ack(present.Id);
+        queued.Finish(typeof(Present));
+
         foreach (var status in new[] { RunState.Cancelled, RunState.Failed }) {
             var f = new Scenario();
             f.Begin(Intent(RunSource.Launch));
@@ -129,19 +140,25 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleQuitRecovery()
     {
-        var idle = new Scenario();
-        idle.Begin(Intent(RunSource.Launch));
-        idle.Body();
-        idle.Terminal(RunState.Cancelled);
-        idle.Finish(typeof(RequestQuit));
-        idle.Step(new ClosingStarted(Id(69)));
-        idle.Step(new ClosingCancelled(Id(69)));
-        idle.Terminal(RunState.Cancelled);
-        idle.Finish(typeof(RequestQuit));
-        idle.Step(new EnvironmentRecovered());
-        idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
-        idle.Step(new EnvironmentRecovered());
-        idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+        foreach (var recoveredFirst in new[] { false, true }) {
+            var idle = new Scenario();
+            idle.Begin(Intent(RunSource.Launch));
+            idle.Body();
+            idle.Terminal(RunState.Cancelled);
+            idle.Finish(typeof(RequestQuit));
+            idle.Step(new ClosingStarted(Id(69)));
+            if (recoveredFirst) idle.Step(new EnvironmentRecovered());
+            idle.Finish(typeof(RequestQuit));
+            idle.Step(new ClosingCancelled(Id(69)));
+            if (!recoveredFirst) {
+                idle.Terminal(RunState.Cancelled);
+                idle.Finish(typeof(RequestQuit));
+                idle.Step(new EnvironmentRecovered());
+            }
+            idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+            idle.Step(new EnvironmentRecovered());
+            idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+        }
 
         foreach (var ackFirst in new[] { true, false })
         foreach (var commit in new[] { false, true }) {
@@ -205,6 +222,31 @@ internal static partial class RunLifecycleSelfTest
                 && r.TerminalState == RunState.Succeeded && r.Notification == NotificationSlot.Delivered
                 && r.Attempt == null && r.Sends.IsEmpty && r.Terminal == null),
             "同一 Worker 的已完成 Run 只保留轻量身份、结论与通知状态，不累计计划或发送记录");
+    }
+
+    private static void VerifyRunLifecycleRejectedPlans()
+    {
+        var f = new Scenario();
+        var submissions = new List<Submission>();
+        for (int n = 1; n <= 12; ++n) {
+            f.Begin(Intent(RunSource.Manual, n));
+            submissions.Add(f.Start.Submission);
+            var wire = f.Body();
+            var error = new InvalidOperationException("计划超过快照大小预算");
+            f.Reply(wire, StartReplyKind.RejectedBeforeRegistration, "invalid_run_plan", error);
+            var notice = f.History.OfType<Deliver>().Last();
+            Check(notice.Item is Present { Kind: NoticeKind.NotStarted } p && p.Key == f.Key && p.Error == error,
+                "每份无效计划都应向原提交交付拒绝原因");
+            f.Ack(notice.Id);
+            f.Step(f.Start);
+            f.Reply(wire, StartReplyKind.RejectedBeforeRegistration, "invalid_run_plan", error);
+        }
+        f.Finish(Enumerable.Repeat(typeof(Present), submissions.Count).ToArray());
+        Check(f.History.OfType<SubmissionConclusion>().Select(c => c.Submission).SequenceEqual(submissions)
+            && f.State.Runs.Count == submissions.Count
+            && submissions.All(s => f.State.Runs[s.Run] is { Conclusion: StartConclusion.NotStarted, Owner: null,
+                Attempt: null, Sends.IsEmpty: true, RejectionCode: "invalid_run_plan" } r && r.Submission == s),
+            "同一 Worker 连续拒绝无效计划后应保留提交身份，累计保留的完整计划、发送记录和异常均应为零");
     }
 
     private static void VerifyRunLifecycleObservedRuns()

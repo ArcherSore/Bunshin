@@ -350,17 +350,16 @@ internal static partial class RunLifecycleSelfTest
             f.Timeout(f.Body());
             var other = Attempt(8);
             var q = f.QueryWire();
-            if (!conflict) {
-                f.QueryResult(q, true);
-                var timer = f.History.OfType<ArmRetry>().Single();
-                f.Now = timer.Due;
-                f.Step(new RetryDue(f.Key, timer.Token));
-                q = f.QueryWire();
-            } else other = other with { RunId = f.Key.RunId };
-            f.QueryResult(q, true, f.Frame(last: SnapshotOf(other, RunState.Succeeded)));
+            if (conflict) other = other with { RunId = f.Key.RunId };
+            var frame = f.Frame(last: SnapshotOf(other, RunState.Succeeded));
+            f.QueryResult(q, true, frame);
             f.Finish(typeof(Present));
-            f.Conclusions(conflict ? [StartConclusion.NotStarted] : [StartConclusion.Accepted, StartConclusion.EndUnconfirmed]);
-            Check(f.Items<Present>().Single().Kind == (conflict ? NoticeKind.NotStarted : NoticeKind.EndUnconfirmed)
+            f.QueryResult(q, true, frame);
+            f.Finish(typeof(Present));
+            f.Conclusions(conflict ? StartConclusion.NotStarted : StartConclusion.EndUnconfirmed);
+            var notice = f.Items<Present>().Single();
+            Check(notice.Key == f.Key && notice.Terminal == null
+                && notice.Kind == (conflict ? NoticeKind.NotStarted : NoticeKind.EndUnconfirmed)
                 && f.State.ReusableAttempt(Intent(RunSource.Manual, 2) with { RetryOf = f.Key }, f.Key.WorkerInstanceId) == null,
                 "摘要冲突或后继覆盖均不能借用其他 Run 的终态");
         }

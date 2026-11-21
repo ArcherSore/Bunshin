@@ -45,11 +45,13 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                     InFlightDelivery = state.InFlightDelivery?.Item is RequestQuit ? null : state.InFlightDelivery };
                 foreach (var (key, stage) in state.Quits) {
                     if (stage == QuitStage.Requested) SetQuit(key, QuitStage.AwaitingRecovery);
+                    else if (stage == QuitStage.RecoveredWhileClosing) QueueQuit(key);
                 }
                 break;
             case EnvironmentRecovered:
                 foreach (var (key, stage) in state.Quits) {
                     if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
+                    else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
                 }
                 break;
             case ClosingCommitted e when state.Closing == e.Id:
@@ -82,12 +84,15 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private void ReleaseCompletedRuns()
     {
         foreach (var r in state.Runs.Values) {
-            if ((!r.Retired && r.Terminal == null) || state.InFlightDelivery?.Item.Key == r.Key
+            var rejection = r is { Conclusion: StartConclusion.NotStarted, Attempt: not null }
+                ? r.ReuseBlockingRejection() : null;
+            if ((!r.Retired && r.Terminal == null && rejection == null) || state.InFlightDelivery?.Item.Key == r.Key
                 || state.Deliveries.Any(d => d.Item.Key == r.Key)) continue;
             if (r.Retired) {
                 state = state with { Runs = state.Runs.Remove(r.Key) };
             } else {
                 Save(new(r.Key, r.Digest) { Submission = r.Submission, Conclusion = r.Conclusion, TerminalState = r.TerminalState,
+                    RejectionCode = rejection,
                     PriorSubmissions = r.Sends.Values.Select(s => s.Identity).Where(s => s != r.Submission).ToImmutableHashSet(),
                     Notification = r.Notification, NotificationIntent = r.NotificationIntent });
             }

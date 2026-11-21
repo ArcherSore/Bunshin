@@ -8,7 +8,7 @@ namespace Gui.Runtime;
 internal enum RunSource { Manual, Launch, Scheduled }
 internal enum StartConclusion { Accepted, NotStarted, StartUnknown, EndUnconfirmed }
 internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
-internal enum QuitStage { AwaitingBody, Bound, Requested, AwaitingRecovery }
+internal enum QuitStage { AwaitingBody, Bound, Requested, AwaitingRecovery, RecoveredWhileClosing }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
 internal enum PresentationChannel { ForegroundError, Tray }
 internal enum NoticeKind { NotStarted, StartUnknown, EndUnconfirmed, Faulted, Succeeded, Failed }
@@ -28,6 +28,7 @@ internal sealed record TrackedRun(RunKey Key, string Digest)
     internal ImmutableHashSet<Submission> PriorSubmissions { get; init; } = [];
     internal string? TakeoverConfigurationName { get; init; }
     internal StartConclusion? Conclusion { get; init; }
+    internal string? RejectionCode { get; init; }
     internal bool Settled => TerminalState != null || Conclusion is StartConclusion.NotStarted or StartConclusion.StartUnknown
         or StartConclusion.EndUnconfirmed;
     internal bool SeenActive { get; init; }
@@ -42,6 +43,17 @@ internal sealed record TrackedRun(RunKey Key, string Digest)
     internal NotificationSlot Notification { get; init; }
     internal Guid? NotificationIntent { get; init; }
     internal bool Retired { get; init; }
+
+    internal string? ReuseBlockingRejection()
+    {
+        if (Submission is not { } last || Sends.IsEmpty) return RejectionCode;
+        if (Sends.Values.Any(s => s.RejectionCode == "run_id_conflict")) return "run_id_conflict";
+        return Sends[last.SubmissionId].RejectionCode switch {
+            null or "worker_busy" or "worker_not_ready" or "worker_faulted" or "operation_not_allowed"
+                or "protocol_version_mismatch" => null,
+            var code => code
+        };
+    }
 }
 
 internal sealed record RunLifecycleState
@@ -65,14 +77,9 @@ internal sealed record RunLifecycleState
     {
         if (intent is not { Source: RunSource.Manual, RetryOf: { } key } || key.WorkerInstanceId != workerId
             || !Runs.TryGetValue(key, out var run) || run is not { Retired: false, Conclusion: StartConclusion.NotStarted,
-                Owner: { } owner, Submission: { } last } || owner.Input != intent.Input || owner.Id == intent.Id)
+                Owner: { } owner, Submission: not null } || owner.Input != intent.Input || owner.Id == intent.Id)
             return null;
-        if (run.Sends.Values.Any(s => s.RejectionCode == "run_id_conflict")) return null;
-        return run.Sends[last.SubmissionId].RejectionCode switch {
-            null or "worker_busy" or "worker_not_ready" or "worker_faulted" or "operation_not_allowed"
-                or "protocol_version_mismatch" => run.Attempt,
-            _ => null
-        };
+        return run.ReuseBlockingRejection() == null ? run.Attempt : null;
     }
 }
 
