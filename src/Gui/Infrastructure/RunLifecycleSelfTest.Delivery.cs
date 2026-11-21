@@ -331,6 +331,20 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleBufferedFaultExit()
     {
+        var manual = new Scenario();
+        manual.Begin(Intent(RunSource.Manual));
+        var timeout = new TimeoutException("原始应答超时");
+        manual.Evidence(new(manual.Connection, WorkerEvidenceKind.RequestFailed, manual.Body(), Error: timeout));
+        manual.Active();
+        manual.Step(new ClosingStarted(Id(18)));
+        manual.Active(WorkerState.Faulted);
+        manual.ExitWorker();
+        manual.Step(new ClosingCancelled(Id(18)));
+        manual.Finish(typeof(Present));
+        Check(manual.Items<Present>().Single() is { Kind: NoticeKind.EndUnconfirmed,
+            Channel: PresentationChannel.ForegroundError } notice && notice.Error == timeout,
+            "退出期间由 Faulted 转为运行未确认的手动任务应补发原异常到前台");
+
         foreach (var status in new RunState?[] { null, RunState.Succeeded, RunState.Cancelled }) {
             var f = new Scenario();
             f.Begin(Intent(RunSource.Launch));

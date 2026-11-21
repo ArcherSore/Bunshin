@@ -393,7 +393,7 @@ internal static partial class SelfTestRunner
         Func<Task>? endEnvironment = null,
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
         TimeProvider? scheduleClock = null, LaunchCommand? launchCommand = null,
-        System.Windows.Threading.DispatcherTimer? scheduleTimer = null, QuitAfterRunTracker? quitAfterRun = null,
+        System.Windows.Threading.DispatcherTimer? scheduleTimer = null, Action? quitAfterRun = null,
         Func<IReadOnlyList<WorkerProcessEntry>>? captureProcesses = null)
     {
         var projectDirectory = CreateProjectFixture(directory);

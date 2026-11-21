@@ -10,13 +10,13 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private RunLifecycleState state = initial;
     private readonly ImmutableArray<LifecycleEffect>.Builder effects = ImmutableArray.CreateBuilder<LifecycleEffect>();
 
-    internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input)
+    internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input, bool dispatchDelivery = true)
     {
         if (state.ExitCommitted) return new(state, []);
         var step = new RunLifecycleReducer(state with { Now = input.At > state.Now ? input.At : state.Now });
         step.Apply(input);
         step.DispatchQueries();
-        step.DispatchDelivery();
+        if (dispatchDelivery) step.DispatchDelivery();
         step.ReleaseCompletedRuns();
         return new(step.state, step.effects.ToImmutable());
     }
@@ -35,8 +35,12 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                 } else Save(run with { Confirmation = run.Confirmation with { Timer = 0, Due = null } });
                 break;
             case Delivered e: Acknowledge(e.Id); break;
+            case DeferQuit e when e.Deferred || state.DeferredQuit == e.Key:
+                state = state with { DeferredQuit = e.Deferred ? e.Key : null };
+                break;
             case AbandonQuit e:
                 state = state with { Quits = state.Quits.Remove(e.Key),
+                    DeferredQuit = state.DeferredQuit == e.Key ? null : state.DeferredQuit,
                     Deliveries = state.Deliveries.RemoveAll(d => d.Item is RequestQuit q && q.Key == e.Key) };
                 break;
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;

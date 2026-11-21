@@ -72,6 +72,7 @@ internal sealed record RunLifecycleState
     internal long LastGeneration { get; init; }
     internal long Sequence { get; init; }
     internal TimeSpan Now { get; init; }
+    internal RunKey? DeferredQuit { get; init; }
     internal Guid? Closing { get; init; }
     internal bool ExitCommitted { get; init; }
 

@@ -96,7 +96,7 @@ internal static partial class SelfTestRunner
     }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
-        bool lostReply = false, bool tickBeforeDispatch = false)
+        bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false)
     {
         using var process = Process.GetCurrentProcess();
         var sessionId = (uint)process.SessionId;
@@ -109,6 +109,7 @@ internal static partial class SelfTestRunner
         WorkerAdmissionRecord? record = null;
         string digest = "";
         var preparations = 0;
+        var exitRequests = 0;
         var cleanupCollision = tickBeforeDispatch && terminal == RunState.Succeeded;
         var clock = new ScheduleTestClock();
         if (cleanupCollision) {
@@ -212,6 +213,13 @@ internal static partial class SelfTestRunner
                     // 迁移至 WorkerCoordinatorSelfTest / 同一 Worker 重连
                     PumpUntil(() => connected.IsCompleted && coordinator.Snapshot.SnapshotFresh, "模拟 Worker 应重连。");
                     pipe = connected.Result;
+                    var restored = snapshot with { ActiveRun = terminal == RunState.Idle ? null : own,
+                        RunState = terminal == RunState.Idle ? RunState.Idle : own.State, StateRevision = 3 };
+                    if (terminal == RunState.Idle)
+                        Require(failures.Count == 0, "普通空闲快照不能证明启动未登记。");
+                    var confirmation = Task.Run(() => WorkerCoordinatorSelfTest.AnswerRunQueryAsync(pipe, restored, token));
+                    PumpUntil(() => confirmation.IsCompleted, "重连后应查询目标 Run 的登记状态。");
+                    confirmation.GetAwaiter().GetResult();
                     if (terminal == RunState.Idle) {
                         // 迁移至 VerifyRunLifecycle / 普通重连空闲快照后仍待确认，此时失败通知应为零（#124）。
                         PumpUntil(() => failures.Count > 0, "重连后确认未接纳应通知启动失败。");
@@ -227,14 +235,11 @@ internal static partial class SelfTestRunner
                     // Keep IPC up and omit only the start reply: the state event is authoritative.
                     var running = snapshot with { StateRevision = 3, RunState = RunState.Running, ActiveRun = own };
                     Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
-                    var refresh = Task.Run(async () => {
-                        var read = await WorkerCoordinatorSelfTest.ReadRequestAsync(
-                            pipe, ProtocolOperations.WorkerGetSnapshot, token);
-                        await pipe.WriteAsync(WireEnvelope.Response(read.Operation, read.RequestId!.Value,
-                            new GetSnapshotResponse(running)), token);
-                    });
-                    // 迁移至 VerifyRunLifecycle / 丢应答但已运行
-                    PumpUntil(() => start.IsCompleted && refresh.IsCompletedSuccessfully, "丢失回包后应按快照确认。");
+                    if (bufferExit)
+                        Task.Run(() => pipe.WriteAsync(WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
+                            new RunStartResponse("accepted")), token)).GetAwaiter().GetResult();
+                    // The observed Active already proves acceptance even with the start reply missing.
+                    PumpUntil(() => start.IsCompleted, "丢失回包后应按快照确认。");
                     // 迁移至 WPF / 托盘隐藏
                     Require(!window.IsVisible, "定时启动和进度更新应保持窗口隐藏。");
                     window.Show();
@@ -320,7 +325,14 @@ internal static partial class SelfTestRunner
                             };
                         }
                     };
+                    if (bufferExit) window.SetExitInProgress(true);
                     Publish(done, terminal == RunState.Succeeded ? 4 : 3);
+                    if (bufferExit) {
+                        Publish(done, 5);
+                        Require(completions.Count == 0 && wts.LogoffAttempts.SequenceEqual([77u]),
+                            "退出期间重复终态不应提前完成或收尾。");
+                        window.SetExitInProgress(false);
+                    }
                     if (lostReply) {
                         // 迁移至 VerifyRunLifecycle / 收尾时断线重连
                         Require(session.HasChildSession, "未重新确认 Worker 身份前必须保留现场。");
@@ -333,17 +345,11 @@ internal static partial class SelfTestRunner
                     // 迁移至 VerifyRunLifecycle / 三种定时终态
                     Require(completions.SequenceEqual([own.RunId]), "同一 Run 应只发出一次终态。");
                 }
-                var quit = new QuitAfterRunTracker();
-                quit.Await(Guid.NewGuid());
-                var observed = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true,
-                    snapshot with { LastRun = done }, "已结束");
-                window.ObserveRunNotification(observed);
-                // 迁移至 VerifyRunLifecycle / 定时终态与开机退出
-                Require(!quit.Observe(observed),
-                    "定时 Run 的终态不得触发开机自动执行的退出。");
+                Require(exitRequests == 0, "定时 Run 的终态不得触发开机自动执行的退出。");
                 if (terminal == RunState.Succeeded) {
                     // 迁移至 VerifyRunLifecycle / 成功收尾
-                    PumpUntil(() => !session.HasChildSession, "仅本次成功后应结束分身。");
+                    PumpUntil(() => !session.HasChildSession && window.LogLines.OfType<LogEntry>()
+                        .Any(e => e.Message == "全部完成，已关闭桌面分身"), "仅本次成功后应完成分身收尾。");
                     // 迁移至 VerifyRunLifecycle / 换场与成功收尾动态
                     Require(window.LogLines.OfType<LogEntry>().Any(e => e.Message == "已关闭旧的桌面分身")
                         && window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
@@ -372,7 +378,7 @@ internal static partial class SelfTestRunner
                     var retry = coordinator.StartRunAsync(new(own.RunId, payload.Plan, payload.PlanDigest));
                     var duplicate = Task.Run(async () => {
                         var request = await WorkerCoordinatorSelfTest.ReadRequestAsync(
-                            pipe, ProtocolOperations.RunStart, token);
+                            pipe, ProtocolOperations.RunStart, token, snapshot with { LastRun = done, StateRevision = 4 });
                         await pipe.WriteAsync(WireEnvelope.Response(request.Operation, request.RequestId!.Value,
                             new RunStartResponse("already_accepted")), token);
                     });
@@ -386,7 +392,7 @@ internal static partial class SelfTestRunner
                         "重试已终结的 Run 之后仍应可以运行新的配置。");
                 }
             }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
-                scheduleClock: clock,
+                scheduleClock: clock, quitAfterRun: () => exitRequests++,
                 prepareEnvironment: async (project, options, show) => {
                     if (failPreparation) {
                         failPreparation = false;

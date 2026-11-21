@@ -54,6 +54,15 @@ internal sealed partial class WorkerCoordinator
     // completion share the gate with detachment and with the write-side body boundary.
     internal event EventHandler<WorkerObservationBatch>? ObservationReceived;
 
+    internal void SubscribeStartEvidence(EventHandler<WorkerObservationBatch> observe)
+    {
+        lock (_gate) {
+            ObservationReceived += observe;
+            if (Snapshot is { Fresh: true, WorkerSnapshot: { } snapshot })
+                observe(this, SnapshotBatchLocked(snapshot));
+        }
+    }
+
     internal (int Requests, int Waiters) EvidenceCounts
     {
         get {
@@ -104,7 +113,8 @@ internal sealed partial class WorkerCoordinator
 
     internal Task<WorkerObservationBatch> SendStartAsync(Submission submission, RunStartAttempt attempt,
         CancellationToken cancellationToken = default) =>
-        SendEvidenceRequestAsync(submission.Run, submission, null, attempt, cancellationToken);
+        TraceRequestAsync(ProtocolOperations.RunStart,
+            () => SendEvidenceRequestAsync(submission.Run, submission, null, attempt, cancellationToken));
 
     internal Task<WorkerObservationBatch> QueryRunAsync(RunKey run, QueryId queryId,
         CancellationToken cancellationToken = default) =>

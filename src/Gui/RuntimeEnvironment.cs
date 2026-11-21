@@ -63,6 +63,14 @@ internal sealed class RuntimeEnvironment
         }
     }
 
+    internal Func<WorkerCoordinatorSnapshot, Guid?>? PendingLifecycleStart { private get; set; }
+
+    internal (WorkerCoordinatorSnapshot State, Guid? PendingStart) ReadRunObservation()
+    {
+        var (view, pending) = _coordinator.ReadRunObservation();
+        return (view, PendingLifecycleStart?.Invoke(view) ?? pending);
+    }
+
     internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation, out bool hasSession)
     {
         observation = WorkerCoordinatorSnapshot.Empty;
@@ -74,11 +82,11 @@ internal sealed class RuntimeEnvironment
         try {
             var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
             hasSession = sessionId.HasValue;
-            var (current, awaitingStart) = _coordinator.ReadRunObservation();
+            var (current, awaitingStart) = ReadRunObservation();
             if (sessionId is uint id && current.NoLiveAdmission) {
                 // With no live Admission a surviving, untracked Worker cannot be known idle.
                 _coordinator.EnsureSessionHasNoWorker(id);
-                (current, awaitingStart) = _coordinator.ReadRunObservation();
+                (current, awaitingStart) = ReadRunObservation();
             }
             observation = current;
             if (current.NoLiveAdmission) {
@@ -100,7 +108,7 @@ internal sealed class RuntimeEnvironment
     internal bool CanEndSuccessfulRun(Guid workerId, Guid runId)
     {
         var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
-        var (current, awaitingStart) = _coordinator.ReadRunObservation();
+        var (current, awaitingStart) = ReadRunObservation();
         return !Closing && !EndUnconfirmed && awaitingStart is null
             && current is { FreshIdleForEnvironmentEnd: true,
                 WorkerSnapshot: { LastRun: { State: RunState.Succeeded } last } idle }

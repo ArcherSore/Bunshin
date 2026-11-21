@@ -66,15 +66,13 @@ public partial class App : System.Windows.Application
         _workerCoordinator = new WorkerCoordinator(
             _logger, Path.Combine(AppContext.BaseDirectory, "state"),
             Path.Combine(AppContext.BaseDirectory, "worker", AppIdentity.WorkerFileName));
-        _workerCoordinator.StateChanged += WorkerCoordinator_StateChanged;
         _environment = new RuntimeEnvironment(_logger, _sessionManager, _workerCoordinator);
-        var quitAfterRun = command.QuitAfterRun ? new QuitAfterRunTracker() : null;
         _mainWindow = new MainWindow(
             _logger, _sessionManager, _workerCoordinator, _environment, RequestExitAsync, EndEnvironmentAsync,
-            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: quitAfterRun);
+            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: () => _ = ExitAsync(confirm: false),
+            presentation: new RunPresentation { ShowBalloon = ShowBalloon });
         _mainWindow.HiddenToTray += MainWindow_HiddenToTray;
         _mainWindow.ProjectIdentityChanged += MainWindow_ProjectIdentityChanged;
-        _mainWindow.NotificationRequested += (_, n) => ShowBalloon(n.Title, n.Message, n.Failed);
         MainWindow = _mainWindow;
         CreateTrayIcon();
         // A launch by the system (logon) has no one to look at the window; it waits in the tray.
@@ -122,12 +120,12 @@ public partial class App : System.Windows.Application
                     return;
                 }
 
+                _mainWindow.CommitExit();
                 _logger.Info($"{AppIdentity.Name} 正常退出。");
                 _trayIcon?.Dispose();
                 _trayIcon = null;
                 _sessionManager.Dispose();
                 if (_workerCoordinator is not null) {
-                    _workerCoordinator.StateChanged -= WorkerCoordinator_StateChanged;
                     await _workerCoordinator.DisposeAsync();
                     _workerCoordinator = null;
                 }
@@ -163,6 +161,7 @@ public partial class App : System.Windows.Application
             "结束桌面分身将先停止正在运行的任务，再注销 Session，并结束其中运行的程序。确认继续吗？",
             "结束桌面分身",
             MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
+        if (ended.Outcome == EnvironmentEndOutcome.Ended) _mainWindow?.EnvironmentRecovered();
         if (ended.Error is not { } error) {
             return;
         }
@@ -202,20 +201,11 @@ public partial class App : System.Windows.Application
         _trayIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowMainWindow);
     }
 
-    private void WorkerCoordinator_StateChanged(object? sender, WorkerCoordinatorSnapshot snapshot)
+    private void ShowBalloon(RunTerminalNotification notice)
     {
-        _mainWindow?.ObserveApplicationRun(snapshot, () => _ = ExitAsync(confirm: false));
-    }
-
-    // Only when the window is not already in front of the user.
-    private void ShowBalloon(string title, string message, bool failed)
-    {
-        if (IsExiting || _trayIcon is null
-            || _mainWindow is { IsVisible: true, IsActive: true, WindowState: not WindowState.Minimized }) {
-            return;
-        }
         try {
-            _trayIcon.ShowBalloonTip(5000, title, message, failed ? Forms.ToolTipIcon.Error : Forms.ToolTipIcon.Info);
+            _trayIcon?.ShowBalloonTip(5000, notice.Title, notice.Message,
+                notice.Failed ? Forms.ToolTipIcon.Error : Forms.ToolTipIcon.Info);
         } catch (System.ComponentModel.Win32Exception exception) {
             _logger?.Warn("显示任务通知失败。", exception);
         }

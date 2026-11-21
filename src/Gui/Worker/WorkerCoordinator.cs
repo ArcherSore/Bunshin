@@ -971,16 +971,19 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    private async Task<TResponse> SendRequestAsync<TRequest, TResponse>(
+    private Task<TResponse> SendRequestAsync<TRequest, TResponse>(
         string operation, TRequest data, CancellationToken cancellationToken, Action? onSending = null,
-        ProtocolConnection? connection = null, Guid? reconciledStart = null)
+        ProtocolConnection? connection = null, Guid? reconciledStart = null) =>
+        TraceRequestAsync(operation, () => SendRequestCoreAsync<TRequest, TResponse>(
+            operation, data, cancellationToken, onSending, connection, reconciledStart));
+
+    private async Task<TResponse> TraceRequestAsync<TResponse>(string operation, Func<Task<TResponse>> send)
     {
         var started = Stopwatch.GetTimestamp();
         string Details() => AppLogger.Field("operation", operation)
             + AppLogger.Field("cost", $"{Stopwatch.GetElapsedTime(started).TotalMilliseconds:0}ms");
         try {
-            var response = await SendRequestCoreAsync<TRequest, TResponse>(
-                operation, data, cancellationToken, onSending, connection, reconciledStart);
+            var response = await send().ConfigureAwait(false);
             // Log recovery pages can be frequent, and the logs they carry show their own effect.
             if (operation != ProtocolOperations.LogGetSince) {
                 _logger.Debug($"Worker 请求完成{Details()}");

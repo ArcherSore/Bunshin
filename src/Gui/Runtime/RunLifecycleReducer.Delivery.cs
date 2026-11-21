@@ -77,7 +77,9 @@ internal sealed partial class RunLifecycleReducer
         if (state.Closing != null || state.InFlightDelivery != null) return;
         while (!state.Deliveries.IsEmpty) {
             // A synchronous quit callback may start Closing. Finish the other consumers first.
-            var d = state.Deliveries.FirstOrDefault(d => d.Item is not RequestQuit) ?? state.Deliveries[0];
+            var d = state.Deliveries.FirstOrDefault(d => d.Item is not RequestQuit)
+                ?? state.Deliveries.FirstOrDefault(d => d.Item.Key != state.DeferredQuit);
+            if (d == null) return;
             state = state with { Deliveries = state.Deliveries.Remove(d) };
             if (d.Item is Present { Kind: NoticeKind.Faulted } fault && state.Runs[fault.Key] is { Retired: true } r) {
                 if (r.Terminal?.State == RunState.Cancelled) {
@@ -85,7 +87,9 @@ internal sealed partial class RunLifecycleReducer
                     continue;
                 }
                 d = d with { Item = r.Terminal is { } terminal ? TerminalNotice(r, terminal)
-                    : fault with { Kind = NoticeKind.EndUnconfirmed, Operation = r.Owner?.OperationName ?? "任务运行" } };
+                    : fault with { Kind = NoticeKind.EndUnconfirmed, Operation = r.Owner?.OperationName ?? "任务运行",
+                        Error = LastError(r), Channel = r.Owner is { Source: RunSource.Manual, Foreground: true }
+                            ? PresentationChannel.ForegroundError : PresentationChannel.Tray } };
             }
             state = state with { InFlightDelivery = d };
             if (d.Item is RequestQuit) SetQuit(d.Item.Key, QuitStage.Requested);

@@ -172,14 +172,17 @@ internal static partial class SelfTestRunner
                             await pipe.WriteAsync(StateEvent(WorkerCoordinatorSelfTest.CreateSnapshot(record, 0)
                                 with { StateRevision = 2 }), timeout.Token);
                         }
+                        var current = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with { StateRevision = starting ? 2 : 1 };
                         while (true) {
                             var request = await WorkerCoordinatorSelfTest.ReadRequestAsync(
-                                pipe, ProtocolOperations.RunStart, timeout.Token);
+                                pipe, ProtocolOperations.RunStart, timeout.Token, current);
                             Interlocked.Increment(ref requests);
                             var payload = System.Text.Json.JsonSerializer.Deserialize<RunStartRequest>(
                                 request.Data, ProtocolJson.Options)!;
                             await pipe.WriteAsync(WireEnvelope.Response(ProtocolOperations.RunStart,
                                 request.RequestId!.Value, new RunStartResponse("accepted")), timeout.Token);
+                            var active = WorkerCoordinatorSelfTest.CreateActiveRun(new(payload.RunId, payload.Plan, payload.PlanDigest));
+                            current = current with { ActiveRun = active, RunState = active.State, StateRevision = current.StateRevision + 1 };
                             received.TrySetResult(payload);
                         }
                     } catch (OperationCanceledException) when (timeout.IsCancellationRequested) {
@@ -212,12 +215,12 @@ internal static partial class SelfTestRunner
                             Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel"))
                             .OfType<System.Windows.Controls.CheckBox>().Single(selection =>
                                 System.Windows.Automation.AutomationProperties.GetName(selection) == "执行 Skipped task");
-                        SetOnboardingField(window, "_pendingStartAttempt", CurrentAttempt());
+                        SetOnboardingField(window, "_lastStartKey", new RunKey(record.WorkerInstanceId, CurrentAttempt().RunId));
                         var selection = SkippedSelection();
                         selection.IsChecked = false;
                         selection.RaiseEvent(new RoutedEventArgs(
                             System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-                        Require(typeof(MainWindow).GetField("_pendingStartAttempt", flags)!.GetValue(window) is null,
+                        Require(typeof(MainWindow).GetField("_lastStartKey", flags)!.GetValue(window) is null,
                             "修改勾选必须清除旧的启动重试请求。");
                         var button = scenario == "prepare-only" ? "StartSessionMenuItem" : "PrepareEnvironmentButton";
                         if (scenario == "prepare-only") {
@@ -504,7 +507,7 @@ internal static partial class SelfTestRunner
     // workerListed, when given, decides whether process inspection still finds that Worker.
     private static void WithFakeWorker(AppLogger logger, string directory,
         Action<WorkerCoordinator, WorkerAdmissionRecord, string> verify, Func<bool>? workerListed = null,
-        string runtimeProfileDigest = "self-test-runtime")
+        string runtimeProfileDigest = "self-test-runtime", TimeProvider? requestClock = null)
     {
         Directory.CreateDirectory(directory);
         using var process = Process.GetCurrentProcess();
@@ -517,7 +520,7 @@ internal static partial class SelfTestRunner
         var path = process.MainModule?.FileName ?? throw new InvalidOperationException("无法取得自检进程路径。");
         WorkerProcessEntry[] worker = [new(Environment.ProcessId, record.ChildSessionId, Path.GetFileName(path))];
         var coordinator = new WorkerCoordinator(logger, directory, path, pipeName, usePipeAcl: false,
-            workerListed is null ? null : () => workerListed() ? worker : []);
+            workerListed is null ? null : () => workerListed() ? worker : [], requestClock: requestClock);
         try {
             Task.Run(() => coordinator.WaitForServerReadyAsync(CancellationToken.None)).GetAwaiter().GetResult();
             verify(coordinator, record, pipeName);

@@ -3,8 +3,6 @@ using Gui.Worker;
 
 namespace Gui.Infrastructure;
 
-internal sealed record RunTerminalNotification(string Title, string Message, bool Failed);
-
 internal sealed class RunTerminalNotificationTracker
 {
     private readonly HashSet<Guid> _observedRuns = [];

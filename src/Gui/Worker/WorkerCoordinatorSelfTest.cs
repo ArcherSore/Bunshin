@@ -300,7 +300,7 @@ internal static partial class WorkerCoordinatorSelfTest
             if (currentSnapshot is not null && request is { Operation: ProtocolOperations.WorkerGetSnapshot,
                 RequestId: { } snapshotId } && operation != ProtocolOperations.WorkerGetSnapshot) {
                 await connection.WriteAsync(WireEnvelope.Response(request.Operation, snapshotId,
-                    new GetSnapshotResponse(currentSnapshot)), cancellationToken);
+                    SnapshotResponse(request, currentSnapshot)), cancellationToken);
                 continue;
             }
             // The GUI synchronises the debug switches whenever it likes; no scenario here is about that ordering.
@@ -316,6 +316,19 @@ internal static partial class WorkerCoordinatorSelfTest
             }
             return request;
         }
+    }
+
+    internal static GetSnapshotResponse SnapshotResponse(WireEnvelope query, WorkerSnapshot snapshot)
+    {
+        var id = ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId;
+        return new(snapshot, id.HasValue ? snapshot.ActiveRun?.RunId == id || snapshot.LastRun?.RunId == id : null);
+    }
+
+    internal static async Task AnswerRunQueryAsync(ProtocolConnection pipe, WorkerSnapshot snapshot, CancellationToken token)
+    {
+        var query = await ReadRequestAsync(pipe, ProtocolOperations.WorkerGetSnapshot, token);
+        await pipe.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+            SnapshotResponse(query, snapshot)), token);
     }
 
     private static Task WriteLogPageAsync(
