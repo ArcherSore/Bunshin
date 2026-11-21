@@ -158,7 +158,7 @@ internal sealed class RunLifecycleHost : IDisposable
             Orchestration = Orchestration with { Scheduled = new(submission.Key, submission.Intent.ConfigurationName) };
         foreach (var completion in transition.Effects.OfType<CompleteScheduled>()) {
             if (Orchestration.Scheduled is { } own && own.Key == completion.Run)
-                Orchestration = Orchestration with { Scheduled = own with { Completion = completion.Terminal.State,
+                Orchestration = Orchestration with { Scheduled = own with {
                     Cleanup = completion.Terminal.State == RunState.Succeeded ? CleanupStage.Pending : CleanupStage.None } };
             _completed.Enqueue(completion);
         }

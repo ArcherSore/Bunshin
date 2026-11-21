@@ -59,13 +59,7 @@ public sealed class ProtocolConnection : IAsyncDisposable
     }
 
     public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken) =>
-        WriteAsync(envelope, cancellationToken, null);
-
-    public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending) =>
-        WriteAsync(envelope, cancellationToken, onSending, null);
-
-    public Task<bool> WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending,
-        Func<bool>? canWrite) => WriteAsync(envelope, cancellationToken, onSending, canWrite, cancellationToken);
+        WriteAsync(envelope, cancellationToken, null, null, cancellationToken);
 
     public async Task<bool> WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending,
         Func<bool>? canWrite, CancellationToken frameCancellationToken)

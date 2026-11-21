@@ -21,7 +21,6 @@ internal static partial class SelfTestRunner
             var failures = new List<string>();
             window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
             var result = window.TryStartScheduledRunAsync(weekly.Id).GetAwaiter().GetResult();
-            // 迁移至 WPF / 无效定时配置
             Require(result.Disposition == ScheduledRunDisposition.Invalid && project.ActiveConfigurationId == before
                 && failures.Single() == $"定时任务未能启动 / 「{weekly.Name}」：执行计划为空", "无效定时配置应通知原因并保留原配置。");
         }, beforeLoad: TwoConfigurations(weeklyHasTask: false));
@@ -42,7 +41,6 @@ internal static partial class SelfTestRunner
             window.Hide();
             var targetName = project.Configurations.Single(c => c.Id == target).Name;
             var run = window.TryStartScheduledRunAsync(target);
-            // 迁移至 WPF / 换场失败保留激活标签
             PumpUntil(() => run.IsCompleted, "旧分身清理未确认时应结束本轮。");
             Require(run.Result.Disposition == ScheduledRunDisposition.Admitted
                 && project.ActiveConfigurationId == target && !prepared
@@ -68,10 +66,8 @@ internal static partial class SelfTestRunner
                 var schedule = window.TryStartScheduledRunAsync(weekly);
                 boot ??= window.AutoRunOnLaunchAsync();
                 release.SetResult();
-                // 迁移至 VerifyScheduleClockAtLogon
                 PumpUntil(() => schedule.IsCompleted && boot.IsCompleted, "两种启动都应返回。");
                 var winner = bootFirst ? daily : weekly;
-                // 迁移至 VerifyScheduleClockAtLogon
                 Require(preparedIds.SequenceEqual([winner]) && ProjectOf(window).ActiveConfigurationId == winner
                     && boot.Result == bootFirst && schedule.Result.Disposition == (bootFirst
                         ? ScheduledRunDisposition.Busy : ScheduledRunDisposition.Admitted),
@@ -84,13 +80,10 @@ internal static partial class SelfTestRunner
                 });
         }
 
-        foreach (var state in new[] { RunState.Succeeded, RunState.Failed, RunState.Cancelled }) {
-            VerifyScheduledTerminal(logger, Path.Combine(directory, state.ToString()), state);
-        }
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "failed"), RunState.Failed);
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "cancelled"), RunState.Cancelled);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "lost-reply"), RunState.Succeeded, lostReply: true);
-        VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle, lostReply: true);
-        VerifyScheduledTerminal(logger, Path.Combine(directory, "next-tick"),
-            RunState.Failed, tickBeforeDispatch: true);
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle);
     }
 
     private enum SettlementOrder { Normal, Reconnect, Preview, Tray, Gap, Update, ManualEndAfterUpdate }
@@ -115,6 +108,7 @@ internal static partial class SelfTestRunner
         var probe = new PresentationProbe();
         var cleanupCollision = tickBeforeDispatch && terminal == RunState.Succeeded;
         var clock = new ScheduleTestClock();
+        var requestClock = new ScheduleTestClock();
         if (cleanupCollision && forceCollision) {
             CreateIdleSettings(CreateProjectFixture(directory), logger).ForceScheduledStart.Value = true;
         }
@@ -126,7 +120,7 @@ internal static partial class SelfTestRunner
                 record = new(instance, secret, id, Environment.ProcessId, digest, DateTime.UtcNow);
                 connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, token));
                 return Task.FromResult(new VerifiedChildSessionProcessLaunch((uint)process.Id, id, null, null));
-            });
+            }, requestClock: bufferExit || terminal == RunState.Idle ? requestClock : null);
         var environment = CreateEnvironment(logger, session, coordinator);
         try {
             WithRuntimeControlWindow(logger, directory, window => {
@@ -137,7 +131,6 @@ internal static partial class SelfTestRunner
                 window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);
                 if (failPreparation) {
                     var failed = window.TryStartScheduledRunAsync(target);
-                    // 迁移至 WPF / 准备失败重试按钮
                     PumpUntil(() => failed.IsCompleted, "模拟准备失败应结束。");
                     Require(failures.Count == 1 && ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
                         "定时准备失败时控制栏应允许重试准备。");
@@ -145,7 +138,6 @@ internal static partial class SelfTestRunner
                 }
                 if (terminal == RunState.Succeeded && !lostReply) {
                     ClickOnboarding(window, "NewConfigurationButton");
-                    // 迁移至 WPF / 恢复窗口的标签和进度
                     Require(window.TaskPlanEditor.EmptyPlanPanel.IsVisible, "启动前应显示另一份空配置。");
                     window.Hide();
                 }
@@ -154,12 +146,10 @@ internal static partial class SelfTestRunner
                     wts.Sessions.Add(77);
                 }
                 var start = window.TryStartScheduledRunAsync(target);
-                // 迁移至 WorkerCoordinatorSelfTest / 定时 Worker 接纳
                 PumpUntil(() => connected?.IsCompleted == true || start.IsCompleted, "定时执行应接纳新 Worker。");
                 var pipe = connected!.GetAwaiter().GetResult();
                 var request = Task.Run(() => WorkerCoordinatorSelfTest.ReadRequestAsync(
                     pipe, ProtocolOperations.RunStart, token));
-                // 迁移至 VerifyRunLifecycle / 定时计划提交
                 PumpUntil(() => request.IsCompleted, "Worker 应收到此定时配置的计划。");
                 var payload = ProtocolJson.Deserialize<RunStartRequest>(request.Result.Data);
                 var own = WorkerCoordinatorSelfTest.CreateActiveRun(
@@ -172,7 +162,6 @@ internal static partial class SelfTestRunner
                     logger.EntryWritten += Record;
                     try {
                         var skipped = window.TryStartScheduledRunAsync(target);
-                        // 迁移至 VerifyRunLifecycle / 普通候选遇忙
                         Require(skipped.IsCompletedSuccessfully
                             && skipped.Result.Disposition == ScheduledRunDisposition.Busy
                             && (expected is null || window.LogLines.OfType<LogEntry>().First().Message
@@ -184,14 +173,12 @@ internal static partial class SelfTestRunner
                     }
                 }
                 if (!cleanupCollision) {
-                    // 迁移至 VerifyRunLifecycle / 提交期间遇忙
                     ExpectBusy("正在运行其他任务");
                 }
                 void Publish(RunSnapshot last, long revision)
                 {
                     Task.Run(() => pipe.WriteAsync(StateEvent(snapshot with { StateRevision = revision,
                         LastRun = last }), token)).GetAwaiter().GetResult();
-                    // 迁移至 WorkerCoordinatorSelfTest / 快照修订
                     PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.StateRevision >= revision,
                         "必须观察到新的 Worker 快照。");
                     PumpOnboarding();
@@ -201,71 +188,60 @@ internal static partial class SelfTestRunner
                         : own.Items,
                     Error = terminal == RunState.Failed ? new("fixture", "计划项模拟失败") : null };
                 Publish(done with { RunId = Guid.NewGuid(), State = RunState.Succeeded }, 2);
-                // 迁移至 VerifyRunLifecycle / 非目标 Run 成功
                 Require(wts.ReportedId == sessionId, "另一 Run 的成功不得关闭分身。");
                 if (lostReply) {
                     pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                    // 迁移至 VerifyRunLifecycle / 丢应答后断线
                     PumpUntil(() => start.IsCompleted
                         && coordinator.Snapshot.Observation == WorkerObservation.IpcDisconnected,
                         "丢失回包后应保留现场等待 Worker 重连。");
-                    // 迁移至 VerifyRunLifecycle / 断线期间遇忙
                     ExpectBusy();
                     connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
-                        pipeName, record!, 0, token, activeRun: terminal == RunState.Idle ? null : own,
-                        stateRevision: 3));
-                    // 迁移至 WorkerCoordinatorSelfTest / 同一 Worker 重连
+                        pipeName, record!, 0, token, activeRun: own, stateRevision: 3));
                     PumpUntil(() => connected.IsCompleted && coordinator.Snapshot.SnapshotFresh, "模拟 Worker 应重连。");
                     pipe = connected.Result;
-                    var restored = snapshot with { ActiveRun = terminal == RunState.Idle ? null : own,
-                        RunState = terminal == RunState.Idle ? RunState.Idle : own.State, StateRevision = 3 };
-                    if (terminal == RunState.Idle)
-                        Require(failures.Count == 0, "普通空闲快照不能证明启动未登记。");
+                    var restored = snapshot with { ActiveRun = own, RunState = own.State, StateRevision = 3 };
                     var confirmation = Task.Run(() => WorkerCoordinatorSelfTest.AnswerRunQueryAsync(pipe, restored, token));
                     PumpUntil(() => confirmation.IsCompleted, "重连后应查询目标 Run 的登记状态。");
                     confirmation.GetAwaiter().GetResult();
-                    if (terminal == RunState.Idle) {
-                        // 迁移至 VerifyRunLifecycle / 普通重连空闲快照后仍待确认，此时失败通知应为零（#124）。
-                        PumpUntil(() => failures.Count > 0, "重连后确认未接纳应通知启动失败。");
-                        PumpOnboarding();
-                        // 收到覆盖本次发送的有序查询结果 runRegistered=false 后，才报告一次启动失败并保留分身。
-                        Require(failures.Count == 1 && failures[0].Contains(name) && session.HasChildSession,
-                            "启动未被接纳时应保留分身且只报告一次。");
-                        return;
-                    }
-                    // 迁移至 VerifyRunLifecycle / 重连后目标仍在运行
                     ExpectBusy();
+                } else if (terminal == RunState.Idle) {
+                    requestClock.Advance(TimeSpan.FromSeconds(16));
+                    PumpUntil(() => start.IsCompleted, "应答超时后应返回本次定时提交。");
+                    Require(failures.Count == 0, "仅凭普通空闲快照和应答超时不能报告启动失败。");
+                    var confirmation = Task.Run(() => WorkerCoordinatorSelfTest.AnswerRunQueryAsync(
+                        pipe, snapshot with { StateRevision = 3 }, token));
+                    PumpUntil(() => confirmation.IsCompleted && failures.Count > 0, "确认未登记应通知启动失败。");
+                    confirmation.GetAwaiter().GetResult();
+                    Require(failures.Count == 1 && failures[0].Contains(name) && session.HasChildSession,
+                        "启动未被接纳时应保留分身且只报告一次。");
+                    return;
                 } else if (terminal == RunState.Succeeded) {
-                    // Keep IPC up and omit only the start reply: the state event is authoritative.
                     var running = snapshot with { StateRevision = 3, RunState = RunState.Running, ActiveRun = own };
                     Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
-                    if (bufferExit || cleanupDuringExit || cleanupCollision || order != SettlementOrder.Normal)
+                    if (bufferExit) {
+                        AwaitWorker(coordinator, view => view.WorkerSnapshot?.ActiveRun?.RunId == own.RunId,
+                            "应在开始应答超时前观察到目标 Run 已运行。");
+                        requestClock.Advance(TimeSpan.FromSeconds(16));
+                    } else {
                         Task.Run(() => pipe.WriteAsync(WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
                             new RunStartResponse("accepted")), token)).GetAwaiter().GetResult();
-                    // The observed Active already proves acceptance even with the start reply missing.
-                    PumpUntil(() => start.IsCompleted, "丢失回包后应按快照确认。");
-                    // 迁移至 WPF / 托盘隐藏
+                    }
+                    PumpUntil(() => start.IsCompleted, "观察到运行中的任务后应完成定时提交。");
                     Require(!window.IsVisible, "定时启动和进度更新应保持窗口隐藏。");
                     window.Show();
-                    // 迁移至 WPF / 恢复窗口的标签和进度
                     PumpUntil(() => window.RunProgressPanel.IsVisible, "打开窗口后应显示当前运行的进度。");
                     Require(window.TaskPlanEditor.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
                         { Tag: Guid selected } && selected == target && !window.TaskPlanEditor.EmptyPlanPanel.IsVisible,
                         "恢复可见时目标标签、执行计划与正在运行的任务应一致。");
-                    // 迁移至 VerifyRunLifecycle / 丢应答但已运行
                     Require(failures.Count == 0 && start.Result.Reason is null, "Worker 已运行时回复超时不得报告启动失败。");
                 } else {
                     var accepted = WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
                         new RunStartResponse("accepted"));
                     Task.Run(() => pipe.WriteAsync(accepted, token)).GetAwaiter().GetResult();
-                    // 迁移至 VerifyRunLifecycle / 定时计划提交
                     PumpUntil(() => start.IsCompleted, "定时执行应返回此次提交的身份。");
-                    // 迁移至 VerifyRunLifecycle / 已接纳后遇忙
                     ExpectBusy();
-                    // 迁移至 VerifyRunLifecycle / 普通候选遇忙
                     Require(failures.Count == 0, "普通冲突只能记日志。");
                 }
-                // 迁移至 VerifyRunLifecycle / 定时计划提交
                 Require(start.Result is { Disposition: ScheduledRunDisposition.Admitted, RunId: { } runId }
                     && runId == own.RunId, "启动结果必须对应提交给 Worker 的计划。");
                 if (terminal == RunState.Cancelled) {
@@ -274,11 +250,9 @@ internal static partial class SelfTestRunner
                         wts.DuringEnumeration = null;
                         var active = snapshot with { StateRevision = 3, ActiveRun = own, RunState = RunState.Running };
                         Task.Run(() => pipe.WriteAsync(StateEvent(active), token)).GetAwaiter().GetResult();
-                        // 迁移至 VerifyRunLifecycle / own 已获 accepted，另一机会在 WTS 枚举期间观察到同一 Run 进入 Running。
                         AwaitWorker(coordinator, s => s.WorkerSnapshot?.ActiveRun?.RunId == own.RunId,
                             "Worker 应在 WTS 查询期间报告 Active Run。");
                     };
-                    // 迁移后仍须断言：从提交待观察转为已在运行，另一机会始终返回 Busy。
                     ExpectBusy();
                     Publish(done, 4);
                 } else if (terminalDuringEnumeration) {
@@ -300,16 +274,13 @@ internal static partial class SelfTestRunner
                 } else if (tickBeforeDispatch) {
                     // Advance IPC on the pool while the dispatcher is still handling the clock tick.
                     var received = snapshot with { LastRun = done, StateRevision = cleanupCollision ? 4 : 3 };
-                    Guid nextTarget = target;
-                    if (cleanupCollision || order == SettlementOrder.Gap) {
-                        var task = project.SelectedTaskNames.First();
-                        nextTarget = project.CreateConfiguration();
-                        project.RenameConfiguration(nextTarget, "下一班");
-                        project.AddItem(PlanItemKind.MaaTask, task);
-                        project.AddSchedulePolicy(nextTarget, "早班");
-                        project.ActivateConfiguration(target);
-                        if (cleanupCollision && failCleanup) wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
-                    }
+                    var task = project.SelectedTaskNames.First();
+                    var nextTarget = project.CreateConfiguration();
+                    project.RenameConfiguration(nextTarget, "下一班");
+                    project.AddItem(PlanItemKind.MaaTask, task);
+                    project.AddSchedulePolicy(nextTarget, "早班");
+                    project.ActivateConfiguration(target);
+                    if (cleanupCollision && failCleanup) wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
                     if (order == SettlementOrder.Reconnect) {
                         received = received with { StateRevision = 6 };
                         pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -364,9 +335,8 @@ internal static partial class SelfTestRunner
                     } else {
                         Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
                     }
-                    // 迁移至 VerifyRunLifecycle / next-tick、cleanup-collision
                     AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
-                        "下一分钟已到时 Worker 应已报告此前 Run 的失败。");
+                        "下一分钟到来时 Worker 应已报告此前 Run 的终态。");
                     var completed = new List<Guid>();
                     window.ScheduledRunCompleted += (_, run) => completed.Add(run.RunId);
                     if (order == SettlementOrder.Gap) {
@@ -374,14 +344,17 @@ internal static partial class SelfTestRunner
                         var failedBeforeSwitch = false;
                         window.NotificationRequested += (_, n) => {
                             if (n.Title == $"「{name}」运行失败")
-                                failedBeforeSwitch = project.ActiveConfigurationId == target && completed.SequenceEqual([own.RunId]);
+                                failedBeforeSwitch = project.ActiveConfigurationId == target && completed.SequenceEqual([own.RunId])
+                                    && session.HasChildSession && wts.LogoffAttempts.Count == 0 && exitRequests == 0;
                         };
                         clock.Advance(TimeSpan.FromMinutes(1));
                         var tick = window.CheckScheduledRunsAsync();
                         PumpUntil(() => tick.IsCompleted || connected != firstPeer && connected!.IsCompleted,
                             "普通定时 B 应在补查回包前获准启动。");
+                        var label = own.Plan.Items.Single().TaskLabel;
                         Require(failedBeforeSwitch && preparations == 2 && project.ActiveConfigurationId == nextTarget
-                            && completed.SequenceEqual([own.RunId]) && failures.Count == 1,
+                            && completed.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([sessionId])
+                            && failures.SequenceEqual([$"「{name}」运行失败 / 失败任务：{label}。打开 Bunshin 查看运行动态。"]),
                             "普通定时 B 到点应先处理 A 的失败，再启动 B。");
                         var nextPeer = connected!.GetAwaiter().GetResult();
                         var nextRequest = Task.Run(() => WorkerCoordinatorSelfTest.ReadRequestAsync(nextPeer, ProtocolOperations.RunStart, token));
@@ -395,36 +368,25 @@ internal static partial class SelfTestRunner
                         pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
                         return;
                     }
-                    if (cleanupCollision) {
-                        clock.Advance(TimeSpan.FromMinutes(1));
-                        var check = window.CheckScheduledRunsAsync();
-                        // 迁移至 VerifyRunLifecycle / cleanup-collision
-                        PumpUntil(() => check.IsCompleted, "旧定时 Run 收尾失败后应结束新的定时机会。");
-                        check.GetAwaiter().GetResult();
-                        var activity = window.LogLines.OfType<LogEntry>().Where(e => e.TaskLabel == "定时")
-                            .Reverse().Select(e => e.Message).ToList();
-                        var cleanup = activity.IndexOf(failCleanup ? "任务已完成，桌面分身未能关闭" : "全部完成，已关闭桌面分身");
-                        var nextAction = activity.FindIndex(line => line.Contains("下一班") && (line.Contains("跳过")
-                            || line.Contains("未能启动") || line.StartsWith("启动")));
-                        Require(completed.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
-                            && cleanup >= 0 && nextAction > cleanup && preparations == (failCleanup ? 1 : 2)
-                            && project.ActiveConfigurationId == (failCleanup ? target : nextTarget),
-                            "下一班到点时必须先完成原 Run 的收尾动态，再决定是否激活新配置。");
-                        var expected = new List<string> { $"「{name}」已完成" };
-                        if (failCleanup) expected.Add($"「{name}」收尾失败");
-                        if (!failCleanup || forceCollision) expected.Add("定时任务未能启动");
-                        Require(failures.Select(line => line.Split(" / ")[0]).SequenceEqual(expected)
-                            && (!failCleanup || forceCollision || activity[nextAction].Contains("运行环境状态未知")),
-                            "应按原任务成功、收尾结果、下一班处置的顺序交付；普通定时在注销失败后按环境状态未知跳过。");
-                        return;
-                    }
-                    var next = window.TryStartScheduledRunAsync(target);
-                    // 迁移至 VerifyRunLifecycle / next-tick
-                    PumpUntil(() => next.IsCompleted, "下一次机会应消化上次终态，再在新环境中启动。");
-                    Require(next.Result.Disposition == ScheduledRunDisposition.Admitted
-                        && completed.SequenceEqual([own.RunId])
-                        && failures.Count(line => line.StartsWith($"「{name}」运行失败 / ")) == 1
-                        && wts.LogoffAttempts.SequenceEqual([sessionId]), "下次清理不得吞掉上一 Run 的失败提醒。");
+                    clock.Advance(TimeSpan.FromMinutes(1));
+                    var check = window.CheckScheduledRunsAsync();
+                    PumpUntil(() => check.IsCompleted, "旧定时 Run 收尾失败后应结束新的定时机会。");
+                    check.GetAwaiter().GetResult();
+                    var activity = window.LogLines.OfType<LogEntry>().Where(e => e.TaskLabel == "定时")
+                        .Reverse().Select(e => e.Message).ToList();
+                    var cleanup = activity.IndexOf(failCleanup ? "任务已完成，桌面分身未能关闭" : "全部完成，已关闭桌面分身");
+                    var nextAction = activity.FindIndex(line => line.Contains("下一班") && (line.Contains("跳过")
+                        || line.Contains("未能启动") || line.StartsWith("启动")));
+                    Require(completed.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
+                        && cleanup >= 0 && nextAction > cleanup && preparations == (failCleanup ? 1 : 2)
+                        && project.ActiveConfigurationId == (failCleanup ? target : nextTarget),
+                        "下一班到点时必须先完成原 Run 的收尾动态，再决定是否激活新配置。");
+                    var expected = new List<string> { $"「{name}」已完成" };
+                    if (failCleanup) expected.Add($"「{name}」收尾失败");
+                    if (!failCleanup || forceCollision) expected.Add("定时任务未能启动");
+                    Require(failures.Select(line => line.Split(" / ")[0]).SequenceEqual(expected)
+                        && (!failCleanup || forceCollision || activity[nextAction].Contains("运行环境状态未知")),
+                        "应按原任务成功、收尾结果、下一班处置的顺序交付；普通定时在注销失败后按环境状态未知跳过。");
                     return;
                 } else {
                     var completions = new List<Guid>();
@@ -434,7 +396,6 @@ internal static partial class SelfTestRunner
                             wts.DuringEnumeration = () => {
                                 wts.DuringEnumeration = null;
                                 pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                                // 迁移至 VerifyRunLifecycle / 收尾时断线重连
                                 AwaitWorker(coordinator, s => s.Observation == WorkerObservation.IpcDisconnected,
                                     "成功后检查分身身份期间 Worker 可暂时断线。");
                             };
@@ -507,6 +468,7 @@ internal static partial class SelfTestRunner
                         Require(window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
                             "交接失败恢复时应立即记一次定时收尾，不等下一班。");
                     } else {
+                        if (terminal == RunState.Failed) window.Hide();
                         Publish(done, terminal == RunState.Succeeded ? 4 : 3);
                     }
                     if (cleanupDuringExit) {
@@ -529,44 +491,34 @@ internal static partial class SelfTestRunner
                         PumpUntil(() => completions.Count > 0, "取消退出后应交付已缓冲的终态。");
                     }
                     if (lostReply) {
-                        // 迁移至 VerifyRunLifecycle / 收尾时断线重连
                         Require(session.HasChildSession, "未重新确认 Worker 身份前必须保留现场。");
                         connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
                             pipeName, record!, 0, token, stateRevision: 5, lastRun: done));
-                        // 迁移至 VerifyRunLifecycle / 收尾时断线重连
                         PumpUntil(() => connected.IsCompleted && !session.HasChildSession,
                             "同一 Worker 重连并确认定时 Run 成功后应继续收尾。");
                     }
-                    // 迁移至 VerifyRunLifecycle / 三种定时终态
                     Require(completions.SequenceEqual([own.RunId]), "同一 Run 应只发出一次终态。");
                 }
                 Require(exitRequests == 0, "定时 Run 的终态不得触发开机自动执行的退出。");
                 if (terminal == RunState.Succeeded) {
-                    // 迁移至 VerifyRunLifecycle / 成功收尾
                     PumpUntil(() => !session.HasChildSession && window.LogLines.OfType<LogEntry>()
                         .Any(e => e.Message == "全部完成，已关闭桌面分身"), "仅本次成功后应完成分身收尾。");
-                    // 迁移至 VerifyRunLifecycle / 换场与成功收尾动态
                     Require(window.LogLines.OfType<LogEntry>().Any(e => e.Message == "已关闭旧的桌面分身")
                         && window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
                         "成功收尾和旧分身关闭应分别出现在运行动态。");
-                    // 迁移至 VerifyRunLifecycle / 成功收尾
                     Require(wts.LogoffAttempts.SequenceEqual([77u, sessionId]), "应先清理旧分身，成功后只关闭新分身。");
+                } else if (terminal == RunState.Failed) {
+                    Require(probe.Balloons is [{ Failed: true } notice] && notice.Title == $"「{name}」运行失败",
+                        "本次定时任务的失败提醒应已交付托盘一次。");
+                    Require(session.HasChildSession && wts.LogoffAttempts.Count == 0,
+                        "没有下一班时，交付失败提醒后应保留分身，注销次数应为零。");
                 } else {
-                    // 迁移至 VerifyRunLifecycle / 失败与手停保留现场
-                    Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession, "失败或手停应保留现场。");
-                    var label = own.Plan.Items.Single().TaskLabel;
-                    // 迁移至 VerifyRunLifecycle / 失败与取消通知
-                    Require(terminal == RunState.Cancelled ? failures.Count == 0
-                        : failures.Single() == $"「{name}」运行失败 / 失败任务：{label}。打开 Bunshin 查看运行动态。",
-                        "任务失败通知必须包含配置与失败原因。");
-                    if (terminal == RunState.Cancelled) {
-                        // 迁移至 WPF / 准备失败重试按钮
-                        Require(!ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
-                            "后续准备成功后，手停任务应清除此前准备失败的重试状态。");
-                    }
+                    Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession, "手停应保留现场。");
+                    Require(failures.Count == 0, "手停不应通知运行失败。");
+                    Require(!ShownHeaderControls(window).Contains("RetryEnvironmentButton"),
+                        "后续准备成功后，手停任务应清除此前准备失败的重试状态。");
                     wts.ReportedId = sessionId + 97;
                     wts.Sessions.Add(wts.ReportedId.Value);
-                    // 迁移至 VerifyRunLifecycle / 换场时分身身份不匹配
                     ExpectBusy("运行环境状态未知");
                     Require(wts.LogoffAttempts.Count == 0, "已知空闲的 Worker 不属于当前 WTS 分身时不得注销。");
                     wts.ReportedId = sessionId;
@@ -579,11 +531,9 @@ internal static partial class SelfTestRunner
                         await pipe.WriteAsync(WireEnvelope.Response(request.Operation, request.RequestId!.Value,
                             new RunStartResponse("already_accepted")), token);
                     });
-                    // 迁移至 WorkerCoordinatorSelfTest / 已接纳的同 ID 重试
                     PumpUntil(() => retry.IsCompleted && duplicate.IsCompleted, "已终结的同 ID 重试应返回已接纳。");
                     Require(retry.Result.StartReply == StartReplyKind.AlreadyAccepted, "应保留 Worker 对同一 Run 的幂等答复。");
                     var next = window.TryStartScheduledRunAsync(target);
-                    // 迁移至 VerifyRunLifecycle / 已知终态后的新机会
                     PumpUntil(() => next.IsCompleted, "相同 Run 的终态已知时无需再等一次快照。");
                     Require(next.Result.Disposition == ScheduledRunDisposition.Admitted,
                         "重试已终结的 Run 之后仍应可以运行新的配置。");
@@ -599,7 +549,6 @@ internal static partial class SelfTestRunner
                         throw new InvalidOperationException("模拟第二次准备结束");
                     }
                     if (preparations == 2) record = null; // B starts after the simulated logoff of A's Worker.
-                    // 迁移至 VerifyPrepareAndRunWiring / 定时换场后隐藏准备
                     Require(!session.HasChildSession && !show, "准备前应已确认没有旧桌面分身。");
                     wts.ReportedId = sessionId;
                     wts.Sessions.Add(sessionId);

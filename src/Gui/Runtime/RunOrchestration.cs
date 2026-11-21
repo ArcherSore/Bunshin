@@ -6,7 +6,7 @@ using static Gui.Runtime.LifecycleEffect;
 namespace Gui.Runtime;
 
 internal enum CleanupStage { None, Pending, WaitingForGate, Finished }
-internal sealed record ScheduledSettlement(RunKey Key, string Name, RunState? Completion = null,
+internal sealed record ScheduledSettlement(RunKey Key, string Name,
     CleanupStage Cleanup = CleanupStage.None, Exception? Failure = null)
 {
     internal bool NeedsCleanup => Cleanup is CleanupStage.Pending or CleanupStage.WaitingForGate;
