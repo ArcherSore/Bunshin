@@ -25,6 +25,7 @@ internal sealed partial class RunLifecycleReducer
                     }));
                 }
             }
+            RecoverQuitRequests();
             return;
         }
         if (b.Kind is WorkerEvidenceKind.Disconnected or WorkerEvidenceKind.AdmissionRemoved && b.Connection is { } closed) {
@@ -65,7 +66,13 @@ internal sealed partial class RunLifecycleReducer
             if (b.RunRegistered.HasValue) ApplyReconnectEvidence(state.Runs[query.Run]);
         }
         if (b.ObservedSnapshot is { } frame && frame.WorkerInstanceId == id.WorkerInstanceId) {
-            if (frame.LastRun != null) ObserveRun(frame, frame.LastRun, false);
+            var fresh = state.Current.Fresh ? state.Current.WorkerSnapshot : null;
+            if (!ReferenceEquals(frame, fresh) && frame.LastRun is { } last) {
+                var confirmed = query?.Run == new RunKey(id.WorkerInstanceId, last.RunId) && b.RunRegistered == true;
+                ObserveRun(frame, last, false, deferUntilReconnected: !confirmed);
+            }
+            // Settle the published view even if a full read is outstanding or its reply arrived behind it.
+            if (fresh?.LastRun is { } currentLast) ObserveRun(fresh, currentLast, false);
             if (frame.ActiveRun != null) ObserveRun(frame, frame.ActiveRun, true, configurationName);
             foreach (var r in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == id.WorkerInstanceId && !r.Settled)) {
                 if (!state.Current.Fresh || r.Conclusion == StartConclusion.Accepted && !CurrentShowsActive(r))
@@ -147,7 +154,8 @@ internal sealed partial class RunLifecycleReducer
         }
     }
 
-    private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active, string? configurationName = null)
+    private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active, string? configurationName = null,
+        bool deferUntilReconnected = false)
     {
         var key = new RunKey(frame.WorkerInstanceId, snapshot.RunId);
         var r = state.Runs.GetValueOrDefault(key);
@@ -157,9 +165,19 @@ internal sealed partial class RunLifecycleReducer
             if (!active || !CurrentShowsActive(r)) return;
         }
         if (r.Settled || r.Digest != snapshot.PlanDigest) return;
+        if (!active) {
+            // A revision gap alone does not open a reconnect query or invalidate a matching LastRun.
+            if (deferUntilReconnected && r.AwaitingReconnectQuery) {
+                Save(r with { NeedQuery = true, ReconnectEvidence = frame });
+            } else {
+                Terminal(Conclude(r, StartConclusion.Accepted) with { AwaitingReconnectQuery = false,
+                    ReconnectEvidence = null, ReconnectFaultPending = false }, snapshot);
+            }
+            return;
+        }
         if (r.AwaitingReconnectQuery && r.ReconnectEvidence?.LastRun is { } terminal
             && terminal.RunId == key.RunId && terminal.PlanDigest == r.Digest) return;
-        if (active && CurrentShowsActive(r)) {
+        if (CurrentShowsActive(r)) {
             if (r.Owner == null && r.TakeoverConfigurationName == null && !string.IsNullOrWhiteSpace(configurationName))
                 r = r with { TakeoverConfigurationName = configurationName };
             var faulted = state.Current.WorkerSnapshot!.WorkerState == WorkerState.Faulted;
@@ -174,10 +192,6 @@ internal sealed partial class RunLifecycleReducer
             return;
         }
         r = Conclude(r, StartConclusion.Accepted);
-        if (!active) {
-            Terminal(r, snapshot);
-            return;
-        }
         if (CurrentShowsActive(r)) {
             CancelTimer(r);
             r = r with { NeedQuery = false, Confirmation = r.Confirmation with { Failures = 0, Due = null, Timer = 0 } };
@@ -187,7 +201,7 @@ internal sealed partial class RunLifecycleReducer
 
     private TrackedRun NotifyFault(TrackedRun r)
     {
-        Queue(new Present(r.Key, r.Owner, NoticeKind.Faulted, PresentationChannel.Tray, "任务未能确认结束"));
+        Queue(new Present(r.Key, r.Owner, NoticeKind.Faulted, "任务未能确认结束"));
         return r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
     }
 
@@ -234,7 +248,9 @@ internal sealed partial class RunLifecycleReducer
                     RejectionCode = otherDigest ? "run_id_conflict" : s.RejectionCode }) };
             }
             if (r.Sends.Values.All(s => s.Boundary == SendBoundary.Excluded)) {
-                Settle(r, StartConclusion.NotStarted, reason);
+                var detail = otherDigest ? null : "任务未能启动（Worker 未登记本次启动）。"
+                    + (reason.InnerException is { } sendError ? $"原发送错误：{sendError.Message}" : "");
+                Settle(r, StartConclusion.NotStarted, reason, detail);
                 return;
             }
         }

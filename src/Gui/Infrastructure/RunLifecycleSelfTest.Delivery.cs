@@ -31,8 +31,9 @@ internal static partial class RunLifecycleSelfTest
                 StartConclusion.StartUnknown => NoticeKind.StartUnknown,
                 _ => NoticeKind.EndUnconfirmed
             };
-            Check(notices[0].Channel == PresentationChannel.Tray && notices[1] is { Channel: PresentationChannel.ForegroundError } p
-                && p.Kind == kind && p.Intent == retry && p.Operation == retry.OperationName
+            var p = notices[1];
+            Check(notices[0].Intent?.Source == RunSource.Launch
+                && p.ForegroundOnly && p.Kind == kind && p.Intent == retry && p.Operation == retry.OperationName
                 && (kind != NoticeKind.NotStarted || p.Error == error)
                 && f.History.OfType<SubmissionConclusion>().Last() is { } c && c.Submission == send.Submission && c.Conclusion == conclusion,
                 "已用过主动通知槽的手动重试仍需向本次前台入口交付一次错误");
@@ -85,25 +86,34 @@ internal static partial class RunLifecycleSelfTest
             var gap = f.Frame(last: terminal) with { StateRevision = active.StateRevision + 2 };
             var stale = f.State.Current with { SnapshotFresh = false };
             f.FrameEvent(gap, stale);
+            Check(f.History.OfType<CompleteScheduled>().SequenceEqual([new CompleteScheduled(f.Key, intent, terminal)]),
+                "跳号帧带有匹配终态时应当场完成原定时 Run。");
             f.FrameEvent(gap, stale);
-            if (status == RunState.Succeeded) {
-                f.Ack(f.History.OfType<Deliver>().Single(d => d.Item is Present).Id);
-                var complete = f.History.OfType<Deliver>().Single(d => d.Item is CompleteScheduled);
-                Check(complete.Item == new CompleteScheduled(f.Key, intent, terminal)
-                    && !f.Items<RequestCleanup>().Any(), "跳号帧应交付原 Run 的定时完成，回执前不能请求收尾");
-                f.Ack(complete.Id);
-                Check(f.Items<RequestCleanup>().Single().Run == f.Key, "定时完成回执后应恰好请求一次原 Run 的收尾");
-            }
-            f.Finish(status switch {
-                RunState.Succeeded => [typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup)],
-                RunState.Failed => [typeof(Present), typeof(CompleteScheduled)],
-                _ => [typeof(CompleteScheduled)]
-            });
-            Check(f.Items<CompleteScheduled>().Single() == new CompleteScheduled(f.Key, intent, terminal)
-                && f.Items<RequestCleanup>().All(item => item.Run == f.Key)
-                && f.Items<Present>().All(p => p.Terminal == terminal && p.Operation.Contains(intent.ConfigurationName)),
-                "定时完成传递原终态，成功才交付对应 Run 的收尾请求");
+            f.FrameEvent(gap);
+            Check(f.History.OfType<CompleteScheduled>().Count() == 1, "完整补查不能重复结算。");
+            f.Finish(status == RunState.Cancelled ? [] : [typeof(Present)]);
+            Check(f.Items<Present>().All(p => p.Terminal == terminal && p.Operation.Contains(intent.ConfigurationName)),
+                "定时终态提醒必须属于原任务");
         }
+    }
+
+    private static void VerifyRunLifecycleIndependentPresentations()
+    {
+        var f = new Scenario();
+        f.Begin(Intent(RunSource.Manual));
+        f.Reply(f.Body(), StartReplyKind.RejectedBeforeRegistration, "worker_busy");
+        var open = f.State.InFlight[f.Key];
+        f.Begin(Intent(RunSource.Scheduled, 2));
+        f.Body();
+        f.Terminal(RunState.Succeeded);
+        var next = f.State.InFlight[f.Key];
+        Check(next.Item is Present { Kind: NoticeKind.Succeeded }
+            && f.History.OfType<CompleteScheduled>().Single().Run == f.Key,
+            "前一 Run 的手动错误仍在途时，新 Run 必须完成记账并发出自己的提醒");
+        f.Ack(next.Id);
+        Check(f.State.InFlight.Values.Single() == open, "新 Run 的回执不能释放旧 Run 的呈现");
+        f.Ack(open.Id);
+        f.Finish(typeof(Present), typeof(Present));
     }
 
     private static void VerifyRunLifecycleAbandonQuit()
@@ -183,20 +193,19 @@ internal static partial class RunLifecycleSelfTest
             f.Step(new EnvironmentRecovered());
             f.Step(new EnvironmentRecovered());
             if (!commit) {
-                foreach (var kind in new[] { typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup) }) {
-                    var delivery = f.History.OfType<Deliver>().Single(d => d.Item.Key == f.Key && d.Item.GetType() == kind);
-                    Check(f.Items<RequestQuit>().Count() == 1, "恢复后应先排空所有非退出交付");
-                    f.Ack(delivery.Id);
-                }
+                var notice = f.History.OfType<Deliver>().Single(d => d.Item.Key == f.Key);
+                Check(notice.Item is Present && f.History.OfType<CompleteScheduled>().Single().Run == f.Key,
+                    "取消退出后其他 Run 的完成和提醒应可独立交付");
+                f.Ack(notice.Id);
                 Check(f.Items<RequestQuit>().Count() == 2, "恢复后应再次派发一次退出请求");
-                var retry = f.History.OfType<Deliver>().Last();
+                var retry = f.History.OfType<Deliver>().Last(d => d.Item is RequestQuit);
                 f.Ack(quit.Id);
-                Check(f.State.InFlightDelivery == retry, "旧退出回执不能确认重新派发的请求");
+                Check(f.State.InFlight[boot] == retry, "旧退出回执不能确认重新派发的请求");
                 f.Ack(retry.Id);
             }
             f.Step(new EnvironmentRecovered());
             f.Finish(commit ? [typeof(Present), typeof(RequestQuit)]
-                : [typeof(Present), typeof(RequestQuit), typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup), typeof(RequestQuit)]);
+                : [typeof(Present), typeof(RequestQuit), typeof(Present), typeof(RequestQuit)]);
             Check(f.Items<RequestQuit>().All(q => q.Key == boot) && f.State.ExitCommitted == commit,
                 "恢复只重发原 Run 的退出，提交退出后清除资格");
         }
@@ -272,7 +281,7 @@ internal static partial class RunLifecycleSelfTest
             f.Finish(typeof(Present));
             f.Conclusions();
             var notice = f.Items<Present>().Single();
-            Check(notice.Intent == null && notice.Terminal == terminal.LastRun && notice.Channel == PresentationChannel.Tray
+            Check(notice.Intent == null && notice.Terminal == terminal.LastRun
                 && notice.Operation == (status == RunState.Succeeded ? "「周常」已完成" : "「周常」运行失败"),
                 "外部 Active 冻结观察期间首次非空配置名，历史 Last 不补发");
         }
@@ -292,6 +301,23 @@ internal static partial class RunLifecycleSelfTest
         f.Conclusions(StartConclusion.Accepted, StartConclusion.EndUnconfirmed);
         Check(f.Items<Present>().Single() is { Kind: NoticeKind.Faulted, Terminal: null } p && p.Detail.Contains("结束桌面分身"),
             "已观察 Active 才提示恢复，进程退出不能再占用同一个通知槽");
+
+        foreach (var status in new RunState?[] { null, RunState.Succeeded, RunState.Cancelled }) {
+            var race = new Scenario();
+            race.Begin(Intent(RunSource.Manual));
+            race.Body();
+            race.Active();
+            race.Active(WorkerState.Faulted);
+            var fault = race.History.OfType<Deliver>().Single();
+            if (status.HasValue) race.Terminal(status.Value);
+            else race.ExitWorker();
+            race.Ack(fault.Id, presented: false);
+            race.Finish(status == RunState.Cancelled ? [typeof(Present)] : [typeof(Present), typeof(Present)]);
+            var final = race.Items<Present>().Skip(1).SingleOrDefault();
+            Check(final?.Kind == (status switch {
+                RunState.Succeeded => NoticeKind.Succeeded, RunState.Cancelled => null, _ => NoticeKind.EndUnconfirmed
+            }), "未呈现的 Faulted 回执晚于结算时，仍应交付最终结论，取消保持静默");
+        }
 
         var g = new Scenario();
         var external = Attempt(8);
@@ -316,7 +342,7 @@ internal static partial class RunLifecycleSelfTest
             f.FrameEvent(fault);
             f.FrameEvent(fault);
             var terminal = outcome is "terminal" or "terminal-exit";
-            if (terminal) f.Terminal(RunState.Succeeded);
+            if (terminal) f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)), f.State.Current with { SnapshotFresh = false });
             var beforeConfirmation = f.History.Count;
             if (outcome is "process-exit" or "terminal-exit") f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, terminal ? f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)) : fault);
@@ -331,6 +357,19 @@ internal static partial class RunLifecycleSelfTest
 
     private static void VerifyRunLifecycleBufferedFaultExit()
     {
+        var manual = new Scenario();
+        manual.Begin(Intent(RunSource.Manual));
+        var timeout = new TimeoutException("原始应答超时");
+        manual.Evidence(new(manual.Connection, WorkerEvidenceKind.RequestFailed, manual.Body(), Error: timeout));
+        manual.Active();
+        manual.Step(new ClosingStarted(Id(18)));
+        manual.Active(WorkerState.Faulted);
+        manual.ExitWorker();
+        manual.Step(new ClosingCancelled(Id(18)));
+        manual.Finish(typeof(Present));
+        Check(manual.Items<Present>().Single() is { Kind: NoticeKind.EndUnconfirmed, Intent.Source: RunSource.Manual } notice && notice.Error == timeout,
+            "退出期间由 Faulted 转为运行未确认的手动任务应补发原异常到前台");
+
         foreach (var status in new RunState?[] { null, RunState.Succeeded, RunState.Cancelled }) {
             var f = new Scenario();
             f.Begin(Intent(RunSource.Launch));
@@ -370,7 +409,7 @@ internal static partial class RunLifecycleSelfTest
             f.Step(commit ? new ClosingCommitted(closing) : new ClosingCancelled(closing));
             f.Step(new ClosingCancelled(closing));
             f.Terminal(RunState.Succeeded);
-            f.Finish(commit ? (terminalFirst ? [typeof(Present)] : []) : [typeof(Present), typeof(CompleteScheduled), typeof(RequestCleanup)]);
+            f.Finish(commit ? (terminalFirst ? [typeof(Present)] : []) : [typeof(Present)]);
             Check(f.History.Take(paused).OfType<Deliver>().Count() == (terminalFirst ? 1 : 0)
                 && f.State.ExitCommitted == commit, "退出前已派发的回执不阻塞，旧代回执不解冻当前交付");
         }

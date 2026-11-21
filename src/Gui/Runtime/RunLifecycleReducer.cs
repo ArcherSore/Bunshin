@@ -10,13 +10,14 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private RunLifecycleState state = initial;
     private readonly ImmutableArray<LifecycleEffect>.Builder effects = ImmutableArray.CreateBuilder<LifecycleEffect>();
 
-    internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input)
+    internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input, bool dispatchDelivery = true,
+        bool holdManualErrors = false)
     {
         if (state.ExitCommitted) return new(state, []);
         var step = new RunLifecycleReducer(state with { Now = input.At > state.Now ? input.At : state.Now });
         step.Apply(input);
         step.DispatchQueries();
-        step.DispatchDelivery();
+        if (dispatchDelivery) step.DispatchDelivery((input as DispatchPending)?.Key, holdManualErrors);
         step.ReleaseCompletedRuns();
         return new(step.state, step.effects.ToImmutable());
     }
@@ -26,6 +27,10 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
         switch (input) {
             case SubmissionStarted e: Register(e); break;
             case Observed e: Observe(e.Batch, e.ConfigurationName); break;
+            case ConfirmNow e when state.Runs.TryGetValue(e.Key, out var pending) && !pending.Settled:
+                CancelTimer(pending);
+                Save(pending with { NeedQuery = true, Confirmation = pending.Confirmation with { Timer = 0, Due = null } });
+                break;
             case RetryDue e when state.Runs.TryGetValue(e.Key, out var run)
                     && run.Confirmation.Timer == e.Token && run.Confirmation.Due is { } due:
                 if (state.Now < due) {
@@ -34,30 +39,40 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                     effects.Add(new ArmRetry(run.Key, token, due));
                 } else Save(run with { Confirmation = run.Confirmation with { Timer = 0, Due = null } });
                 break;
-            case Delivered e: Acknowledge(e.Id); break;
+            case Delivered e: Acknowledge(e); break;
+            case CleanupFailed e: Queue(new PresentCleanupFailure(e.Key, e.Name, e.Detail)); break;
+            case DeferQuit e when e.Deferred || state.DeferredQuit == e.Key:
+                state = state with { DeferredQuit = e.Deferred ? e.Key : null };
+                break;
             case AbandonQuit e:
                 state = state with { Quits = state.Quits.Remove(e.Key),
+                    DeferredQuit = state.DeferredQuit == e.Key ? null : state.DeferredQuit,
                     Deliveries = state.Deliveries.RemoveAll(d => d.Item is RequestQuit q && q.Key == e.Key) };
                 break;
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;
             case ClosingCancelled e when state.Closing == e.Id:
                 state = state with { Closing = null,
-                    InFlightDelivery = state.InFlightDelivery?.Item is RequestQuit ? null : state.InFlightDelivery };
+                    InFlight = state.InFlight.RemoveRange(state.InFlight.Where(p => p.Value.Item is RequestQuit).Select(p => p.Key)) };
                 foreach (var (key, stage) in state.Quits) {
                     if (stage == QuitStage.Requested) SetQuit(key, QuitStage.AwaitingRecovery);
                     else if (stage == QuitStage.RecoveredWhileClosing) QueueQuit(key);
                 }
                 break;
             case EnvironmentRecovered:
-                foreach (var (key, stage) in state.Quits) {
-                    if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
-                    else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
-                }
+                RecoverQuitRequests();
                 break;
             case ClosingCommitted e when state.Closing == e.Id:
                 foreach (var r in state.Runs.Values) CancelConfirmation(r);
                 state = new() { ExitCommitted = true };
                 break;
+        }
+    }
+
+    private void RecoverQuitRequests()
+    {
+        foreach (var (key, stage) in state.Quits) {
+            if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
+            else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
         }
     }
 
@@ -84,7 +99,7 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private void ReleaseCompletedRuns()
     {
         foreach (var r in state.Runs.Values) {
-            if (!r.Settled || r.ReusableAttempt != null || state.InFlightDelivery?.Item.Key == r.Key
+            if (!r.Settled || r.ReusableAttempt != null || state.InFlight.ContainsKey(r.Key)
                 || state.Deliveries.Any(d => d.Item.Key == r.Key)) continue;
             if (r.Retired) {
                 state = state with { Runs = state.Runs.Remove(r.Key) };

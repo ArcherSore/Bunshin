@@ -143,8 +143,7 @@ internal static partial class SelfTestRunner
             ((MenuItem)menu.Items[1]).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Require(project.Configurations.Count == count + 1 && project.Configurations[^1].Name == "startup",
                 "点击预设菜单必须创建并激活普通配置。");
-            SetOnboardingField(window, "_pendingOperation", Views.PendingOperation.PreparingEnvironment);
-            InvokeOnboarding(window, "RefreshRuntimeControls");
+            window.SetPendingOperation(Views.PendingOperation.PreparingEnvironment);
             ((MenuItem)menu.Items[1]).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Require(!button.IsEnabled && project.Configurations.Count == count + 1,
                 "运行环境处理中必须同时锁住预设按钮及已打开的菜单操作。");

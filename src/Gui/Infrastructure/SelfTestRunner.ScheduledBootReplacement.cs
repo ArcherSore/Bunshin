@@ -17,7 +17,7 @@ internal static partial class SelfTestRunner
         }
     }
 
-    private enum BootReplacement { AdjacentMinutes, PendingStart, ManualStopping, ManualStopReply }
+    private enum BootReplacement { AdjacentMinutes, PendingStart, ManualStopping, ManualStopReply, EndFailed, Disconnected }
 
     private static void CheckBootStop(AppLogger logger, string directory, BootReplacement scenario)
     {
@@ -34,7 +34,6 @@ internal static partial class SelfTestRunner
         CreateIdleSettings(root, logger).ForceScheduledStart.Value = true;
 
         var clock = new ScheduleTestClock();
-        var quit = new QuitAfterRunTracker();
         var exitRequested = false;
         using var process = Process.GetCurrentProcess();
         var sessionId = (uint)process.SessionId;
@@ -42,6 +41,7 @@ internal static partial class SelfTestRunner
         var listed = false;
         var bootLoggedOff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var wts = new SimulatedWts { DuringLogoff = _ => {
+            if (scenario == BootReplacement.EndFailed) throw new IOException("模拟旧环境未能结束");
             listed = false;
             bootLoggedOff.TrySetResult();
         } };
@@ -51,10 +51,15 @@ internal static partial class SelfTestRunner
         var pipeName = $"Bunshin.Schedule.Boot.{Guid.NewGuid():N}";
         var workers = new List<Task>();
         var bootAccepted = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingQuery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publishPendingRun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishManualStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var preparingReplacement = false;
         var resumePreparation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disconnect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unconfirmedNotices = 0;
+        var noticesAtPreparation = -1;
         var manual = scenario is BootReplacement.ManualStopping or BootReplacement.ManualStopReply;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         WorkerProcessEntry[] worker = [new(process.Id, sessionId, Path.GetFileName(path))];
@@ -70,8 +75,6 @@ internal static partial class SelfTestRunner
             });
         try {
             WithRuntimeControlWindow(logger, directory, window => {
-                coordinator.StateChanged += (_, snapshot) =>
-                    window.ObserveApplicationRun(snapshot, () => exitRequested = true);
                 window.Show();
                 PumpUntil(() => bootAccepted.Task.IsCompleted, "Worker 应已接纳开机 Run。");
                 if (scenario == BootReplacement.PendingStart) {
@@ -79,12 +82,30 @@ internal static partial class SelfTestRunner
                 } else {
                     PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "开机 Run 应可停止。");
                 }
+                window.NotificationRequested += (_, notice) => {
+                    if (notice.Message.Contains("运行结果未确认")) unconfirmedNotices++;
+                };
                 var warnings = new List<ForcedScheduledStartCountdown>();
-                window.ForcedScheduledStartPending += (_, e) => warnings.Add(e);
+                window.ForcedScheduledStartPending += (_, e) => {
+                    if (scenario == BootReplacement.PendingStart)
+                        Require(coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == bootAccepted.Task.Result,
+                            "宣布倒计时时应已确认旧 Run 正在运行。");
+                    warnings.Add(e);
+                };
                 clock.Advance(TimeSpan.FromMinutes(1));
                 var scheduled = window.CheckScheduledRunsAsync();
-                PumpUntil(() => warnings.Count == 1, "顶替开机 Run 前应有倒计时。");
+                if (scenario == BootReplacement.PendingStart) {
+                    PumpUntil(() => pendingQuery.Task.IsCompleted, "定时入口应先等开机 Run 的有序复核。");
+                    Require(warnings.Count == 0, "有序复核应答前不能宣布倒计时。");
+                    publishPendingRun.SetResult();
+                }
+                PumpUntil(() => warnings.Count == 1, "确认开机 Run 仍在运行后应有倒计时。");
                 Require(wts.LogoffAttempts.Count == 0 && !stopReply.Task.IsCompleted, "倒计时前不能停止任务或关闭分身。");
+                if (scenario == BootReplacement.Disconnected) {
+                    disconnect.SetResult();
+                    AwaitWorker(coordinator, s => s.Observation == WorkerObservation.IpcDisconnected, "倒计时内旧 Worker 应已断线。");
+                    Require(unconfirmedNotices == 0, "仅断线不能报告最终结论。");
+                }
                 if (manual) {
                     Click(window, "StopTaskHeaderButton");
                     PumpUntil(() => stopReply.Task.IsCompleted, "倒计时内应允许手动停止。");
@@ -111,6 +132,12 @@ internal static partial class SelfTestRunner
                 }
                 PumpUntil(() => scheduled.IsCompleted, "顶替开机 Run 的定时执行应完成提交。");
                 scheduled.GetAwaiter().GetResult();
+                if (scenario == BootReplacement.EndFailed) {
+                    PumpUntil(() => exitRequested, "顶替未能结束旧环境时应恢复原开机终态的退出请求。");
+                    Require(workers.Count == 1 && wts.LogoffAttempts.SequenceEqual([sessionId]),
+                        "旧环境未确认结束不能放弃开机绑定或开始准备替代 Worker。");
+                    return;
+                }
                 PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.ActiveRun is { } run
                     && run.RunId != bootAccepted.Task.Result,
                     "旧 Worker 结束后，新 Worker 应已接纳新的定时 Run。");
@@ -119,14 +146,17 @@ internal static partial class SelfTestRunner
                     Require(warnings[1].ConfigurationName == "日常", "新 Run 应有自己的取消机会。");
                     warnings[1].Cancel();
                 }
+                if (scenario == BootReplacement.Disconnected)
+                    Require(noticesAtPreparation == 1 && unconfirmedNotices == 1, "确认旧 Worker 退出后应先发出唯一结论，再进入新环境准备。");
                 Require(!exitRequested && workers.Count == 2 && wts.LogoffAttempts.SequenceEqual([sessionId])
                     && window.TaskPlanEditor.ConfigurationTabs.SelectedItem is TabItem { Tag: Guid shown }
                     && shown == target,
                     "顶替开机 Run 后应继续运行所选定时配置。");
             }, session: session, coordinator: coordinator,
                 environment: CreateEnvironment(logger, session, coordinator, (_, _) => workers[0]),
-                launchCommand: new(AutoStart: true, Instance: "日常", QuitAfterRun: true), quitAfterRun: quit,
+                launchCommand: new(AutoStart: true, Instance: "日常", QuitAfterRun: true), quitAfterRun: () => exitRequested = true,
                 scheduleClock: clock, prepareEnvironment: async (plan, options, _) => {
+                    if (workers.Count == 1) noticesAtPreparation = unconfirmedNotices;
                     if (workers.Count == 1 && scenario == BootReplacement.AdjacentMinutes) {
                         preparingReplacement = true;
                         await resumePreparation.Task.WaitAsync(token);
@@ -158,6 +188,18 @@ internal static partial class SelfTestRunner
                 new RunStartResponse("accepted")), token);
             if (boot) {
                 bootAccepted.SetResult(active.RunId);
+                if (scenario == BootReplacement.Disconnected) {
+                    await disconnect.Task.WaitAsync(token);
+                    return;
+                }
+                if (scenario == BootReplacement.PendingStart) {
+                    var query = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.WorkerGetSnapshot, token);
+                    Require(ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId == active.RunId, "应复核原开机 Run。");
+                    pendingQuery.SetResult();
+                    await publishPendingRun.Task.WaitAsync(token);
+                    await pipe.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+                        new GetSnapshotResponse(running, true)), token);
+                }
                 var stop = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.RunStop,
                     token, running);
                 Require(ProtocolJson.Deserialize<RunStopRequest>(stop.Data).RunId == active.RunId,

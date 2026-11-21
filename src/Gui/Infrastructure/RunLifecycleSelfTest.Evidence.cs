@@ -28,8 +28,8 @@ internal static partial class RunLifecycleSelfTest
             }
             var expected = new List<Type> { typeof(Present) };
             if (conclusion == StartConclusion.Accepted && source == RunSource.Launch) expected.Add(typeof(RequestQuit));
-            if (conclusion == StartConclusion.Accepted && source == RunSource.Scheduled)
-                expected.AddRange([typeof(CompleteScheduled), typeof(RequestCleanup)]);
+            Check(f.History.OfType<CompleteScheduled>().Count() == (conclusion == StartConclusion.Accepted && source == RunSource.Scheduled ? 1 : 0),
+                "只有已接纳并取得终态的定时提交应完成记账");
             f.Finish(expected.ToArray());
             f.Conclusions(conclusion == StartConclusion.EndUnconfirmed ? [StartConclusion.Accepted, conclusion] : [conclusion]);
             var notice = f.Items<Present>().Single();
@@ -38,10 +38,8 @@ internal static partial class RunLifecycleSelfTest
                 StartConclusion.StartUnknown => NoticeKind.StartUnknown, _ => NoticeKind.EndUnconfirmed
             };
             Check(notice.Run == f.Key && notice.Intent == f.Start.Intent && notice.Kind == kind
-                && notice.Channel == (source == RunSource.Manual && conclusion != StartConclusion.Accepted
-                    ? PresentationChannel.ForegroundError : PresentationChannel.Tray)
                 && f.History.OfType<SubmissionConclusion>().All(c => c.Submission == f.Start.Submission),
-                $"{source} / {conclusion} 应交付给原提交与渠道");
+                $"{source} / {conclusion} 应交付给原提交");
         }
     }
 
@@ -60,7 +58,7 @@ internal static partial class RunLifecycleSelfTest
             f.Finish(typeof(Present));
             f.Conclusions(StartConclusion.NotStarted);
             Check(f.Items<Present>().Single() == new Present(f.Key, intent, NoticeKind.NotStarted,
-                PresentationChannel.ForegroundError, intent.OperationName, error)
+                intent.OperationName, error)
                 && f.History.OfType<SubmissionConclusion>().Single().Error == error && f.State.Runs.IsEmpty,
                 "保留调用方的操作名、原始异常链；回执后回收退休 Run");
         }
@@ -137,7 +135,8 @@ internal static partial class RunLifecycleSelfTest
             var beforePositive = f.History.Count;
             f.Terminal(RunState.Failed);
             f.Terminal(RunState.Failed);
-            f.Finish(typeof(Present), source == RunSource.Launch ? typeof(RequestQuit) : typeof(CompleteScheduled));
+            f.Finish(source == RunSource.Launch ? [typeof(Present), typeof(RequestQuit)] : [typeof(Present)]);
+            Check(f.History.OfType<CompleteScheduled>().Count() == (source == RunSource.Scheduled ? 1 : 0), "定时终态应完成一次");
             f.Conclusions(StartConclusion.Accepted);
             var notice = f.Items<Present>().Single();
             Check(f.History.Take(beforePositive).Single() is QueryRun && notice.Kind == NoticeKind.Failed
@@ -229,7 +228,7 @@ internal static partial class RunLifecycleSelfTest
             f.Timeout(f.Body());
             f.Eof();
             var terminal = f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded));
-            f.Reconnect(terminal);
+            f.Reconnect(terminal, new(WorkerObservation.Connected, false, terminal, ""));
             var before = f.History.Count;
             if (exits) f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, f.Frame(last: SnapshotOf(Attempt(8), RunState.Failed)));
@@ -238,6 +237,19 @@ internal static partial class RunLifecycleSelfTest
             Check(f.History.Take(before).All(e => e is QueryRun or CancelQuery) && f.History.OfType<QueryRun>().Count() == 2
                 && f.Items<Present>().Single().Terminal == terminal.LastRun, "定向结果或进程退出释放重连期间收到的真实终态");
         }
+        var g = new Scenario();
+        g.Begin(Intent(RunSource.Scheduled));
+        g.Body();
+        g.Eof();
+        var older = g.Frame();
+        var last = g.Frame(last: SnapshotOf(g.Plan, RunState.Succeeded));
+        g.Reconnect(last, new(WorkerObservation.Connected, false, last, ""));
+        Check(g.History.OfType<CompleteScheduled>().Count() == 0 && new RunOrchestration(g.State).PendingStart(g.State.Current) == g.Key,
+            "首次同步前的终态不能放行下一次启动。");
+        g.FrameEvent(older, g.State.Current with { SnapshotFresh = true });
+        Check(g.History.OfType<CompleteScheduled>().Single().Terminal == last.LastRun
+            && new RunOrchestration(g.State).PendingStart(g.State.Current) == null,
+            "补齐同步后，最新匹配终态与解除待启动必须在同一次转换生效。");
     }
 
     private static void VerifyRunLifecycleRetirementOrder()
@@ -319,7 +331,7 @@ internal static partial class RunLifecycleSelfTest
             var worker = f.Key.WorkerInstanceId;
             var reusable = f.State.ReusableAttempt(retry, worker);
             Check(f.Items<Present>().Single() == new Present(f.Key, f.Start.Intent, NoticeKind.NotStarted,
-                    PresentationChannel.ForegroundError, f.Start.Intent.OperationName, error)
+                    f.Start.Intent.OperationName, error)
                 && (code is "invalid_run_plan" or "invalid_request" or "run_id_conflict" ? reusable == null : ReferenceEquals(reusable, f.Plan))
                 && f.State.ReusableAttempt(retry, Id(101)) == null, "明确拒绝只交付一次原错，复用须符合拒绝码和 Worker 身份");
             foreach (var changed in new[] { Input with { ConfigurationId = Id(9) }, Input with { ProjectVersion = 2 },
@@ -345,7 +357,11 @@ internal static partial class RunLifecycleSelfTest
             f.Now = timer.Due;
             f.Step(new RetryDue(f.Key, timer.Token));
         }
+        var pending = f.QueryWire();
         f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Failed)), f.State.Current with { SnapshotFresh = false });
+        Check(f.Items<Present>().SingleOrDefault()?.Kind == NoticeKind.Failed,
+            "补查在途时，跳号帧中的匹配终态应立即交付。");
+        f.QueryResult(pending, true);
         f.Finish(typeof(Present));
         f.Conclusions(StartConclusion.Accepted);
         Check(f.History.OfType<ArmRetry>().Select(a => a.Due).SequenceEqual(expectedDue)

@@ -30,17 +30,26 @@ internal static partial class SelfTestRunner
         string[] scenarios = ["accepted", "fast-terminal", "reconnect", "retry-ended", "not-sent", "prefix-only",
             "reject", "prepare-failure"];
         foreach (var scenario in scenarios) {
-            var root = Path.Combine(directory, scenario);
-            var projectRoot = CreateProjectFixture(root);
-            var config = Path.Combine(projectRoot, "config", "configurations.json");
-            var project = ProjectPlanModule.Open(projectRoot, config);
-            WithFakeWorker(logger, Path.Combine(root, "worker"), (coordinator, record, name) => {
-                var check = Dispatcher.CurrentDispatcher.InvokeAsync(() => ExerciseAutoRunAsync(logger, projectRoot,
-                    project.ActiveConfigurationId, coordinator, record, name, scenario)).Task.Unwrap();
-                PumpUntil(() => check.IsCompleted, $"自动执行未完成 {scenario}。");
-                check.GetAwaiter().GetResult();
-            }, workerListed: () => true, runtimeProfileDigest: project.RuntimeProfileDigest);
+            VerifyBootSubmissionScenario(logger, Path.Combine(directory, scenario), scenario);
         }
+    }
+
+    private static void VerifyQuitAfterRunTerminals(AppLogger logger, string directory)
+    {
+        foreach (var state in new[] { RunState.Succeeded, RunState.Failed, RunState.Cancelled })
+            VerifyBootSubmissionScenario(logger, Path.Combine(directory, state.ToString()), "bound-terminal", state);
+    }
+
+    private static void VerifyBootSubmissionScenario(AppLogger logger, string root, string scenario, RunState? terminal = null)
+    {
+        var projectRoot = CreateProjectFixture(root);
+        var project = ProjectPlanModule.Open(projectRoot, Path.Combine(projectRoot, "config", "configurations.json"));
+        WithFakeWorker(logger, Path.Combine(root, "worker"), (coordinator, record, name) => {
+            var check = Dispatcher.CurrentDispatcher.InvokeAsync(() => ExerciseAutoRunAsync(logger, projectRoot,
+                project.ActiveConfigurationId, coordinator, record, name, scenario, terminal)).Task.Unwrap();
+            PumpUntil(() => check.IsCompleted, $"自动执行未完成 {scenario}。");
+            check.GetAwaiter().GetResult();
+        }, workerListed: () => true, runtimeProfileDigest: project.RuntimeProfileDigest);
     }
 
     private static void ConnectTestDesktop(ChildSessionManager session, uint id) => typeof(ChildSessionManager)
@@ -48,7 +57,7 @@ internal static partial class SelfTestRunner
             new ChildSessionSnapshot(ChildSessionState.Connected, id, 1, "ready"));
 
     private static async Task ExerciseAutoRunAsync(AppLogger logger, string projectRoot, Guid configurationId,
-        WorkerCoordinator coordinator, WorkerAdmissionRecord record, string pipeName, string scenario)
+        WorkerCoordinator coordinator, WorkerAdmissionRecord record, string pipeName, string scenario, RunState? terminalState)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var token = timeout.Token;
@@ -72,11 +81,10 @@ internal static partial class SelfTestRunner
             return Task.CompletedTask;
         }
         var command = new LaunchCommand(AutoStart: true, QuitAfterRun: true, Instance: configurationId.ToString());
-        var quit = new QuitAfterRunTracker();
+        var exitRequests = 0;
         var window = new MainWindow(logger, session, coordinator, new RuntimeEnvironment(logger, session, coordinator),
             () => Task.CompletedTask, () => Task.CompletedTask, _ => Task.CompletedTask, projectRoot,
-            prepareEnvironment: Prepare, autostart: InertAutostart(), launchCommand: command, quitAfterRun: quit);
-        var exitRequests = 0;
+            prepareEnvironment: Prepare, autostart: InertAutostart(), launchCommand: command, quitAfterRun: () => exitRequests++);
         Task<WireEnvelope> ReadStart() => WorkerCoordinatorSelfTest.ReadRequestAsync(
             pipe, ProtocolOperations.RunStart, token);
         Task Accept(WireEnvelope request) => pipe.WriteAsync(WireEnvelope.Response(request.Operation,
@@ -91,7 +99,6 @@ internal static partial class SelfTestRunner
             {
                 if (view.SnapshotFresh && view.WorkerSnapshot is { } worker
                     && worker.StateRevision == revision && worker.LastRun?.RunId == last.RunId) {
-                    window.ObserveApplicationRun(view, () => exitRequests++);
                     queued.TrySetResult();
                 }
             }
@@ -99,7 +106,7 @@ internal static partial class SelfTestRunner
             try {
                 await pipe.WriteAsync(StateEvent(terminal), token);
                 await queued.Task.WaitAsync(token);
-                // ObserveApplicationRun posts at Normal. Count only after the queued delivery has run.
+                // Let the production delivery queue process the frame before counting exits.
                 await Dispatcher.Yield(DispatcherPriority.Background);
             } finally {
                 coordinator.StateChanged -= ObserveTerminal;
@@ -129,17 +136,35 @@ internal static partial class SelfTestRunner
                     pipe, ProtocolOperations.FrameworkSetOptions, token);
                 await pipe.WriteAsync(WireEnvelope.Response(options.Operation, options.RequestId!.Value,
                     new FrameworkSetOptionsResponse()), token);
-                var automatic = window.AutoRunOnLaunchAsync();
+                WorkerEvidenceKind? boundary = null;
+                void RecordBoundary(object? sender, WorkerObservationBatch batch)
+                {
+                    if (batch.Kind is WorkerEvidenceKind.BodyStarted or WorkerEvidenceKind.NotSent) boundary = batch.Kind;
+                }
                 var prefix = new byte[sizeof(int)];
-                await transport!.ReadExactlyAsync(prefix, token);
+                coordinator.ObservationReceived += RecordBoundary;
+                try {
+                    var automatic = window.AutoRunOnLaunchAsync();
+                    await transport!.ReadExactlyAsync(prefix, token);
+                    await pipe.DisposeAsync();
+                    Require(await automatic, "自动执行应处理只读到长度前缀后的断线。");
+                } finally {
+                    coordinator.ObservationReceived -= RecordBoundary;
+                }
                 var length = BinaryPrimitives.ReadInt32LittleEndian(prefix);
-                await pipe.DisposeAsync();
-                Require(await automatic, "自动执行应处理只读到长度前缀后的断线。");
                 AwaitWorker(coordinator, view => view.Observation == WorkerObservation.IpcDisconnected,
                     "GUI 未观察到读取前缀后的断线。");
                 await using var restored = await WorkerCoordinatorSelfTest.OpenConnectionAsync(
                     pipeName, record, 0, token);
                 pipe = restored;
+                // Reading the prefix at the peer can race the writer's body callback. Only a
+                // possibly-sent body needs a negative registration query before the manual retry.
+                if (boundary == WorkerEvidenceKind.BodyStarted) {
+                    await WorkerCoordinatorSelfTest.AnswerRunQueryAsync(restored,
+                        WorkerCoordinatorSelfTest.CreateSnapshot(record, 0), token);
+                } else {
+                    Require(boundary == WorkerEvidenceKind.NotSent, "正文前断线应取得明确的未发送证据。");
+                }
                 PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");
                 await CompleteManualRetry("StartTaskHeaderButton", originalLength: length);
                 return;
@@ -174,6 +199,11 @@ internal static partial class SelfTestRunner
                 await CompleteManualRetry("StartTaskHeaderButton");
                 return;
             }
+            if (terminalState.HasValue) {
+                var historical = CreateNotificationSnapshot(RunState.Running);
+                await PublishTerminal(FinishNotificationRun(historical, RunState.Succeeded).WorkerSnapshot!.LastRun!, 2);
+                Require(exitRequests == 0, "提交开机 Run 前的历史终态不得触发退出。");
+            }
             var launch = window.AutoRunOnLaunchAsync();
             if (scenario == "prepare-failure") {
                 Require(await launch && !failNextPreparation, "自动执行必须处理准备失败。");
@@ -182,6 +212,30 @@ internal static partial class SelfTestRunner
             }
             var start = await ReadStart();
             var last = SucceededRun(ProtocolJson.Deserialize<RunStartRequest>(start.Data));
+            if (terminalState is { } state) {
+                var running = WorkerCoordinatorSelfTest.CreateActiveRun(new(last.RunId, last.Plan, last.PlanDigest));
+                var snapshot = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0, running) with { StateRevision = 3 };
+                await pipe.WriteAsync(StateEvent(snapshot), token);
+                await Accept(start);
+                Require(await launch && exitRequests == 0, "开机 Run 已提交且正在运行时不得退出。");
+                await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 4, WorkerState = WorkerState.Faulted,
+                    LastRun = last with { RunId = Guid.NewGuid() } }), token);
+                AwaitWorker(coordinator, v => v.WorkerSnapshot?.StateRevision == 4, "应收到 Faulted 和其他 Run 的终态。");
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                Require(exitRequests == 0, "Faulted 和其他 Run 的终态不得触发退出。");
+                await pipe.DisposeAsync();
+                AwaitWorker(coordinator, v => !v.Fresh, "断线应使快照失效。");
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                Require(exitRequests == 0, "断线后不得推测目标 Run 已结束。");
+                last = last with { StartedAtUtc = DateTime.UnixEpoch, EndedAtUtc = DateTime.UnixEpoch.AddMinutes(1), State = state };
+                await using var reconnect = await WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, token,
+                    lastRun: last, stateRevision: 5);
+                pipe = reconnect;
+                PumpUntil(() => exitRequests == 1, $"时钟回拨后，已绑定 Run 的 {state} 终态仍应退出。");
+                await PublishTerminal(last, 6);
+                Require(exitRequests == 1, "重复终态不得再次请求退出。");
+                return;
+            }
             if (scenario == "reject") {
                 await pipe.WriteAsync(WireEnvelope.Failure(start.Operation, start.RequestId!.Value,
                     "operation_not_allowed", "scripted refusal"), token);
@@ -194,15 +248,46 @@ internal static partial class SelfTestRunner
                 Require(await launch, "自动执行必须处理应答丢失。");
                 AwaitWorker(coordinator, view => view.Observation == WorkerObservation.IpcDisconnected,
                     "GUI 未观察到 IPC 断开。");
-                Require(!quit.Observe(coordinator.Snapshot), "断线本身不能触发退出。");
+                Require(exitRequests == 0, "断线本身不能触发退出。");
                 await using var restored = await WorkerCoordinatorSelfTest.OpenConnectionAsync(
-                    pipeName, record, 0, token, lastRun: last, stateRevision: 2);
+                    pipeName, record, 0, token, lastRun: scenario == "reconnect" ? last : null, stateRevision: 2);
+                if (scenario == "retry-ended") {
+                    var query = await WorkerCoordinatorSelfTest.ReadRequestAsync(restored, ProtocolOperations.WorkerGetSnapshot, token);
+                    Require(ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId == last.RunId, "应复核原开机 Run。");
+                    var starts = 0;
+                    var clickedBeforeQuit = false;
+                    void StartOnTerminal(object? _, RunTerminalNotification notice)
+                    {
+                        if (notice.Failed) return;
+                        clickedBeforeQuit = window.StartTaskHeaderButton.IsEnabled && exitRequests == 0;
+                        Click(window, "StartTaskHeaderButton");
+                    }
+                    void CountStart(object? _, WorkerObservationBatch batch)
+                    {
+                        if (batch.Kind == WorkerEvidenceKind.BodyStarted) Interlocked.Increment(ref starts);
+                    }
+                    coordinator.ObservationReceived += CountStart;
+                    window.NotificationRequested += StartOnTerminal;
+                    try {
+                        var ended = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with { LastRun = last, StateRevision = 3 };
+                        await restored.WriteAsync(StateEvent(ended), token);
+                        PumpUntil(() => exitRequests == 1, "定向查询答复前就应按新鲜 LastRun 触发退出。");
+                        Require(clickedBeforeQuit && starts == 0 && window.CurrentOperation == PendingOperation.None,
+                            "手动开始不能越过已绑定的退出发出第二次提交。");
+                        await restored.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+                            new GetSnapshotResponse(ended, true)), token);
+                    } finally {
+                        coordinator.ObservationReceived -= CountStart;
+                        window.NotificationRequested -= StartOnTerminal;
+                    }
+                }
+                PumpUntil(() => exitRequests == 1, "重连后新鲜终态应确认目标 Run 并退出。");
                 if (scenario == "retry-ended") {
                     PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");
                     Click(window, "StartTaskHeaderButton");
                     PumpUntil(() => ConfigurationEditable(window), "Worker 已确认原 Run 完成，手动重试应直接结束。");
                 }
-                AwaitWorker(coordinator, quit.Observe, "重连后的完整快照必须能确认目标 Run 已结束。");
+                Require(exitRequests == 1, "只允许退出一次。");
                 return;
             }
             if (scenario == "accepted") {

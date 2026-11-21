@@ -1,33 +1,68 @@
 using Gui.Infrastructure;
 using ProjectModel;
+using Gui.Runtime;
 using Gui.Worker;
+using Gui.Models;
+using System.Windows;
+using static Gui.Runtime.LifecycleEffect;
 
 namespace Gui.Views;
 
 public partial class MainWindow
 {
     private readonly LaunchCommand _launchCommand;
-    private readonly QuitAfterRunTracker? _quitAfterRun;
-
-    private readonly RunTerminalNotificationTracker _terminalNotifications = new();
+    private readonly Action? _quitAfterRun;
     internal event EventHandler<RunTerminalNotification>? NotificationRequested;
 
-    internal void ObserveApplicationRun(WorkerCoordinatorSnapshot snapshot, Action exitAfterRun)
+    private bool Notify(RunTerminalNotification notice)
     {
-        Dispatcher.BeginInvoke(() => {
-            if (_quitAfterRun?.Observe(snapshot) == true) {
-                _logger.Info("--quit-after-run：任务已结束，正在退出程序。");
-                exitAfterRun();
-            } else {
-                ObserveRunNotification(snapshot);
-            }
-        });
+        NotificationRequested?.Invoke(this, notice);
+        return !_environment.Closing && !_exitInProgress && !(IsVisible && IsActive && WindowState != WindowState.Minimized)
+            && _presentation.ShowBalloon?.Invoke(notice) == true;
     }
 
-    internal void ObserveRunNotification(WorkerCoordinatorSnapshot snapshot)
+    private void RequestQuitAfterRun()
     {
-        if (_terminalNotifications.Observe(snapshot, ActiveConfigurationName) is { } notification) {
-            NotificationRequested?.Invoke(this, notification);
+        _logger.Info("--quit-after-run：任务已结束，正在退出程序。");
+        _quitAfterRun?.Invoke();
+    }
+
+    private bool PresentRunAction(Payload item) => item switch {
+        Present notice => PresentRunOutcome(notice),
+        PresentCleanupFailure failure => Notify(new($"「{failure.Name}」收尾失败", failure.Detail, true)),
+        _ => throw new ArgumentOutOfRangeException(nameof(item))
+    };
+
+    private bool PresentRunOutcome(Present notice)
+    {
+        if (notice.Kind is NoticeKind.Succeeded or NoticeKind.Failed or NoticeKind.Faulted) {
+            return Notify(new(notice.Operation, notice.Detail, notice.Kind != NoticeKind.Succeeded));
+        }
+
+        var detail = notice.Kind is NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed ? notice.Detail : notice.ConfirmedStartDetail;
+        var error = notice.Error ?? new InvalidOperationException(detail ?? "任务未能启动。");
+        if (notice.Intent?.Source == RunSource.Manual) {
+            if (IsVisible && WindowState != WindowState.Minimized) {
+                var message = detail != null && notice.ConfirmedStartDetail == null
+                    ? $"{detail}\n\n{error.GetBaseException().Message}" : detail;
+                PresentOperationError(notice.Operation, error, message);
+                return true;
+            }
+            _logger.Error($"{notice.Operation}。", error);
+            if (notice.ForegroundOnly) return false;
+            return Notify(new(notice.Operation, detail ?? error.GetBaseException().Message, true, notice.Operation, error));
+        } else if (notice.Intent is { Source: RunSource.Scheduled } scheduled) {
+            if (notice.Kind == NoticeKind.NotStarted) {
+                return ReportScheduledStartFailure(scheduled.ConfigurationName,
+                    detail ?? (error is WorkerProtocolErrorException ? "桌面分身启动失败（任务提交未成功）" : "桌面分身启动失败（任务未被接纳）"), error);
+            } else {
+                AddScheduleActivity($"「{scheduled.ConfigurationName}」：{detail}", LogLevel.Error);
+                return Notify(new($"「{scheduled.ConfigurationName}」运行未确认", notice.Detail, true, notice.Operation, error));
+            }
+        } else if (notice.Intent == null) {
+            return Notify(new("任务未能确认结束", notice.Detail, true, notice.Operation, error));
+        } else {
+            return ReportUnattendedFailure(notice.Operation, error, detail);
         }
     }
 
@@ -35,7 +70,7 @@ public partial class MainWindow
     // starts the Run, as the Start button does. Returns whether it did.
     internal async Task<bool> AutoRunOnLaunchAsync()
     {
-        if (_projectPlan is not { } project) {
+        if (_projectPlan is not { } project || SkipLaunchForPendingQuit()) {
             return false;
         }
         // The list is a placeholder then, so nothing can be matched; say so instead of skipping silently. Asked for
@@ -61,12 +96,19 @@ public partial class MainWindow
         if (!entered) {
             _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
         }
-        await ObserveScheduledRunAsync();
         return entered;
+    }
+
+    private bool SkipLaunchForPendingQuit()
+    {
+        if (_lifecycle.ReadOrchestration().PendingQuitReason is not { } reason) return false;
+        _logger.Info($"自动执行已跳过：{reason}。");
+        return true;
     }
 
     private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)
     {
+        if (SkipLaunchForPendingQuit()) return;
         // A refusal is reported by the change itself: the other configuration must never be run instead.
         if (!TaskPlanEditor.ChangeConfiguration(() => project.ActivateConfiguration(id),
                 failure => ReportUnattendedFailure("自动执行", failure))) {
@@ -83,10 +125,10 @@ public partial class MainWindow
         _logger.Info($"自动执行：已激活配置并开始任务{AppLogger.Field("configuration", ConfigurationName(id))}");
         if (CurrentControls.Action is RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start }) {
             await RunWindowOperationAsync(PendingOperation.StartingRun,
-                () => StartCurrentPlanAsync(quitAfterRun: _quitAfterRun), unattended: true);
+                () => StartCurrentPlanAsync(source: RunSource.Launch), unattended: true);
         } else {
             await RunWindowOperationAsync(PendingOperation.PreparingEnvironment,
-                () => PrepareCurrentEnvironmentAsync(startRun: true, quitAfterRun: _quitAfterRun), unattended: true);
+                () => PrepareCurrentEnvironmentAsync(startRun: true, source: RunSource.Launch), unattended: true);
         }
     }
 
@@ -105,10 +147,10 @@ public partial class MainWindow
     private void ReportAutoRunFailure(string message) =>
         ReportUnattendedFailure("自动执行", new InvalidOperationException(message));
 
-    private void ReportUnattendedFailure(string operation, Exception exception)
+    private bool ReportUnattendedFailure(string operation, Exception exception, string? detail = null)
     {
         _logger.Error($"{operation}。", exception);
-        var message = $"{operation}：{exception.GetBaseException().Message}";
-        NotificationRequested?.Invoke(this, new("自动执行未能完成", message, true));
+        var message = $"{operation}：{detail ?? exception.GetBaseException().Message}";
+        return Notify(new("自动执行未能完成", message, true, operation, exception));
     }
 }

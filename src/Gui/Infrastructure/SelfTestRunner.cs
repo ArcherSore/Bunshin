@@ -23,7 +23,7 @@ internal static partial class SelfTestRunner
 
     // A check owns its directory, project fixture and logger, so it runs the same alone as in the full list.
     private static readonly Check[] Checks = [
-        new(Group.Support, nameof(VerifyTerminalNotifications), _ => VerifyTerminalNotifications()),
+        new(Group.Support, nameof(VerifyTerminalNotifications), c => VerifyTerminalNotifications(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyFileLogging), c => VerifyFileLogging(c.Directory)),
         new(Group.Support, nameof(VerifyUserProfileMasking), c => VerifyUserProfileMasking(c.Directory)),
         new(Group.Support, nameof(VerifyRunResultLog), c => VerifyRunResultLog(c.Directory)),
@@ -49,7 +49,49 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyAutostartTask), _ => VerifyAutostartTask()),
         new(Group.Support, nameof(VerifyLaunchHelp), _ => VerifyLaunchHelp()),
         new(Group.Support, nameof(VerifyHelpOutput), _ => VerifyHelpOutput()),
-        new(Group.Support, nameof(VerifyQuitAfterRunTracker), _ => VerifyQuitAfterRunTracker()),
+        new(Group.Support, nameof(VerifyQuitAfterRunTerminals), c => VerifyQuitAfterRunTerminals(c.Logger, c.Directory)),
+        new(Group.Project, "VerifyRunDeliveryTerminalDuringEnumeration", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, terminalDuringEnumeration: true)),
+        new(Group.Project, "VerifyRunDeliveryCleanupCollision", c => {
+            foreach (var (force, fail) in new[] { (false, false), (false, true), (true, true) })
+                VerifyScheduledTerminal(c.Logger, Path.Combine(c.Directory, $"collision-{force}-{fail}"), RunState.Succeeded,
+                    tickBeforeDispatch: true, forceCollision: force, failCleanup: fail);
+        }),
+        new(Group.Project, "VerifyRunDeliveryCleanupDuringExit", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, cleanupDuringExit: true)),
+        new(Group.Project, "VerifyScheduledReconnectSettlement", c => {
+            foreach (var fail in new[] { false, true })
+                VerifyScheduledTerminal(c.Logger, Path.Combine(c.Directory, fail.ToString()), RunState.Succeeded,
+                    tickBeforeDispatch: true, forceCollision: false, failCleanup: fail, order: SettlementOrder.Reconnect);
+        }),
+        new(Group.Project, "VerifyScheduledPreviewSettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview)),
+        new(Group.Project, "VerifyScheduledTraySettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Tray)),
+        new(Group.Project, "VerifyScheduledGapSettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, tickBeforeDispatch: true, order: SettlementOrder.Gap)),
+        new(Group.Project, "VerifyScheduledUpdateSettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Update)),
+        new(Group.Project, "VerifyScheduledManualEndAfterUpdate", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.ManualEndAfterUpdate)),
+        new(Group.Project, nameof(WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite), c => {
+            var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
+                WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite(c.Logger, c.Directory, c.Project)).Task.Unwrap();
+            PumpUntil(() => check.IsCompleted, "终态取消确认查询后应能继续启动。");
+            check.GetAwaiter().GetResult();
+        }),
+        new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
+        new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),
+        new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),
+        new(Group.Project, "VerifyRunDeliveryNotRegistered", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.NotRegistered)),
+        new(Group.Project, "VerifyRunDeliveryDialogGate", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.DialogGate)),
+        new(Group.Project, "VerifyRunDeliveryOrdinaryDialog", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.OrdinaryDialog)),
+        new(Group.Project, "VerifyRunDeliveryHiddenRetry", c => VerifyRunDeliveryScenario(c.Logger, c.Directory, "hidden-retry")),
+        new(Group.Project, "VerifyQuitRecoveryBeforeSchedule", c => {
+            VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "force"), "quit-recovery", forceScheduledStart: true);
+            VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "ordinary"), "quit-recovery");
+        }),
+        new(Group.Project, nameof(VerifyRunDelivery), c => VerifyRunDelivery(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
             c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledBootReplacement),
@@ -668,14 +710,12 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("重新打开面板应重新统计本次添加。");
             }
             VerifyAddedTasksPerConfiguration(window);
-            SetOnboardingField(window, "_pendingOperation", PendingOperation.PreparingEnvironment);
-            InvokeOnboarding(window, "RefreshRuntimeControls");
+            window.SetPendingOperation(PendingOperation.PreparingEnvironment);
             if (shelf.Visibility != System.Windows.Visibility.Collapsed
                 || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskShelfHeaderButton")).IsEnabled) {
                 throw new InvalidOperationException("锁定时添加任务面板应收起且按钮禁用。");
             }
-            SetOnboardingField(window, "_pendingOperation", PendingOperation.None);
-            InvokeOnboarding(window, "RefreshRuntimeControls");
+            window.SetPendingOperation(PendingOperation.None);
             ClickOnboarding(window, "TaskShelfHeaderButton");
             var screenshotDirectory = Environment.GetEnvironmentVariable("BUNSHIN_TASK_SCREENSHOTS");
             if (!string.IsNullOrEmpty(screenshotDirectory)) {

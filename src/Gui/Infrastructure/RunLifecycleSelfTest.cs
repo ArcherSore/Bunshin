@@ -19,7 +19,7 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleObservedRuns, VerifyRunLifecycleFaultedSlot,
         VerifyRunLifecycleReconnectFault, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleExitBuffer,
         VerifyRunLifecycleAbandonQuit, VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleCompletedPlans,
-        VerifyRunLifecycleRejectedPlans
+        VerifyRunLifecycleRejectedPlans, VerifyRunLifecycleIndependentPresentations
     ];
 
     private static Guid Id(int value) => new(value, 1, 2, new byte[8]);
@@ -34,7 +34,7 @@ internal static partial class RunLifecycleSelfTest
     }
 
     private static RunIntent Intent(RunSource source, int n = 1) => new(Id(n), source, "开始任务", Input, "第一班",
-        Foreground: source == RunSource.Manual, QuitAfterRun: source == RunSource.Launch);
+        QuitAfterRun: source == RunSource.Launch);
 
     private static RunSnapshot SnapshotOf(RunStartAttempt attempt, RunState status)
     {
@@ -83,10 +83,10 @@ internal static partial class RunLifecycleSelfTest
             Step(Start);
         }
 
-        internal void Ack(long id)
+        internal void Ack(long id, bool presented = true)
         {
             if (History.OfType<Deliver>().Any(d => d.Id == id)) acknowledged.Add(id);
-            Step(new Delivered(id));
+            Step(new Delivered(id, presented));
         }
 
         // Drive exactly the actions the consumer actually received. A missing dispatch or a
@@ -99,7 +99,7 @@ internal static partial class RunLifecycleSelfTest
             }
             var sent = History.OfType<Deliver>().ToArray();
             var actual = sent.Select(d => d.Item.GetType()).ToArray();
-            Check(State.InFlightDelivery == null && State.Deliveries.IsEmpty && acknowledged.Count == sent.Length
+            Check(State.InFlight.IsEmpty && State.Deliveries.IsEmpty && acknowledged.Count == sent.Length
                 && actual.SequenceEqual(expected), $"交付历史 [{string.Join(", ", actual.Select(t => t.Name))}]，"
                 + $"期望 [{string.Join(", ", expected.Select(t => t.Name))}]");
         }
@@ -126,11 +126,11 @@ internal static partial class RunLifecycleSelfTest
         internal void Terminal(RunState status) => FrameEvent(Frame(last: SnapshotOf(Plan, status)));
         internal void Eof(Exception? error = null) => Evidence(new(Connection, WorkerEvidenceKind.Disconnected, Error: error));
         internal void ExitWorker() => Evidence(new(Connection, WorkerEvidenceKind.ProcessExited));
-        internal void Reconnect(WorkerSnapshot? frame = null)
+        internal void Reconnect(WorkerSnapshot? frame = null, WorkerCoordinatorSnapshot? current = null)
         {
             Connection = Connection with { Generation = Connection.Generation + 1 };
             sequence = 0;
-            FrameEvent(frame ?? Frame());
+            FrameEvent(frame ?? Frame(), current);
         }
 
         internal WorkerRequestEvidence Writer() => new(Id(1000 + sends), Key, Start.Submission, null, Connection);

@@ -35,9 +35,7 @@ internal static partial class SelfTestRunner
             var title = ((Panel)header).Children.OfType<TextBlock>().Single(text => text.Text == "任务");
             void SetBusy(bool busy)
             {
-                SetOnboardingField(window, "_pendingOperation",
-                    busy ? PendingOperation.PreparingEnvironment : PendingOperation.None);
-                InvokeOnboarding(window, "RefreshRuntimeControls");
+                window.SetPendingOperation(busy ? PendingOperation.PreparingEnvironment : PendingOperation.None);
                 PumpOnboarding();
             }
             bool Inside(FrameworkElement element, FrameworkElement container)

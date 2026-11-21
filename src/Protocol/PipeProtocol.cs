@@ -64,8 +64,11 @@ public sealed class ProtocolConnection : IAsyncDisposable
     public Task WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending) =>
         WriteAsync(envelope, cancellationToken, onSending, null);
 
+    public Task<bool> WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending,
+        Func<bool>? canWrite) => WriteAsync(envelope, cancellationToken, onSending, canWrite, cancellationToken);
+
     public async Task<bool> WriteAsync(WireEnvelope envelope, CancellationToken cancellationToken, Action? onSending,
-        Func<bool>? canWrite)
+        Func<bool>? canWrite, CancellationToken frameCancellationToken)
     {
         ThrowIfWriteUnavailable();
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJson.Options);
@@ -83,20 +86,22 @@ public sealed class ProtocolConnection : IAsyncDisposable
             if (canWrite?.Invoke() == false) {
                 return false;
             }
+            cancellationToken.ThrowIfCancellationRequested();
+            // A caller may abandon a reply while the transport finishes its frame.
             // Stream.WriteAsync returns no byte count on cancellation. A one-byte write
             // distinguishes an untouched stream from a partially written length prefix.
-            await _stream.WriteAsync(prefix.AsMemory(0, 1), cancellationToken);
+            await _stream.WriteAsync(prefix.AsMemory(0, 1), frameCancellationToken);
             incomplete = true;
             // Even a writer slow to acknowledge cancellation cannot complete the frame here.
-            await _stream.WriteAsync(prefix.AsMemory(1), cancellationToken).AsTask().WaitAsync(cancellationToken);
+            await _stream.WriteAsync(prefix.AsMemory(1), frameCancellationToken).AsTask().WaitAsync(frameCancellationToken);
             // A length prefix alone cannot deliver a request. Once the payload write starts, delivery is uncertain
             // even if the write or flush subsequently fails.
             ThrowIfDisposed();
-            cancellationToken.ThrowIfCancellationRequested();
+            frameCancellationToken.ThrowIfCancellationRequested();
             onSending?.Invoke();
-            await _stream.WriteAsync(payload, cancellationToken);
+            await _stream.WriteAsync(payload, frameCancellationToken);
             incomplete = false;
-            await _stream.FlushAsync(cancellationToken);
+            await _stream.FlushAsync(frameCancellationToken);
             return true;
         } catch (Exception error) when (incomplete) {
             // A second frame would corrupt the wire. Only the owner may close the concurrent reader.
