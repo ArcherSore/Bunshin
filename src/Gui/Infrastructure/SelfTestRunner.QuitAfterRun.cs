@@ -21,7 +21,8 @@ internal static partial class SelfTestRunner
         var sending = false;
         try {
             var request = WireEnvelope.Request(ProtocolOperations.RunStart, Guid.NewGuid(), new { });
-            closed.WriteAsync(request, CancellationToken.None, () => sending = true).GetAwaiter().GetResult();
+            closed.WriteAsync(request, CancellationToken.None, () => sending = true, null, CancellationToken.None)
+                .GetAwaiter().GetResult();
             throw new InvalidOperationException("已经释放的连接不应接受写入。");
         } catch (ObjectDisposedException) {
             Require(!sending && stream.ToArray().Length == 0, "写入前已经释放连接时，不能开始等待 Run 的终态。");
