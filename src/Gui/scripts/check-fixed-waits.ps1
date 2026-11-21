@@ -1,44 +1,110 @@
 [CmdletBinding()]
-param()
+param(
+    # Rewrites the baseline from the current sources; review the diff before committing it.
+    [switch]$UpdateBaseline
+)
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$baselinePath = Join-Path $PSScriptRoot 'fixed-wait-baseline.txt'
 $baseline = @{}
-foreach ($line in Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixed-wait-baseline.txt') -Encoding UTF8) {
+foreach ($line in Get-Content -LiteralPath $baselinePath -Encoding UTF8) {
     if ($line -match '^#|^\s*$') { continue }
     if ($line -notmatch '^(\d+)\s+(.+)$') { throw "Invalid fixed-wait baseline entry: $line" }
     $baseline.Add($Matches[2], [int]$Matches[1])
 }
 
-# Skip C# comments and string/character literals, including multiline raw JSON fixtures.
-$nonCode = '(?s)""".*?"""|@"(?:[^"]|"")*"|"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])*''|//[^\r\n]*|/\*.*?\*/'
+function Get-Files
+{
+    param([string[]]$Patterns)
+    $listed = @(git -C $root -c core.quotepath=false ls-files --cached --others --exclude-standard -- $Patterns)
+    if ($LASTEXITCODE -ne 0 -or !$listed.Count) { throw "Could not enumerate sources: $Patterns" }
+    # A locally deleted tracked file is still listed.
+    $listed | Where-Object { Test-Path -LiteralPath (Join-Path $root $_) -PathType Leaf }
+}
+
+# Character ranges covered by balanced calls such as Task.WhenAny(...), where a Task.Delay is a timeout guard.
+function Get-CallRanges
+{
+    param([string]$Code, [string]$Call)
+    foreach ($open in [regex]::Matches($Code, $Call)) {
+        $depth = 1
+        for ($i = $open.Index + $open.Length; $i -lt $Code.Length -and $depth -gt 0; $i++) {
+            if ($Code[$i] -eq '(') { $depth++ } elseif ($Code[$i] -eq ')') { $depth-- }
+        }
+        [pscustomobject]@{ Start = $open.Index + $open.Length; End = $i }
+    }
+}
+
+$found = @{}
+
+# ---- C# self-tests ----
+# Skip comments and string/character literals, including multiline raw JSON fixtures.
+$csNonCode = '(?s)""".*?"""|@"(?:[^"]|"")*"|"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])*''|//[^\r\n]*|/\*.*?\*/'
 $number = '\d[\d_]*(?:\.\d[\d_]*)?[dDfFlLmM]?'
 $duration = "(?:$number|TimeSpan\s*\.\s*From(?:Ticks|Microseconds|Milliseconds|Seconds|Minutes|Hours|Days)\s*\(\s*$number\s*\)|TimeSpan\s*\.\s*Zero)"
 $method = '(?:Thread\s*\.\s*Sleep|Task\s*\.\s*Delay|Pump(?:Dispatcher|Onboarding)?)'
-$files = @(git -C $root -c core.quotepath=false ls-files --cached --others --exclude-standard -- 'src/*SelfTest*.cs' 'src/*.Tests/*.cs')
-if ($LASTEXITCODE -ne 0 -or !$files.Count) { throw 'Could not enumerate self-test sources.' }
-
-$found = @{}
-foreach ($file in $files) {
-    $path = Join-Path $root $file
-    if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue } # Locally deleted tracked file.
-    $code = [regex]::Replace([IO.File]::ReadAllText($path), $nonCode, ' ')
+foreach ($file in Get-Files 'src/*SelfTest*.cs', 'src/*.Tests/*.cs') {
+    $code = [regex]::Replace([IO.File]::ReadAllText((Join-Path $root $file)), $csNonCode, ' ')
     $fixed = $duration
-    # Include named fixed durations such as StoppingWriteHold.
-    $constants = [regex]::Matches($code, "\b(?:const|readonly)\s+(?:int|TimeSpan)\s+(\w+)\s*=\s*$duration\s*;")
-    foreach ($constant in $constants) { $fixed += '|' + [regex]::Escape($constant.Groups[1].Value) }
+    # Named fixed durations: constants, readonly fields and ordinary locals initialised from a literal.
+    $names = [regex]::Matches($code, "\b(?:var|int|long|double|TimeSpan)\s+(\w+)\s*=\s*$duration\s*;") |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+    foreach ($name in $names) { $fixed += '|' + [regex]::Escape($name) }
+    # A delay passed to Task.WhenAny only bounds a wait that is otherwise decided by an observable condition.
+    $guards = @(Get-CallRanges $code '\bTask\s*\.\s*WhenAny\s*\(')
     $calls = "\b(?<method>$method)\s*\(\s*(?<delay>$fixed)\s*(?=[,)])|\b(?<method>Pump(?:Onboarding)?)\s*\(\s*\)"
     foreach ($call in [regex]::Matches($code, $calls)) {
+        $index = $call.Index
+        if ($guards | Where-Object { $index -ge $_.Start -and $index -lt $_.End }) { continue }
         $name = $call.Groups['method'].Value -replace '\s'
         $delay = $call.Groups['delay'].Value -replace '\s'
-        $key = "$file $name($delay)"
-        $found[$key]++
+        $found["$file $name($delay)"]++
     }
+}
+
+# ---- Rust Engine tests ----
+# Integration tests, *_tests.rs files, and the #[cfg(test)] tail of other sources. Production sleeps are not checked.
+$rsNonCode = '(?s)r(#*)".*?"\1|"(?:\\.|[^"\\])*"|''(?:\\.|[^''\\])''|//[^\r\n]*|/\*.*?\*/'
+$rsDuration = '(?:std\s*::\s*)?(?:time\s*::\s*)?Duration\s*::\s*from_(?:millis|secs|micros|nanos|secs_f32|secs_f64)\s*\(\s*' +
+    '\d[\d_]*(?:\.\d[\d_]*)?\s*\)'
+foreach ($file in Get-Files 'src/UpdateEngine/tests/*.rs', 'src/UpdateEngine/tests/*/*.rs', 'src/UpdateEngine/src/*.rs', 'src/UpdateEngine/examples/*.rs') {
+    $code = [regex]::Replace([IO.File]::ReadAllText((Join-Path $root $file)), $rsNonCode, ' ')
+    if ($file -match '^src/UpdateEngine/(src|examples)/' -and $file -notmatch '_tests\.rs$') {
+        $start = $code.IndexOf('#[cfg(test)]', [StringComparison]::Ordinal)
+        if ($start -lt 0) { continue }
+        $code = $code.Substring($start)
+    }
+    $fixed = $rsDuration
+    $names = [regex]::Matches($code, "\b(?:const|static|let)\s+(?:mut\s+)?(\w+)\s*(?::\s*[\w:]+\s*)?=\s*$rsDuration\s*;") |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+    foreach ($name in $names) { $fixed += '|' + [regex]::Escape($name) }
+    $calls = "\b(?:std\s*::\s*)?thread\s*::\s*sleep\s*\(\s*(?<delay>$fixed)\s*(?=[.)])"
+    foreach ($call in [regex]::Matches($code, $calls)) {
+        $delay = ($call.Groups['delay'].Value -replace '\s') -replace '^std::', '' -replace '^time::', ''
+        $found["$file thread::sleep($delay)"]++
+    }
+}
+
+if ($UpdateBaseline) {
+    $lines = @('# Maximum occurrences per source file and normalized call (first duration argument).') +
+        @($found.Keys | Sort-Object { $_ } -CaseSensitive | ForEach-Object { "$($found[$_]) $_" })
+    [IO.File]::WriteAllText($baselinePath, ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+    Write-Host "Baseline rewritten: $($found.Count) entries"
+    exit 0
 }
 
 $over = @($found.Keys | Sort-Object | Where-Object { $found[$_] -gt $baseline[$_] })
 foreach ($key in $over) {
     Write-Host "FAIL $key (found $($found[$key]), baseline $([int]$baseline[$key]))"
 }
-if ($over.Count) { throw 'New fixed wait in self-test code. Use PumpUntil or wait for an observable condition.' }
+# Ratchet: a removed wait must also lower the baseline, so the freed slot cannot be reused by a new one.
+$under = @($baseline.Keys | Sort-Object | Where-Object { [int]$found[$_] -lt $baseline[$_] })
+foreach ($key in $under) {
+    Write-Host "FAIL $key (found $([int]$found[$key]), baseline $($baseline[$key])): lower the baseline"
+}
+if ($over.Count) { throw 'New fixed wait in test code. Use PumpUntil or wait for an observable condition.' }
+if ($under.Count) {
+    throw 'Fixed waits were removed. Run check-fixed-waits.ps1 -UpdateBaseline and commit the lower baseline.'
+}
 Write-Host "PASS fixed waits ($($found.Count) file/pattern entries)"

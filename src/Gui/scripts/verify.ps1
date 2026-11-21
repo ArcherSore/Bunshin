@@ -133,7 +133,13 @@ try {
             if (-not $cargo) { $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe' }
             $env:PATH = (Split-Path $cargo) + ';' + $env:PATH
             $manifest = Join-Path $repositoryRoot 'src\UpdateEngine\Cargo.toml'
-            Invoke-VerificationStep 'engine-test' $cargo @('test', '--locked', '--manifest-path', $manifest)
+            $testArguments = @('test', '--locked', '--manifest-path', $manifest)
+            if ($env:BUNSHIN_CI) {
+                # A hosted runner session cannot reliably enumerate and close the real Win32 dialog this test drives.
+                Write-Host 'SKIP engine test post_ready_failures_show_native_message_with_log_path (BUNSHIN_CI is set; needs a real desktop session, run it locally)'
+                $testArguments += @('--', '--skip', 'post_ready_failures_show_native_message_with_log_path')
+            }
+            Invoke-VerificationStep 'engine-test' $cargo $testArguments
             Invoke-VerificationStep 'engine-clippy' $cargo @(
                 'clippy', '--locked', '--manifest-path', $manifest, '--all-targets', '--', '-D', 'warnings'
             )

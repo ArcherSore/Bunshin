@@ -60,7 +60,7 @@ internal static partial class SelfTestRunner
             var editor = ConfigurationDescendants(Named<DependencyObject>(window, "PlanItemsPanel"))
                 .OfType<TextBox>().Single(box => AutomationProperties.GetName(box) == "Recipient");
             window.Activate();
-            Require(ReferenceEquals(Keyboard.Focus(editor), editor), "切换前应正在编辑原配置的参数。");
+            RequireFocus(ReferenceEquals(Keyboard.Focus(editor), editor), "切换前应正在编辑原配置的参数。");
             editor.Text = " ";
             ScheduledRunDisposition Start(Guid target)
             {
@@ -129,7 +129,7 @@ internal static partial class SelfTestRunner
                     editor = ConfigurationDescendants(Named<DependencyObject>(window, "PlanItemsPanel"))
                         .OfType<TextBox>().Single(box => AutomationProperties.GetName(box) == "Recipient");
                 }
-                Require(ReferenceEquals(Keyboard.Focus(editor), editor), "模拟定时触发时用户应仍在编辑相关字段。");
+                RequireFocus(ReferenceEquals(Keyboard.Focus(editor), editor), "模拟定时触发时用户应仍在编辑相关字段。");
                 editor.Text = "changed";
                 var failures = new List<string>();
                 window.NotificationRequested += (_, n) => failures.Add(n.Title + " / " + n.Message);

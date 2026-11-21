@@ -7,6 +7,10 @@ namespace Gui.Infrastructure;
 // Thrown by a check this machine cannot provide the conditions for, so "not tested" never reads as a pass.
 internal sealed class SelfTestSkip(string reason) : Exception(reason);
 
+// Thrown by an assertion that depends on real foreground or keyboard focus. Only a failure of this type may be
+// re-run in isolation (verify.ps1 --retry-focus); any other failure of the same check stays a failure.
+internal sealed class FocusAssertionException(string message) : Exception(message);
+
 // Runs every check even after a failure, so one broken check cannot hide the others. Shared with the Worker.
 internal static class SelfTestSuite
 {
@@ -29,6 +33,7 @@ internal static class SelfTestSuite
             return 1;
         }
         var failed = new List<string>();
+        var focusFailed = new HashSet<string>();
         var skipped = 0;
         var total = Stopwatch.StartNew();
         foreach (var (name, body) in selected) {
@@ -43,11 +48,12 @@ internal static class SelfTestSuite
                 Console.WriteLine($"SKIP {name}: {skip.Message}");
             } catch (Exception exception) {
                 failed.Add(name);
+                if (IsFocusFailure(exception)) focusFailed.Add(name);
                 Console.Error.WriteLine($"FAIL {name} ({Seconds(timer)}s): {exception}");
             }
         }
         // Keep the first failure in the logs. Retry only after all checks and their watchdogs have finished.
-        if (retryFailure is not null) failed.RemoveAll(retryFailure);
+        if (retryFailure is not null) failed.RemoveAll(name => focusFailed.Contains(name) && retryFailure(name));
         var summary = $"{selected.Length} 项，{skipped} 项跳过，{Seconds(total)}s";
         if (failed.Count != 0) {
             Console.Error.WriteLine($"{title} FAIL: {failed.Count} 项失败（{summary}）：{string.Join("、", failed)}");
@@ -57,6 +63,11 @@ internal static class SelfTestSuite
         Console.WriteLine($"{title} PASS: {summary}");
         return 0;
     }
+
+    private static bool IsFocusFailure(Exception exception) =>
+        exception is FocusAssertionException
+        || exception is AggregateException aggregate && aggregate.InnerExceptions.Any(IsFocusFailure)
+        || exception.InnerException is { } inner && IsFocusFailure(inner);
 
     private static string? OnlyFilter(string[] args)
     {

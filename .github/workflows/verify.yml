@@ -11,6 +11,8 @@ permissions:
 jobs:
   verify:
     runs-on: windows-latest
+    env:
+      BUNSHIN_CI: '1'
     defaults:
       run:
         shell: pwsh

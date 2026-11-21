@@ -306,7 +306,7 @@ internal static partial class SelfTestRunner
                 PresentationSource.FromVisual(first), 0, System.Windows.Input.Key.Down) {
                 RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent
             });
-            PumpUntil(() => list.SelectedIndex == 1 && HeadingTop(1) is >= 0 and <= 60, "方向键应能切换目录并滚动到该分类。");
+            PumpUntilFocus(() => list.SelectedIndex == 1 && HeadingTop(1) is >= 0 and <= 60, "方向键应能切换目录并滚动到该分类。");
             if (Environment.GetEnvironmentVariable("BUNSHIN_SUPPORT_QA_DIR") is { Length: > 0 } output) {
                 window.Width = 1180;
                 window.Height = 760;
