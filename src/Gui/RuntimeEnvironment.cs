@@ -46,6 +46,7 @@ internal sealed class RuntimeEnvironment
 
     // Raised when Ending or EndUnconfirmed changes, on the thread running the end.
     internal event EventHandler? StateChanged;
+    internal event Action? Ended;
 
     internal Task RunExclusiveAsync(Func<Task> operation) => RunGatedAsync(operation, refuseWhileClosing: true);
 
@@ -153,7 +154,9 @@ internal sealed class RuntimeEnvironment
     {
         SetState(ending: true, EndUnconfirmed);
         try {
-            return await EndInGateAsync(confirm);
+            var result = await EndInGateAsync(confirm);
+            if (result.Outcome == EnvironmentEndOutcome.Ended) Ended?.Invoke();
+            return result;
         } finally {
             SetState(ending: false, EndUnconfirmed);
         }

@@ -161,7 +161,6 @@ public partial class App : System.Windows.Application
             "结束桌面分身将先停止正在运行的任务，再注销 Session，并结束其中运行的程序。确认继续吗？",
             "结束桌面分身",
             MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
-        if (ended.Outcome == EnvironmentEndOutcome.Ended) _mainWindow?.EnvironmentRecovered();
         if (ended.Error is not { } error) {
             return;
         }

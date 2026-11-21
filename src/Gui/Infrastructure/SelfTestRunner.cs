@@ -57,6 +57,13 @@ internal static partial class SelfTestRunner
         new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
         new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),
         new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),
+        new(Group.Project, "VerifyRunDeliveryNotRegistered", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.NotRegistered)),
+        new(Group.Project, "VerifyRunDeliveryDialogGate", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.DialogGate)),
+        new(Group.Project, "VerifyRunDeliveryHiddenRetry", c => VerifyRunDeliveryScenario(c.Logger, c.Directory, "hidden-retry")),
+        new(Group.Project, "VerifyQuitRecoveryBeforeSchedule", c => {
+            VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "force"), "quit-recovery", forceScheduledStart: true);
+            VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "ordinary"), "quit-recovery");
+        }),
         new(Group.Project, nameof(VerifyRunDelivery), c => VerifyRunDelivery(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
             c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),

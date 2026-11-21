@@ -818,7 +818,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 }
                 var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
                 changed = ApplyFreshSnapshotLocked(response.Snapshot, admission);
-                _receivedFullSnapshot = true;
                 PublishLocked(SnapshotBatchLocked(response.Snapshot));
                 pending.SnapshotResponse = response;
             }
@@ -870,8 +869,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 return;
             }
             if (Snapshot.Fresh && state.StateRevision != currentRevision + 1) {
-                _receivedFullSnapshot = false;
-                _scheduledSnapshotSyncs++;
+                ReserveSnapshotSyncLocked();
                 Snapshot = Snapshot with {
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
@@ -938,9 +936,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         var completion = new TaskCompletionSource<WireEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = new PendingRequest(operation, completion);
         lock (_gate) {
-            if (operation == ProtocolOperations.WorkerGetSnapshot && connection is not null && connection == _connection) {
-                _scheduledSnapshotSyncs--;
-            }
             connection ??= _connection
                          ?? throw new InvalidOperationException("Worker IPC 尚未连接。 ");
             if (!_pending.TryAdd(requestId, pending)) {
@@ -954,7 +949,16 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 throw new WorkerProtocolErrorException(
                     response.Error?.Code ?? "internal_error", response.Error?.Message ?? "Worker 返回未知错误。 ");
             }
-            return pending.SnapshotResponse is TResponse snapshot ? snapshot : ProtocolJson.Deserialize<TResponse>(response.Data);
+            if (pending.SnapshotResponse is TResponse snapshot) {
+                lock (_gate) {
+                    if (connection == _connection && --_pendingSnapshotSyncs == 0) {
+                        _snapshotSync!.TrySetResult(true);
+                        _snapshotSync = null;
+                    }
+                }
+                return snapshot;
+            }
+            return ProtocolJson.Deserialize<TResponse>(response.Data);
         } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
             AbandonPendingRequest(requestId);
             throw;

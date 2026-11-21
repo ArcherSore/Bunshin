@@ -66,7 +66,10 @@ public partial class MainWindow
         ScheduledRunResult? result = null;
         var force = _settings.ForceScheduledStart.Value;
         var previous = _scheduledSubmission;
-        _lifecycle.Drain();
+        if (_lifecycle.PendingQuitReason() is { } pendingQuit) {
+            ReportScheduledSkip(name, pendingQuit);
+            return new(ScheduledRunDisposition.Busy, Reason: pendingQuit);
+        }
         var exitGeneration = _exitGeneration;
         var dueMinute = CurrentScheduleMinute();
         async Task StartInGateAsync(bool countdownElapsed)
@@ -83,7 +86,9 @@ public partial class MainWindow
                     await _environment.RunExclusiveAsync(() => StartInGateAsync(false));
                 }
                 if (result?.Disposition == ScheduledRunDisposition.CountdownRequired) {
-                    if (CurrentScheduleMinute() != dueMinute) {
+                    if (_lifecycle.PendingQuitReason() is { } reasonToQuit) {
+                        result = new(ScheduledRunDisposition.Busy, Reason: reasonToQuit);
+                    } else if (CurrentScheduleMinute() != dueMinute) {
                         result = new(ScheduledRunDisposition.Busy, Reason: "当前时间已离开本次定时的分钟");
                     } else if (!ScheduledStartClosing(exitGeneration)) {
                         name = ConfigurationName(configurationId) ?? name;
@@ -183,6 +188,8 @@ public partial class MainWindow
     private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(Guid configurationId, string name,
         string? policyTime, bool force, bool countdownElapsed, ScheduledSubmission? previous, int exitGeneration)
     {
+        if (_lifecycle.PendingQuitReason() is { } pendingQuit)
+            return new(ScheduledRunDisposition.Busy, Reason: pendingQuit);
         if (ScheduledStartClosing(exitGeneration)) {
             return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
         }
@@ -229,10 +236,8 @@ public partial class MainWindow
         RunKey? replacing = countdownElapsed && current.WorkerSnapshot is { } currentWorker && atRisk is Guid id
             && _lifecycle.WaitingForQuit(new(currentWorker.WorkerInstanceId, id))
             ? new(currentWorker.WorkerInstanceId, id) : null;
-        if (current is { Fresh: true, WorkerSnapshot.LastRun: { } last }
-            && _lifecycle.WaitingForQuit(new(current.WorkerSnapshot.WorkerInstanceId, last.RunId))) {
-            return new(ScheduledRunDisposition.Busy, Reason: "开机任务已结束，正在退出");
-        }
+        if (_lifecycle.PendingQuitReason() is { } quitReason)
+            return new(ScheduledRunDisposition.Busy, Reason: quitReason);
         if (replacing.HasValue && _manuallyStoppedRun == atRisk
             && current.WorkerSnapshot?.WorkerState != WorkerState.Faulted) {
             return new(ScheduledRunDisposition.Busy, Reason: "正在等待开机任务停止并退出");
@@ -251,7 +256,8 @@ public partial class MainWindow
                 throw ended.Error ?? new InvalidOperationException("旧桌面分身未确认结束。");
             }
             if (replacing is { } endedBoot) _lifecycle.Apply(new LifecycleEvent.AbandonQuit(endedBoot));
-            _lifecycle.Drain();
+            if (_lifecycle.PendingQuitReason() is { } afterEnd)
+                return new(ScheduledRunDisposition.Busy, Reason: afterEnd);
             endingOldSession = false;
             if (hadSession) {
                 AddScheduleActivity("已关闭旧的桌面分身");
@@ -260,6 +266,8 @@ public partial class MainWindow
                 await PrepareProjectEnvironmentAsync(project, showDesktop: false);
                 if (!ScheduledStartClosing(exitGeneration) && await WaitForRunStartAsync()
                     && !ScheduledStartClosing(exitGeneration)) {
+                    if (_lifecycle.PendingQuitReason() is { } beforeSend)
+                        return new(ScheduledRunDisposition.Busy, Reason: beforeSend);
                     var worker = _workerCoordinator.Snapshot.WorkerSnapshot
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
                     var key = new RunKey(worker.WorkerInstanceId, attempt!.RunId);

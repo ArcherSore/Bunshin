@@ -372,6 +372,7 @@ internal static partial class SelfTestRunner
                         Require(completions.Count == 0 && wts.LogoffAttempts.SequenceEqual([77u]),
                             "退出期间重复终态不应提前完成或收尾。");
                         window.SetExitInProgress(false);
+                        PumpUntil(() => completions.Count > 0, "取消退出后应交付已缓冲的终态。");
                     }
                     if (lostReply) {
                         // 迁移至 VerifyRunLifecycle / 收尾时断线重连

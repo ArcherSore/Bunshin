@@ -25,6 +25,7 @@ internal sealed partial class RunLifecycleReducer
                     }));
                 }
             }
+            RecoverQuitRequests();
             return;
         }
         if (b.Kind is WorkerEvidenceKind.Disconnected or WorkerEvidenceKind.AdmissionRemoved && b.Connection is { } closed) {
@@ -234,7 +235,9 @@ internal sealed partial class RunLifecycleReducer
                     RejectionCode = otherDigest ? "run_id_conflict" : s.RejectionCode }) };
             }
             if (r.Sends.Values.All(s => s.Boundary == SendBoundary.Excluded)) {
-                Settle(r, StartConclusion.NotStarted, reason);
+                var detail = otherDigest ? null : "任务未能启动（Worker 未登记本次启动）。"
+                    + (reason.InnerException is { } sendError ? $"原发送错误：{sendError.Message}" : "");
+                Settle(r, StartConclusion.NotStarted, reason, detail);
                 return;
             }
         }

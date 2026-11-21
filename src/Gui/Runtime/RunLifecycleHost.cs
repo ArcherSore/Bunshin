@@ -22,6 +22,7 @@ internal sealed class RunLifecycleHost : IDisposable
     private readonly ConcurrentQueue<LifecycleEvent> _events = new();
     private readonly Dictionary<QueryId, (CancellationTokenSource Cancellation, Task Completion)> _queries = [];
     private readonly Dictionary<long, ITimer> _timers = [];
+    private bool _deferManualErrors;
     private bool _disposed;
 
     internal RunLifecycleState State { get; private set; } = new();
@@ -42,20 +43,38 @@ internal sealed class RunLifecycleHost : IDisposable
 
     private void Observe(object? sender, WorkerObservationBatch batch) => Enqueue(new LifecycleEvent.Observed(batch));
 
+    internal void EnvironmentRecovered() => Enqueue(new LifecycleEvent.EnvironmentRecovered());
+
     private void Enqueue(LifecycleEvent input)
     {
         _events.Enqueue(input);
-        _dispatcher.BeginInvoke(Drain);
+        _dispatcher.BeginInvoke(DrainAndDeliver);
     }
 
     internal void Apply(LifecycleEvent input)
     {
         _dispatcher.VerifyAccess();
-        _events.Enqueue(input);
+        Enqueue(input);
         Drain();
     }
 
-    internal void Drain()
+    // Callers inside the environment gate may need the latest state. Present only on a dispatcher turn.
+    internal void Drain() => Drain(dispatchDelivery: false);
+
+    internal void DeferManualErrors(bool defer)
+    {
+        _deferManualErrors = defer;
+        if (!defer && !State.Deliveries.IsEmpty) _dispatcher.BeginInvoke(DrainAndDeliver);
+    }
+
+    private void DrainAndDeliver()
+    {
+        if (_events.IsEmpty && !State.Deliveries.IsEmpty && State.InFlightDelivery == null && State.Closing == null)
+            _events.Enqueue(new LifecycleEvent.DispatchPending());
+        Drain(dispatchDelivery: true);
+    }
+
+    private void Drain(bool dispatchDelivery)
     {
         _dispatcher.VerifyAccess();
         while (!_disposed && _events.TryDequeue(out var input)) {
@@ -63,7 +82,7 @@ internal sealed class RunLifecycleHost : IDisposable
                 input = observed with { ConfigurationName = _configurationName() };
             if (input is LifecycleEvent.RetryDue due) CancelTimer(due.Token);
             var transition = RunLifecycleReducer.Reduce(State, input with { At = _clock.GetElapsedTime(_origin) },
-                dispatchDelivery: _events.IsEmpty);
+                dispatchDelivery: dispatchDelivery && _events.IsEmpty, deferManualErrors: _deferManualErrors);
             State = transition.State;
             foreach (var effect in transition.Effects) {
                 switch (effect) {
@@ -120,6 +139,17 @@ internal sealed class RunLifecycleHost : IDisposable
 
     internal bool WaitingForQuit(RunKey key) => State.Quits.ContainsKey(key)
         || State.Deliveries.Any(d => d.Item is RequestQuit quit && quit.Key == key);
+
+    // A bound boot Run can still be replaced. Its exit takes priority once the terminal arrives.
+    internal string? PendingQuitReason()
+    {
+        Drain();
+        return State.Deliveries.Any(d => d.Item is RequestQuit)
+            || State.Quits.Values.Any(stage => stage is QuitStage.Requested or QuitStage.AwaitingRecovery or QuitStage.RecoveredWhileClosing)
+            || State.Current is { Fresh: true, WorkerSnapshot: { LastRun: { } last } worker }
+                && WaitingForQuit(new(worker.WorkerInstanceId, last.RunId))
+            ? "开机任务已结束，正在等待退出" : null;
+    }
 
     internal async Task SubmitAsync(RunIntent intent, RunKey key, RunStartAttempt attempt)
     {

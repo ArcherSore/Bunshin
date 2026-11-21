@@ -10,13 +10,14 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
     private RunLifecycleState state = initial;
     private readonly ImmutableArray<LifecycleEffect>.Builder effects = ImmutableArray.CreateBuilder<LifecycleEffect>();
 
-    internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input, bool dispatchDelivery = true)
+    internal static LifecycleTransition Reduce(RunLifecycleState state, LifecycleEvent input, bool dispatchDelivery = true,
+        bool deferManualErrors = false)
     {
         if (state.ExitCommitted) return new(state, []);
         var step = new RunLifecycleReducer(state with { Now = input.At > state.Now ? input.At : state.Now });
         step.Apply(input);
         step.DispatchQueries();
-        if (dispatchDelivery) step.DispatchDelivery();
+        if (dispatchDelivery) step.DispatchDelivery(deferManualErrors);
         step.ReleaseCompletedRuns();
         return new(step.state, step.effects.ToImmutable());
     }
@@ -58,15 +59,20 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                 }
                 break;
             case EnvironmentRecovered:
-                foreach (var (key, stage) in state.Quits) {
-                    if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
-                    else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
-                }
+                RecoverQuitRequests();
                 break;
             case ClosingCommitted e when state.Closing == e.Id:
                 foreach (var r in state.Runs.Values) CancelConfirmation(r);
                 state = new() { ExitCommitted = true };
                 break;
+        }
+    }
+
+    private void RecoverQuitRequests()
+    {
+        foreach (var (key, stage) in state.Quits) {
+            if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
+            else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
         }
     }
 

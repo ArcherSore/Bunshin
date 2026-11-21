@@ -45,9 +45,9 @@ internal sealed partial class WorkerCoordinator
     private readonly Dictionary<Guid, EvidenceRequest> _evidenceRequests = [];
     private WorkerConnectionId _connectionId;
     private long _writeSequence;
-    private bool _receivedFullSnapshot;
-    // Initial and gap syncs reserve their place before their request enters _pending.
-    private int _scheduledSnapshotSyncs;
+    // Reserved before scheduling each full read. Only validated replies release starts on this connection.
+    private int _pendingSnapshotSyncs;
+    private TaskCompletionSource<bool>? _snapshotSync;
     private bool _evidenceRequested;
 
     // Subscribers enqueue batches synchronously. Frame validation, publication and waiter
@@ -78,8 +78,13 @@ internal sealed partial class WorkerCoordinator
     {
         _connectionId = new(admission.WorkerInstanceId, _connectionId.Generation + 1);
         _writeSequence = 0;
-        _receivedFullSnapshot = false;
-        _scheduledSnapshotSyncs = 1;
+        ReserveSnapshotSyncLocked();
+    }
+
+    private void ReserveSnapshotSyncLocked()
+    {
+        _pendingSnapshotSyncs++;
+        _snapshotSync ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private void FinishEvidenceLocked(ProtocolConnection connection)
@@ -87,6 +92,9 @@ internal sealed partial class WorkerCoordinator
         // A clean peer EOF has no exception. All other closures carry their original cause.
         var batch = new WorkerObservationBatch(_connectionId, WorkerEvidenceKind.Disconnected,
             Error: connection.Closed.GetAwaiter().GetResult());
+        _pendingSnapshotSyncs = 0;
+        _snapshotSync?.TrySetResult(false);
+        _snapshotSync = null;
         PublishLocked(batch);
         foreach (var request in _evidenceRequests.Values) {
             request.Waiter?.TrySetResult(batch);
@@ -126,6 +134,8 @@ internal sealed partial class WorkerCoordinator
         using var deadline = new CancellationTokenSource(RequestTimeout, _requestClock);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, cancellationToken, _shutdown.Token);
         var token = lifetime.Token;
+        bool WorkerReadyForPlan() => Snapshot is { FreshReadyToStart: true, WorkerSnapshot: { } worker }
+            && attempt!.Plan.RuntimeProfileDigest == worker.RuntimeProfileDigest;
         ProtocolConnection? connection;
         EvidenceRequest entry;
         lock (_gate) {
@@ -144,12 +154,8 @@ internal sealed partial class WorkerCoordinator
                 if (connection is null || connection != _connection || connection.IsClosed || entry.Identity.Connection is null) {
                     throw new InvalidOperationException("目标 Worker IPC 已失效。");
                 }
-                if (submission is not null && AwaitingFullSnapshotLocked()) {
-                    return PublishStartNotSentLocked(entry, "当前连接正在等待完整 Snapshot。");
-                }
-                if (attempt is not null && (Snapshot is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
-                    || attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
-                    || attempt.Plan.RuntimeProfileDigest != worker.RuntimeProfileDigest)) {
+                if (attempt is not null && (attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
+                    || _snapshotSync == null && !WorkerReadyForPlan())) {
                     throw new InvalidOperationException("当前 Worker、计划或 Run 状态不允许 Start。");
                 }
                 reply = entry.Waiter!.Task;
@@ -160,13 +166,28 @@ internal sealed partial class WorkerCoordinator
                 ? WireEnvelope.Request(ProtocolOperations.WorkerGetSnapshot, entry.Identity.RequestId, new GetSnapshotRequest(run.RunId))
                 : WireEnvelope.Request(ProtocolOperations.RunStart, entry.Identity.RequestId,
                     new RunStartRequest(run.RunId, attempt.PlanDigest, attempt.Plan) { RedactionValues = attempt.RedactionValues });
-            var written = await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, token),
-                submission is null ? null : () => CanWriteStart(connection, token)).WaitAsync(token).ConfigureAwait(false);
-            if (!written) {
+            Task<bool>? sync = null;
+            bool CanWriteStart()
+            {
                 lock (_gate) {
-                    _evidenceRequests.Remove(entry.Identity.RequestId);
-                    return PublishStartNotSentLocked(entry, "当前连接尚未完成快照同步或 Worker 未就绪。");
+                    token.ThrowIfCancellationRequested();
+                    if (connection != _connection || connection.IsClosed)
+                        throw new IOException("目标 Worker IPC 已断开。");
+                    sync = _snapshotSync?.Task;
+                    return sync == null && WorkerReadyForPlan();
                 }
+            }
+            while (!await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, token),
+                attempt is null ? null : CanWriteStart).WaitAsync(token).ConfigureAwait(false)) {
+                if (sync == null) {
+                    lock (_gate) {
+                        _evidenceRequests.Remove(entry.Identity.RequestId);
+                        return PublishStartNotSentLocked(entry, "当前 Worker 或计划状态不允许 Start。");
+                    }
+                }
+                // The pipe write lock is free for the snapshot request. Recheck under that lock after every wake.
+                if (!await sync.WaitAsync(token).ConfigureAwait(false))
+                    throw await connection.Closed.ConfigureAwait(false) ?? new EndOfStreamException("Worker IPC 已关闭。");
             }
             token.ThrowIfCancellationRequested();
             var batch = await reply.WaitAsync(token).ConfigureAwait(false);
@@ -193,26 +214,12 @@ internal sealed partial class WorkerCoordinator
         }
     }
 
-    private bool AwaitingFullSnapshotLocked() => !_receivedFullSnapshot || _scheduledSnapshotSyncs != 0
-        || _pending.Values.Any(request => request.Operation == ProtocolOperations.WorkerGetSnapshot);
-
     private WorkerObservationBatch PublishStartNotSentLocked(EvidenceRequest entry, string reason)
     {
         var batch = new WorkerObservationBatch(entry.Identity.Connection, WorkerEvidenceKind.NotSent, entry.Identity,
             Error: new InvalidOperationException(reason));
         PublishLocked(batch);
         return batch;
-    }
-
-    private bool CanWriteStart(ProtocolConnection connection, CancellationToken token)
-    {
-        lock (_gate) {
-            token.ThrowIfCancellationRequested();
-            if (connection != _connection || connection.IsClosed) {
-                throw new IOException("目标 Worker IPC 已断开。");
-            }
-            return !AwaitingFullSnapshotLocked() && Snapshot.FreshReadyToStart;
-        }
     }
 
     private void BeginBody(ProtocolConnection connection, EvidenceRequest entry, CancellationToken token)

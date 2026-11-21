@@ -33,7 +33,7 @@ internal static partial class RunLifecycleSelfTest
             };
             var p = notices[1];
             Check(notices[0].Intent?.Source == RunSource.Launch
-                && p.Kind == kind && p.Intent == retry && p.Operation == retry.OperationName
+                && p.ForegroundOnly && p.Kind == kind && p.Intent == retry && p.Operation == retry.OperationName
                 && (kind != NoticeKind.NotStarted || p.Error == error)
                 && f.History.OfType<SubmissionConclusion>().Last() is { } c && c.Submission == send.Submission && c.Conclusion == conclusion,
                 "已用过主动通知槽的手动重试仍需向本次前台入口交付一次错误");

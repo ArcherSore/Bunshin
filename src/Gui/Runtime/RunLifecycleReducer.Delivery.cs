@@ -20,11 +20,11 @@ internal sealed partial class RunLifecycleReducer
         Queue(new RequestQuit(key));
     }
 
-    private void Settle(TrackedRun r, StartConclusion conclusion, Exception? error)
+    private void Settle(TrackedRun r, StartConclusion conclusion, Exception? error, string? confirmedStartDetail = null)
     {
         CancelConfirmation(r);
         r = Conclude(r, conclusion, error);
-        // Each retrying click needs its own error, even if the Run's proactive slot was used.
+        // A new retry can still receive a foreground error after the Run's proactive slot was used.
         if (r.Notification == NotificationSlot.Open
             || r.Owner is { Source: RunSource.Manual } retry && retry.RetryOf == r.Key && r.NotificationIntent != retry.Id) {
             var kind = conclusion switch {
@@ -32,7 +32,8 @@ internal sealed partial class RunLifecycleReducer
                 StartConclusion.EndUnconfirmed => NoticeKind.EndUnconfirmed,
                 _ => NoticeKind.NotStarted
             };
-            Queue(new Present(r.Key, r.Owner, kind, r.Owner?.OperationName ?? "任务运行", error));
+            Queue(new Present(r.Key, r.Owner, kind, r.Owner?.OperationName ?? "任务运行", error)
+                { ConfirmedStartDetail = confirmedStartDetail });
             if (r.Notification == NotificationSlot.Open)
                 r = r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
         }
@@ -71,7 +72,7 @@ internal sealed partial class RunLifecycleReducer
             subject + (succeeded ? "已完成" : "运行失败"), Terminal: terminal);
     }
 
-    private void DispatchDelivery()
+    private void DispatchDelivery(bool deferManualErrors)
     {
         if (state.Closing != null || state.InFlightDelivery != null) return;
         while (!state.Deliveries.IsEmpty) {
@@ -79,10 +80,23 @@ internal sealed partial class RunLifecycleReducer
             var d = state.Deliveries.FirstOrDefault(d => d.Item is not RequestQuit)
                 ?? state.Deliveries.FirstOrDefault(d => d.Item.Key != state.DeferredQuit);
             if (d == null) return;
-            state = state with { Deliveries = state.Deliveries.Remove(d) };
+            var queued = d;
             if (d.Item is Present { Kind: NoticeKind.Faulted } fault && state.Runs[fault.Key] is { Retired: true } r) {
-                if (FinalNoticeAfterFault(r, fault) is not { } final) continue;
+                if (FinalNoticeAfterFault(r, fault) is not { } final) {
+                    state = state with { Deliveries = state.Deliveries.Remove(queued) };
+                    continue;
+                }
                 d = d with { Item = final };
+            }
+            if (deferManualErrors && d.Item is Present { Intent.Source: RunSource.Manual,
+                Kind: NoticeKind.NotStarted or NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed }) return;
+            state = state with { Deliveries = state.Deliveries.Remove(queued) };
+            if (d.Item is Present { Intent: { Source: RunSource.Manual, RetryOf: not null } retry } notice
+                && state.Runs[notice.Key] is { } run && run.NotificationIntent != retry.Id) {
+                if (run.Notification == NotificationSlot.Open)
+                    Save(run with { Notification = NotificationSlot.Claimed, NotificationIntent = retry.Id });
+                else
+                    d = d with { Item = notice with { ForegroundOnly = true } };
             }
             state = state with { InFlightDelivery = d };
             if (d.Item is RequestQuit) SetQuit(d.Item.Key, QuitStage.Requested);

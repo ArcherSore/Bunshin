@@ -12,6 +12,7 @@ internal abstract record LifecycleEvent
     internal sealed record ConfirmNow(RunKey Key) : LifecycleEvent;
     internal sealed record RetryDue(RunKey Key, long Token) : LifecycleEvent;
     internal sealed record Delivered(long Id, bool Presented = true) : LifecycleEvent;
+    internal sealed record DispatchPending : LifecycleEvent;
     internal sealed record CleanupFailed(RunKey Key, string Name, string Detail) : LifecycleEvent;
     internal sealed record DeferQuit(RunKey Key, bool Deferred) : LifecycleEvent;
     internal sealed record AbandonQuit(RunKey Key) : LifecycleEvent;
@@ -34,6 +35,8 @@ internal abstract record LifecycleEffect
     internal abstract record Payload(RunKey Key);
     internal sealed record Present(RunKey Run, RunIntent? Intent, NoticeKind Kind, string Operation, Exception? Error = null, RunSnapshot? Terminal = null) : Payload(Run)
     {
+        internal bool ForegroundOnly { get; init; }
+        internal string? ConfirmedStartDetail { get; init; }
         internal string Detail => Kind switch {
             NoticeKind.StartUnknown => "启动结果未知：任务可能已经开始执行。",
             NoticeKind.EndUnconfirmed => "任务已被接纳，运行结果未确认。",

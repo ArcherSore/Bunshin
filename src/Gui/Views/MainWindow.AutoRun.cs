@@ -52,19 +52,22 @@ public partial class MainWindow
             return Notify(new(notice.Operation, notice.Detail, notice.Kind != NoticeKind.Succeeded));
         }
 
-        var detail = notice.Kind is NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed ? notice.Detail : null;
+        var detail = notice.Kind is NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed ? notice.Detail : notice.ConfirmedStartDetail;
         var error = notice.Error ?? new InvalidOperationException(detail ?? "任务未能启动。");
         if (notice.Intent?.Source == RunSource.Manual) {
             if (IsVisible && WindowState != WindowState.Minimized) {
-                PresentOperationError(notice.Operation, error, detail);
+                var message = detail != null && notice.ConfirmedStartDetail == null
+                    ? $"{detail}\n\n{error.GetBaseException().Message}" : detail;
+                PresentOperationError(notice.Operation, error, message);
                 return true;
             }
             _logger.Error($"{notice.Operation}。", error);
+            if (notice.ForegroundOnly) return false;
             return Notify(new(notice.Operation, detail ?? error.GetBaseException().Message, true, notice.Operation, error));
         } else if (notice.Intent is { Source: RunSource.Scheduled } scheduled) {
             if (notice.Kind == NoticeKind.NotStarted) {
                 return ReportScheduledStartFailure(scheduled.ConfigurationName,
-                    error is WorkerProtocolErrorException ? "桌面分身启动失败（任务提交未成功）" : "桌面分身启动失败（任务未被接纳）", error);
+                    detail ?? (error is WorkerProtocolErrorException ? "桌面分身启动失败（任务提交未成功）" : "桌面分身启动失败（任务未被接纳）"), error);
             } else {
                 AddScheduleActivity($"「{scheduled.ConfigurationName}」：{detail}", LogLevel.Error);
                 return Notify(new($"「{scheduled.ConfigurationName}」运行未确认", notice.Detail, true, notice.Operation, error));
@@ -80,7 +83,7 @@ public partial class MainWindow
     // starts the Run, as the Start button does. Returns whether it did.
     internal async Task<bool> AutoRunOnLaunchAsync()
     {
-        if (_projectPlan is not { } project) {
+        if (_projectPlan is not { } project || SkipLaunchForPendingQuit()) {
             return false;
         }
         // The list is a placeholder then, so nothing can be matched; say so instead of skipping silently. Asked for
@@ -108,6 +111,13 @@ public partial class MainWindow
         }
         ResumeScheduledCleanup();
         return entered;
+    }
+
+    private bool SkipLaunchForPendingQuit()
+    {
+        if (_lifecycle.PendingQuitReason() is not { } reason) return false;
+        _logger.Info($"自动执行已跳过：{reason}。");
+        return true;
     }
 
     private async Task StartLaunchConfigurationAsync(ProjectPlanModule project, Guid id)

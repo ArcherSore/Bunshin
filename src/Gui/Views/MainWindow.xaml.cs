@@ -140,6 +140,7 @@ public partial class MainWindow : FluentWindow
         _environment = environment;
         _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, DeliverRunAction, logger, scheduleClock);
         _lifecycle.Changed += RefreshRuntimeControls;
+        _environment.Ended += _lifecycle.EnvironmentRecovered;
         _environment.PendingLifecycleStart = view => _lifecycle.PendingStart(view)?.RunId;
         _prepareEnvironment = prepareEnvironment ?? environment.PrepareAsync;
         _requestExitAsync = requestExitAsync;
@@ -209,8 +210,6 @@ public partial class MainWindow : FluentWindow
     {
         if (_closingId is Guid id) _lifecycle.Apply(new LifecycleEvent.ClosingCommitted(id));
     }
-
-    internal void EnvironmentRecovered() => _lifecycle.Apply(new LifecycleEvent.EnvironmentRecovered());
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
@@ -306,6 +305,7 @@ public partial class MainWindow : FluentWindow
             _sessionManager.StateChanged -= OnSessionStateChanged;
             _workerCoordinator.StateChanged -= OnWorkerStateChanged;
             _environment.StateChanged -= OnEnvironmentStateChanged;
+            _environment.Ended -= _lifecycle.EnvironmentRecovered;
             _workerCoordinator.LogReceived -= OnWorkerLogReceived;
             IsVisibleChanged -= MainWindow_IsVisibleChanged;
             StateChanged -= MainWindow_StateChanged;
@@ -661,6 +661,7 @@ public partial class MainWindow : FluentWindow
                 "当前 任务配置尚未通过正式 PI Resolver 校验。 ");
         }
         _lifecycle.Drain();
+        if (source == RunSource.Launch && SkipLaunchForPendingQuit()) return;
         var view = _workerCoordinator.Snapshot;
         var worker = view.WorkerSnapshot ?? throw new InvalidOperationException("Worker 快照已失效。");
         if (_lifecycle.PendingStart(view) != null || _lifecycle.State.Quits.Values.Contains(QuitStage.Requested)
@@ -832,8 +833,12 @@ public partial class MainWindow : FluentWindow
 
         if (pending is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment) {
             await RunWindowOperationAsync(pending, async () => {
-                if (!await _environment.TryRunExclusiveAsync(operation)) {
-                    LogIgnoredAction(caller);
+                // IPC can publish the error on another dispatcher turn before the awaited submission returns.
+                _lifecycle.DeferManualErrors(true);
+                try {
+                    if (!await _environment.TryRunExclusiveAsync(operation)) LogIgnoredAction(caller);
+                } finally {
+                    _lifecycle.DeferManualErrors(false);
                 }
             }, unattended);
         } else {
@@ -1502,8 +1507,7 @@ public partial class MainWindow : FluentWindow
 
     private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory, string? detail = null)
     {
-        var message = $"{exception.GetBaseException().Message}\n\n{recovery}";
-        if (detail != null) message = detail + "\n\n" + message;
+        var message = $"{detail ?? exception.GetBaseException().Message}\n\n{recovery}";
         if (!offerLogDirectory) {
             _presentation.ShowError(null, title, exception, message, MessageBoxButton.OK);
             return;

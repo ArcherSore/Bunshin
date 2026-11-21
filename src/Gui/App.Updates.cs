@@ -41,7 +41,6 @@ public partial class App
             await environment.EndAsync(inGate: async ended => {
                 if (ended.Error is { } error)
                     throw new IOException($"{error.Message}已取消安装。请查看日志后重试。", error);
-                window.EnvironmentRecovered();
                 await install();
                 handedOff = true;
                 window.CommitExit();
