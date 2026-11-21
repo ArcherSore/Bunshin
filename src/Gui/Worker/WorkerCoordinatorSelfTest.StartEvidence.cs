@@ -386,6 +386,14 @@ internal static partial class WorkerCoordinatorSelfTest
         var queuedTask = c.SendStartAsync(queued, f.Attempt, f.Token);
         await f.ExpireAsync(queuedTask);
         Require(!held.IsCompleted, "排队的提交必须在持锁者仍停于首字节前时超时。");
+        // The closing host cancels the token belonging to this submission while the ordinary writer owns the lock.
+        using var closing = CancellationTokenSource.CreateLinkedTokenSource(f.Token);
+        var closingSubmission = f.NewSubmission();
+        var closingWriter = c.SendStartAsync(closingSubmission, f.Attempt, closing.Token);
+        await f.NextAsync(WorkerEvidenceKind.BeforeBody, closingSubmission);
+        closing.Cancel();
+        var cancelledWrite = await ExpectAsync<OperationCanceledException>(() => closingWriter.WaitAsync(f.Token), "等写锁时应收到原取消。");
+        await f.NextAsync(WorkerEvidenceKind.NotSent, closingSubmission);
         cancel.Cancel();
         await ExpectAsync<OperationCanceledException>(() => held.WaitAsync(f.Token), "普通请求应保留零字节取消。");
         Require(f.History.Count(b => b.Kind == WorkerEvidenceKind.NotSent && b.Request?.Submission == queued) == 1
@@ -396,6 +404,9 @@ internal static partial class WorkerCoordinatorSelfTest
         var stopped = await f.ReadAsync(zero, ProtocolOperations.RunStop);
         await zero.WriteAsync(WireEnvelope.Response(stopped.Operation, stopped.RequestId!.Value, new RunStopResponse("accepted")), f.Token);
         await stop.WaitAsync(f.Token);
+        Require(f.History.Count(b => b.Kind == WorkerEvidenceKind.NotSent && b.Request?.Submission == closingSubmission
+            && b.Error == cancelledWrite) == 1 && !f.History.Any(b => b.Kind == WorkerEvidenceKind.BodyStarted)
+            && f.WireStarts == 0, "释放写锁并完成后续请求后，确认退出取消的启动仍须为零次正文、一次 NotSent。");
         await zero.DisposeAsync();
         await f.NextAsync(WorkerEvidenceKind.Disconnected);
 

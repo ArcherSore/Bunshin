@@ -202,8 +202,12 @@ internal static partial class SelfTestRunner
         // Scenarios open and close windows in turn; closing the last of them must not end the run.
         System.Windows.Application.Current.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
         try {
-            return SelfTestSuite.Run("GUI SELF-TEST", Checks.Where(check => groups.Contains(check.Group))
-                .Select(check => (check.Name, (Action)(() => Execute(check, root)))), args, DescribeMachine());
+            var selected = Checks.Where(check => groups.Contains(check.Group))
+                .Select(check => (check.Name, (Action)(() => Execute(check, root))));
+            if (groups.Contains(Group.Project)) {
+                selected = RunLifecycleSelfTest.Cases.Select(test => (test.Method.Name, test)).Concat(selected);
+            }
+            return SelfTestSuite.Run("GUI SELF-TEST", selected, args, DescribeMachine());
         } finally {
             try {
                 Directory.Delete(root, recursive: true);
