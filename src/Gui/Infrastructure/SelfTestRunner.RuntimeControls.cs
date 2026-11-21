@@ -469,9 +469,11 @@ internal static partial class SelfTestRunner
 
     private static void PumpUntilFocus(Func<bool> condition, string failure)
     {
+        // The condition must be a pure focus/activation check; business conditions are asserted separately.
+        var satisfied = false;
         try {
-            PumpUntil(condition, failure);
-        } catch (InvalidOperationException exception) when (exception.Message == failure) {
+            PumpUntil(() => satisfied = condition(), failure);
+        } catch (InvalidOperationException) when (!satisfied) {
             throw new FocusAssertionException(failure);
         }
     }

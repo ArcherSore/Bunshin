@@ -23,19 +23,6 @@ function Get-Files
     $listed | Where-Object { Test-Path -LiteralPath (Join-Path $root $_) -PathType Leaf }
 }
 
-# Character ranges covered by balanced calls such as Task.WhenAny(...), where a Task.Delay is a timeout guard.
-function Get-CallRanges
-{
-    param([string]$Code, [string]$Call)
-    foreach ($open in [regex]::Matches($Code, $Call)) {
-        $depth = 1
-        for ($i = $open.Index + $open.Length; $i -lt $Code.Length -and $depth -gt 0; $i++) {
-            if ($Code[$i] -eq '(') { $depth++ } elseif ($Code[$i] -eq ')') { $depth-- }
-        }
-        [pscustomobject]@{ Start = $open.Index + $open.Length; End = $i }
-    }
-}
-
 $found = @{}
 
 # ---- C# self-tests ----
@@ -51,12 +38,8 @@ foreach ($file in Get-Files 'src/*SelfTest*.cs', 'src/*.Tests/*.cs') {
     $names = [regex]::Matches($code, "\b(?:var|int|long|double|TimeSpan)\s+(\w+)\s*=\s*$duration\s*;") |
         ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
     foreach ($name in $names) { $fixed += '|' + [regex]::Escape($name) }
-    # A delay passed to Task.WhenAny only bounds a wait that is otherwise decided by an observable condition.
-    $guards = @(Get-CallRanges $code '\bTask\s*\.\s*WhenAny\s*\(')
     $calls = "\b(?<method>$method)\s*\(\s*(?<delay>$fixed)\s*(?=[,)])|\b(?<method>Pump(?:Onboarding)?)\s*\(\s*\)"
     foreach ($call in [regex]::Matches($code, $calls)) {
-        $index = $call.Index
-        if ($guards | Where-Object { $index -ge $_.Start -and $index -lt $_.End }) { continue }
         $name = $call.Groups['method'].Value -replace '\s'
         $delay = $call.Groups['delay'].Value -replace '\s'
         $found["$file $name($delay)"]++
@@ -103,7 +86,7 @@ $under = @($baseline.Keys | Sort-Object | Where-Object { [int]$found[$_] -lt $ba
 foreach ($key in $under) {
     Write-Host "FAIL $key (found $([int]$found[$key]), baseline $($baseline[$key])): lower the baseline"
 }
-if ($over.Count) { throw 'New fixed wait in test code. Use PumpUntil or wait for an observable condition.' }
+if ($over.Count) { throw 'New fixed wait in test code. Use PumpUntil for conditions, and task.WaitAsync(timeout) for timeout guards.' }
 if ($under.Count) {
     throw 'Fixed waits were removed. Run check-fixed-waits.ps1 -UpdateBaseline and commit the lower baseline.'
 }
