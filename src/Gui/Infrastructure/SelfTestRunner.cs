@@ -68,6 +68,16 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview)),
         new(Group.Project, "VerifyScheduledTraySettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Tray)),
+        new(Group.Project, "VerifyScheduledGapSettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, tickBeforeDispatch: true, order: SettlementOrder.Gap)),
+        new(Group.Project, "VerifyScheduledUpdateSettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Update)),
+        new(Group.Project, nameof(WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite), c => {
+            var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
+                WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite(c.Logger, c.Directory, c.Project)).Task.Unwrap();
+            PumpUntil(() => check.IsCompleted, "终态取消确认查询后应能继续启动。");
+            check.GetAwaiter().GetResult();
+        }),
         new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
         new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),
         new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),

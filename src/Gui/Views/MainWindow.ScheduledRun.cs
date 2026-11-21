@@ -310,6 +310,18 @@ public partial class MainWindow
         }
     }
 
+    internal void CompleteEndedScheduledCleanup()
+    {
+        if (_lifecycle.ReadOrchestration().Scheduled is { NeedsCleanup: true } own)
+            RecordSuccessfulScheduledCleanup(own.Key);
+    }
+
+    private void RecordSuccessfulScheduledCleanup(RunKey key)
+    {
+        _lifecycle.SetCleanup(key, CleanupStage.Finished);
+        AddScheduleActivity("全部完成，已关闭桌面分身");
+    }
+
     private async Task EndScheduledRunAsync(ScheduledSettlement own, bool gateHeld)
     {
         if (_exitInProgress || _environment.Closing) return;
@@ -326,14 +338,14 @@ public partial class MainWindow
                 ended = EnvironmentEndResult.Unconfirmed(error);
             }
             if (ended.Outcome == EnvironmentEndOutcome.Declined) return;
-            _lifecycle.SetCleanup(own.Key, CleanupStage.Finished, ended.Error);
             if (ended.Error is { } failure) {
+                _lifecycle.SetCleanup(own.Key, CleanupStage.Finished, failure);
                 _logger.Error($"定时执行「{own.Name}」未能关闭桌面分身。", failure);
                 const string reason = "任务已完成，桌面分身未能关闭";
                 AddScheduleActivity(reason, LogLevel.Error);
                 _lifecycle.Apply(new LifecycleEvent.CleanupFailed(own.Key, own.Name, reason));
             } else {
-                AddScheduleActivity("全部完成，已关闭桌面分身");
+                RecordSuccessfulScheduledCleanup(own.Key);
             }
         }
 

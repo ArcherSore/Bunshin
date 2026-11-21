@@ -228,7 +228,7 @@ internal static partial class RunLifecycleSelfTest
             f.Timeout(f.Body());
             f.Eof();
             var terminal = f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded));
-            f.Reconnect(terminal, syncPending: true);
+            f.Reconnect(terminal, new(WorkerObservation.Connected, false, terminal, ""));
             var before = f.History.Count;
             if (exits) f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, f.Frame(last: SnapshotOf(Attempt(8), RunState.Failed)));
@@ -243,10 +243,10 @@ internal static partial class RunLifecycleSelfTest
         g.Eof();
         var older = g.Frame();
         var last = g.Frame(last: SnapshotOf(g.Plan, RunState.Succeeded));
-        g.Reconnect(last, syncPending: true);
+        g.Reconnect(last, new(WorkerObservation.Connected, false, last, ""));
         Check(g.History.OfType<CompleteScheduled>().Count() == 0 && new RunOrchestration(g.State).PendingStart(g.State.Current) == g.Key,
             "首次同步前的终态不能放行下一次启动。");
-        g.FrameEvent(older, g.State.Current);
+        g.FrameEvent(older, g.State.Current with { SnapshotFresh = true });
         Check(g.History.OfType<CompleteScheduled>().Single().Terminal == last.LastRun
             && new RunOrchestration(g.State).PendingStart(g.State.Current) == null,
             "补齐同步后，最新匹配终态与解除待启动必须在同一次转换生效。");

@@ -86,13 +86,14 @@ internal static partial class RunLifecycleSelfTest
             var gap = f.Frame(last: terminal) with { StateRevision = active.StateRevision + 2 };
             var stale = f.State.Current with { SnapshotFresh = false };
             f.FrameEvent(gap, stale);
-            f.FrameEvent(gap, stale);
             Check(!f.History.OfType<CompleteScheduled>().Any() && !f.Items<Present>().Any(),
-                "跳号时的终态应保留到补查完成。");
-            f.FrameEvent(gap);
+                "首次跳号导致视图失效时应暂存终态。");
+            // The coordinator accepts the repeated event while the full read is still outstanding.
             f.FrameEvent(gap);
             Check(f.History.OfType<CompleteScheduled>().Single() == new CompleteScheduled(f.Key, intent, terminal),
-                "定时完成应随转换提交一次，保留原始终态，不等待呈现回执");
+                "跳号终态一经发布为新鲜视图，同一次转换就应提交一次原始终态。");
+            f.FrameEvent(gap);
+            Check(f.History.OfType<CompleteScheduled>().Count() == 1, "完整补查不能重复结算。");
             f.Finish(status == RunState.Cancelled ? [] : [typeof(Present)]);
             Check(f.Items<Present>().All(p => p.Terminal == terminal && p.Operation.Contains(intent.ConfigurationName)),
                 "定时终态提醒必须属于原任务");
@@ -344,7 +345,7 @@ internal static partial class RunLifecycleSelfTest
             f.FrameEvent(fault);
             f.FrameEvent(fault);
             var terminal = outcome is "terminal" or "terminal-exit";
-            if (terminal) f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)), syncPending: true);
+            if (terminal) f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)), f.State.Current with { SnapshotFresh = false });
             var beforeConfirmation = f.History.Count;
             if (outcome is "process-exit" or "terminal-exit") f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, terminal ? f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)) : fault);

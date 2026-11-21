@@ -118,20 +118,19 @@ internal static partial class RunLifecycleSelfTest
         }
 
         internal void Evidence(WorkerObservationBatch b) => Step(new Observed(b, ConfigurationName));
-        internal void FrameEvent(WorkerSnapshot observed, WorkerCoordinatorSnapshot? current = null, bool syncPending = false) =>
+        internal void FrameEvent(WorkerSnapshot observed, WorkerCoordinatorSnapshot? current = null) =>
             Evidence(new(Connection, WorkerEvidenceKind.Snapshot,
-                Current: current ?? new(WorkerObservation.Connected, true, observed, ""), ObservedSnapshot: observed,
-                SnapshotSyncPending: syncPending));
+                Current: current ?? new(WorkerObservation.Connected, true, observed, ""), ObservedSnapshot: observed));
 
         internal void Active(WorkerState worker = WorkerState.Ready) => FrameEvent(Frame(SnapshotOf(Plan, RunState.Running), worker: worker));
         internal void Terminal(RunState status) => FrameEvent(Frame(last: SnapshotOf(Plan, status)));
         internal void Eof(Exception? error = null) => Evidence(new(Connection, WorkerEvidenceKind.Disconnected, Error: error));
         internal void ExitWorker() => Evidence(new(Connection, WorkerEvidenceKind.ProcessExited));
-        internal void Reconnect(WorkerSnapshot? frame = null, bool syncPending = false)
+        internal void Reconnect(WorkerSnapshot? frame = null, WorkerCoordinatorSnapshot? current = null)
         {
             Connection = Connection with { Generation = Connection.Generation + 1 };
             sequence = 0;
-            FrameEvent(frame ?? Frame(), syncPending: syncPending);
+            FrameEvent(frame ?? Frame(), current);
         }
 
         internal WorkerRequestEvidence Writer() => new(Id(1000 + sends), Key, Start.Submission, null, Connection);

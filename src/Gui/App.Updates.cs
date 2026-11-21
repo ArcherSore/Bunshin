@@ -36,11 +36,13 @@ public partial class App
         environment.Closing = true;
         window.SetExitInProgress(true);
         var handedOff = false;
+        var environmentEnded = false;
         try {
             // Keep the environment gate through the engine acknowledgement and GUI teardown.
             await environment.EndAsync(inGate: async ended => {
                 if (ended.Error is { } error)
                     throw new IOException($"{error.Message}已取消安装。请查看日志后重试。", error);
+                environmentEnded = ended.Outcome == EnvironmentEndOutcome.Ended;
                 await install();
                 handedOff = true;
                 window.CommitExit();
@@ -52,6 +54,7 @@ public partial class App
             if (!handedOff) {
                 environment.Closing = false;
                 window.SetExitInProgress(false);
+                if (environmentEnded) window.CompleteEndedScheduledCleanup();
             }
         }
     }

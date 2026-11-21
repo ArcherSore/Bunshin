@@ -93,7 +93,7 @@ internal static partial class SelfTestRunner
             RunState.Failed, tickBeforeDispatch: true);
     }
 
-    private enum SettlementOrder { Normal, Reconnect, Preview, Tray }
+    private enum SettlementOrder { Normal, Reconnect, Preview, Tray, Gap, Update }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
         bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false,
@@ -301,16 +301,17 @@ internal static partial class SelfTestRunner
                     // Advance IPC on the pool while the dispatcher is still handling the clock tick.
                     var received = snapshot with { LastRun = done, StateRevision = cleanupCollision ? 4 : 3 };
                     Guid nextTarget = target;
-                    if (cleanupCollision) {
+                    if (cleanupCollision || order == SettlementOrder.Gap) {
                         var task = project.SelectedTaskNames.First();
                         nextTarget = project.CreateConfiguration();
                         project.RenameConfiguration(nextTarget, "下一班");
                         project.AddItem(PlanItemKind.MaaTask, task);
                         project.AddSchedulePolicy(nextTarget, "早班");
                         project.ActivateConfiguration(target);
-                        if (failCleanup) wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
+                        if (cleanupCollision && failCleanup) wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
                     }
                     if (order == SettlementOrder.Reconnect) {
+                        received = received with { StateRevision = 6 };
                         pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
                         AwaitWorker(coordinator, s => s.Observation == WorkerObservation.IpcDisconnected, "A 运行期间应已断线。");
                         var targeted = new TaskCompletionSource<Guid?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -318,20 +319,22 @@ internal static partial class SelfTestRunner
                         connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
                             pipeName, record!, 0, token, lastRun: done, stateRevision: received.StateRevision,
                             beforeSnapshotReply: async peer => {
-                                await peer.WriteAsync(StateEvent(received), token);
+                                await peer.WriteAsync(StateEvent(snapshot with { StateRevision = 4, ActiveRun = own,
+                                    RunState = RunState.Running }), token);
                                 var q = await WorkerCoordinatorSelfTest.ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, token);
+                                await peer.WriteAsync(StateEvent(received), token);
                                 targeted.SetResult(ProtocolJson.Deserialize<GetSnapshotRequest>(q.Data).RunId);
                                 await sync.Task.WaitAsync(token);
                             }));
                         PumpUntil(() => targeted.Task.IsCompleted, "首次同步前应定向复核已断线的 A。");
+                        AwaitWorker(coordinator, s => s.Resynchronising, "重连后跳号的终态应使视图失效。");
                         Require(targeted.Task.Result == own.RunId && failures.Count == 0 && session.HasChildSession,
-                            "首次同步前的 LastRun 应暂存，不能提前提醒或收尾。");
-                        // The full reply repeats the event revision. Keep the targeted query unanswered
-                        // and the dispatcher on B's tick until this particular reply is published.
+                            "首次同步前失效的 LastRun 应暂存，不能提前提醒或收尾。");
+                        // Keep the targeted query unanswered and the dispatcher on B's tick until the full reply.
                         using var synced = new ManualResetEventSlim();
                         void OnFullReply(object? _, WorkerObservationBatch batch)
                         {
-                            if (batch is { Kind: WorkerEvidenceKind.Snapshot, SnapshotSyncPending: false }
+                            if (batch is { Kind: WorkerEvidenceKind.Snapshot, Current.Fresh: true }
                                 && batch.ObservedSnapshot?.LastRun?.RunId == own.RunId) synced.Set();
                         }
                         coordinator.ObservationReceived += OnFullReply;
@@ -342,6 +345,22 @@ internal static partial class SelfTestRunner
                         } finally {
                             coordinator.ObservationReceived -= OnFullReply;
                         }
+                    } else if (order == SettlementOrder.Gap) {
+                        var running = snapshot with { StateRevision = 3, ActiveRun = own, RunState = RunState.Running };
+                        var gap = running with { StateRevision = 5 };
+                        received = snapshot with { StateRevision = 6, LastRun = done };
+                        Task.Run(async () => {
+                            await pipe.WriteAsync(StateEvent(running), token);
+                            await pipe.WriteAsync(StateEvent(gap), token);
+                            // accepted may already have sent a targeted query. Leave both reads unanswered.
+                            WireEnvelope query;
+                            do {
+                                query = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.WorkerGetSnapshot, token);
+                            } while (ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId.HasValue);
+                            await pipe.WriteAsync(StateEvent(received), token);
+                        }).GetAwaiter().GetResult();
+                        AwaitWorker(coordinator, s => s.FreshReadyToStart && s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
+                            "完整补查未返回时，协调器应已发布 A 的新鲜终态。");
                     } else {
                         Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
                     }
@@ -350,6 +369,32 @@ internal static partial class SelfTestRunner
                         "下一分钟已到时 Worker 应已报告此前 Run 的失败。");
                     var completed = new List<Guid>();
                     window.ScheduledRunCompleted += (_, run) => completed.Add(run.RunId);
+                    if (order == SettlementOrder.Gap) {
+                        var firstPeer = connected;
+                        var failedBeforeSwitch = false;
+                        window.NotificationRequested += (_, n) => {
+                            if (n.Title == $"「{name}」运行失败")
+                                failedBeforeSwitch = project.ActiveConfigurationId == target && completed.SequenceEqual([own.RunId]);
+                        };
+                        clock.Advance(TimeSpan.FromMinutes(1));
+                        var tick = window.CheckScheduledRunsAsync();
+                        PumpUntil(() => tick.IsCompleted || connected != firstPeer && connected!.IsCompleted,
+                            "普通定时 B 应在补查回包前获准启动。");
+                        Require(failedBeforeSwitch && preparations == 2 && project.ActiveConfigurationId == nextTarget
+                            && completed.SequenceEqual([own.RunId]) && failures.Count == 1,
+                            "普通定时 B 到点应先处理 A 的失败，再启动 B。");
+                        var nextPeer = connected!.GetAwaiter().GetResult();
+                        var nextRequest = Task.Run(() => WorkerCoordinatorSelfTest.ReadRequestAsync(nextPeer, ProtocolOperations.RunStart, token));
+                        PumpUntil(() => nextRequest.IsCompleted, "B 的新 Worker 应收到开始请求。");
+                        Require(ProtocolJson.Deserialize<RunStartRequest>(nextRequest.Result.Data).RunId != own.RunId,
+                            "B 应提交新的 Run。");
+                        Task.Run(() => nextPeer.WriteAsync(WireEnvelope.Response(ProtocolOperations.RunStart,
+                            nextRequest.Result.RequestId!.Value, new RunStartResponse("accepted")), token)).GetAwaiter().GetResult();
+                        PumpUntil(() => tick.IsCompleted, "B 应收到接纳应答。");
+                        tick.GetAwaiter().GetResult();
+                        pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        return;
+                    }
                     if (cleanupCollision) {
                         clock.Advance(TimeSpan.FromMinutes(1));
                         var check = window.CheckScheduledRunsAsync();
@@ -427,6 +472,21 @@ internal static partial class SelfTestRunner
                         });
                         PumpUntil(() => tray.IsCompleted, "确认后托盘应先结束分身。");
                         Require(tray.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Ended, "托盘结束分身应成功。");
+                    } else if (order == SettlementOrder.Update) {
+                        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        var gate = environment.RunExclusiveAsync(() => release.Task);
+                        var failure = new IOException("模拟 Engine 交接失败");
+                        var update = App.InstallAfterEnvironmentEndAsync(environment, window, logger, () => throw failure,
+                            () => throw new InvalidOperationException("交接失败不应关闭 GUI。"));
+                        Publish(done, 4);
+                        Require(completions.Count == 0 && session.HasChildSession, "交接期间应缓冲 A 的完成和收尾。");
+                        release.SetResult();
+                        PumpUntil(() => update.IsCompleted, "更新应结束旧环境并报告交接失败。");
+                        gate.GetAwaiter().GetResult();
+                        Require(update.Exception?.GetBaseException() == failure && !environment.Closing
+                            && AdmissionDiscarded(coordinator), "GUI 应在环境已确认结束后恢复。");
+                        Require(window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
+                            "交接失败恢复时应立即记一次定时收尾，不等下一班。");
                     } else {
                         Publish(done, terminal == RunState.Succeeded ? 4 : 3);
                     }
@@ -516,9 +576,10 @@ internal static partial class SelfTestRunner
                         failPreparation = false;
                         throw new InvalidOperationException("模拟首次准备失败");
                     }
-                    if (++preparations > 1) {
+                    if (++preparations > 1 && order != SettlementOrder.Gap) {
                         throw new InvalidOperationException("模拟第二次准备结束");
                     }
+                    if (preparations == 2) record = null; // B starts after the simulated logoff of A's Worker.
                     // 迁移至 VerifyPrepareAndRunWiring / 定时换场后隐藏准备
                     Require(!session.HasChildSession && !show, "准备前应已确认没有旧桌面分身。");
                     wts.ReportedId = sessionId;

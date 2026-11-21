@@ -28,7 +28,7 @@ internal enum StartReplyKind { Accepted, AlreadyAccepted, RejectedBeforeRegistra
 internal sealed record WorkerObservationBatch(WorkerConnectionId? Connection, WorkerEvidenceKind Kind,
     WorkerRequestEvidence? Request = null, WorkerCoordinatorSnapshot? Current = null,
     WorkerSnapshot? ObservedSnapshot = null, StartReplyKind? StartReply = null, string? ReplyCode = null,
-    bool? RunRegistered = null, Exception? Error = null, bool SnapshotSyncPending = false);
+    bool? RunRegistered = null, Exception? Error = null);
 
 internal sealed partial class WorkerCoordinator
 {
@@ -36,6 +36,7 @@ internal sealed partial class WorkerCoordinator
     private sealed class EvidenceRequest(WorkerRequestEvidence identity)
     {
         internal WorkerRequestEvidence Identity = identity;
+        internal bool DiscardReply;
         internal TaskCompletionSource<WorkerObservationBatch>? Waiter =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -150,6 +151,13 @@ internal sealed partial class WorkerCoordinator
                 PublishLocked(new(id, WorkerEvidenceKind.BeforeBody, entry.Identity));
             }
         }
+        // Only the transport deadline and shutdown can interrupt a query after the prefix starts.
+        using var queryWriter = queryId.HasValue
+            ? CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _shutdown.Token) : null;
+        using var discard = queryId.HasValue ? cancellationToken.Register(() => {
+            lock (_gate) entry.DiscardReply = true;
+        }) : default;
+        var frameToken = queryWriter?.Token ?? token;
         try {
             Task<WorkerObservationBatch> reply;
             lock (_gate) {
@@ -179,8 +187,8 @@ internal sealed partial class WorkerCoordinator
                     return sync == null && WorkerReadyForPlan();
                 }
             }
-            while (!await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, token),
-                attempt is null ? null : CanWriteStart).WaitAsync(token).ConfigureAwait(false)) {
+            while (!await WriteRequestAsync(connection, frame, token, () => BeginBody(connection, entry, frameToken),
+                attempt is null ? null : CanWriteStart, frameToken).WaitAsync(frameToken).ConfigureAwait(false)) {
                 if (sync == null) {
                     lock (_gate) {
                         _evidenceRequests.Remove(entry.Identity.RequestId);
@@ -246,6 +254,7 @@ internal sealed partial class WorkerCoordinator
         if (!_evidenceRequests.Remove(id, out var entry)) {
             return false;
         }
+        if (entry.DiscardReply) return true;
         var request = entry.Identity;
         try {
             var start = request.Submission is not null;
@@ -307,8 +316,7 @@ internal sealed partial class WorkerCoordinator
     private bool ObservingEvidence => _evidenceRequested || ObservationReceived is not null;
 
     private WorkerObservationBatch SnapshotBatchLocked(WorkerSnapshot observed) =>
-        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed,
-            SnapshotSyncPending: _snapshotSync != null);
+        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed);
 
     private static void ValidateEvidenceSnapshot(WorkerSnapshot snapshot)
     {

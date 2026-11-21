@@ -2,7 +2,9 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
+using System.Windows.Threading;
 using Gui.Infrastructure;
+using Gui.Runtime;
 using ProjectModel;
 using Protocol;
 
@@ -636,11 +638,58 @@ internal static partial class WorkerCoordinatorSelfTest
             "摘除 Admission 应立即关闭管道，不能冒充进程退出。");
     }
 
+    internal static async Task VerifyTerminalDuringQueryWrite(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        await using var peer = await f.ConnectAsync();
+        var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var host = new RunLifecycleHost(f.Coordinator, Dispatcher.CurrentDispatcher, () => "A",
+            _ => presented.TrySetResult(), () => { }, logger);
+        var intent = new RunIntent(Guid.NewGuid(), RunSource.Manual, "开始任务", new(Guid.NewGuid(), 1, 1), "A");
+        var first = host.SubmitAsync(intent, f.Run, f.Attempt);
+        var start = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Server.ResumeWrite = resume.Task;
+        f.Server.StopAfterBytes = sizeof(uint) + 32;
+        var terminal = CreateSnapshot(f.Admission, 0) with { StateRevision = 2,
+            LastRun = CreateActiveRun(f.Attempt) with { State = RunState.Succeeded, EndedAtUtc = DateTime.UtcNow } };
+        try {
+            await peer.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
+            await first;
+            await f.Server.Blocked.Task.WaitAsync(f.Token);
+            Require(f.Server.PartialFrameBytes == sizeof(uint) + 32, "确认查询应正停在正文中。");
+            using var cancel = new CancellationTokenSource();
+            var queued = f.Coordinator.QueryRunAsync(f.Run, new(Guid.NewGuid()), cancel.Token);
+            cancel.Cancel();
+            await ExpectAsync<OperationCanceledException>(() => queued.WaitAsync(f.Token), "等待写锁的查询应当场取消。");
+            await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
+                new StateChangedEvent(f.Run.WorkerInstanceId, 2, terminal)), f.Token);
+            await presented.Task.WaitAsync(f.Token);
+        } finally {
+            resume.TrySetResult();
+        }
+        var query = await f.ReadAsync(peer, ProtocolOperations.WorkerGetSnapshot);
+        await peer.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+            new GetSnapshotResponse(terminal with { StateRevision = 3 }, true)), f.Token);
+        var next = f.Attempt with { RunId = Guid.NewGuid() };
+        var submission = f.NewSubmission() with { Run = f.Run with { RunId = next.RunId } };
+        var sending = f.Coordinator.SendStartAsync(submission, next, f.Token);
+        var nextFrame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+        await peer.WriteAsync(WireEnvelope.Response(nextFrame.Operation, nextFrame.RequestId!.Value,
+            new RunStartResponse("accepted")), f.Token);
+        Require(ProtocolJson.Deserialize<RunStartRequest>(nextFrame.Data).RunId == next.RunId
+            && (await sending).StartReply == StartReplyKind.Accepted && f.WireStarts == 2
+            && f.Coordinator.Snapshot is { Fresh: true, WorkerSnapshot.StateRevision: 2 }
+            && !f.History.Any(b => b.Kind is WorkerEvidenceKind.Disconnected or WorkerEvidenceKind.QueryReply),
+            "取消的查询应完整写出并丢弃应答，下一次开始应在原连接上成功。");
+    }
+
     // Only the GUI's outgoing writes are intercepted. Admission, framing, reader, and peer EOF use a real pipe.
     private sealed class EvidenceWriteStream(Stream pipe, Action onWireStart) : Stream
     {
         internal int? StopAfterBytes;
         internal TaskCompletionSource? ReleasePrefix;
+        internal Task? ResumeWrite;
         internal Task? HoldNextFlush;
         internal readonly TaskCompletionSource Blocked = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource WireClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -694,6 +743,11 @@ internal static partial class WorkerCoordinatorSelfTest
             }
             StopAfterBytes = null;
             Blocked.TrySetResult();
+            if (ResumeWrite is { } resume) {
+                await resume.WaitAsync(token);
+                await ForwardAsync(buffer[count..], token);
+                return;
+            }
             if (ReleasePrefix is { } release) {
                 await release.Task;
             }

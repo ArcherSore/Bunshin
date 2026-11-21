@@ -66,16 +66,13 @@ internal sealed partial class RunLifecycleReducer
             if (b.RunRegistered.HasValue) ApplyReconnectEvidence(state.Runs[query.Run]);
         }
         if (b.ObservedSnapshot is { } frame && frame.WorkerInstanceId == id.WorkerInstanceId) {
-            if (frame.LastRun is { } last) {
+            var fresh = state.Current.Fresh ? state.Current.WorkerSnapshot : null;
+            if (!ReferenceEquals(frame, fresh) && frame.LastRun is { } last) {
                 var confirmed = query?.Run == new RunKey(id.WorkerInstanceId, last.RunId) && b.RunRegistered == true;
-                var current = !b.SnapshotSyncPending && state.Current is { Fresh: true, WorkerSnapshot: { } latest }
-                    && latest.StateRevision == frame.StateRevision;
-                ObserveRun(frame, last, false, deferTerminal: !confirmed && !current);
+                ObserveRun(frame, last, false, deferTerminal: !confirmed);
             }
-            // A full read may return behind an event already published on this connection.
-            if (!b.SnapshotSyncPending && state.Current is { Fresh: true, WorkerSnapshot: { LastRun: { } currentLast } synced }
-                && synced.StateRevision > frame.StateRevision)
-                ObserveRun(synced, currentLast, false);
+            // Settle the published view even if a full read is outstanding or its reply arrived behind it.
+            if (fresh?.LastRun is { } currentLast) ObserveRun(fresh, currentLast, false);
             if (frame.ActiveRun != null) ObserveRun(frame, frame.ActiveRun, true, configurationName);
             foreach (var r in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == id.WorkerInstanceId && !r.Settled)) {
                 if (!state.Current.Fresh || r.Conclusion == StartConclusion.Accepted && !CurrentShowsActive(r))
