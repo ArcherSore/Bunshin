@@ -615,6 +615,12 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             try {
                 var response = await SendRequestAsync<object, GetSnapshotResponse>(
                     ProtocolOperations.WorkerGetSnapshot, new { }, token, connection: connection);
+                lock (_gate) {
+                    if (_connection == connection) {
+                        _initialSnapshotSync!.TrySetResult(true);
+                        _initialSnapshotSync = null;
+                    }
+                }
                 _ = SynchroniseFrameworkOptionsAsync(token);
                 await _logRecovery.EnsureLogRecoveryAsync(admission.WorkerInstanceId, logRecoveryGeneration,
                     response.Snapshot.LastLogSequence, token);
@@ -818,10 +824,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 }
                 var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
                 changed = ApplyFreshSnapshotLocked(response.Snapshot, admission);
-                if (--_pendingSnapshotSyncs == 0) {
-                    _snapshotSync!.TrySetResult(true);
-                    _snapshotSync = null;
-                }
                 PublishLocked(SnapshotBatchLocked(response.Snapshot));
                 pending.SnapshotResponse = response;
             }
@@ -873,7 +875,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 return;
             }
             if (Snapshot.Fresh && state.StateRevision != currentRevision + 1) {
-                ReserveSnapshotSyncLocked();
                 Snapshot = Snapshot with {
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
@@ -902,6 +903,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         try {
             await SendRequestAsync<object, GetSnapshotResponse>(
                 ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection);
+        } catch (TimeoutException) {
+            // The request already logged the timeout. Later state events can still make the view fresh.
         } catch (Exception exception) {
             connection.Close(exception);
         }

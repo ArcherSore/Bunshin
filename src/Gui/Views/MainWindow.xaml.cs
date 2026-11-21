@@ -140,6 +140,7 @@ public partial class MainWindow : FluentWindow
         _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, PresentRunAction, RequestQuitAfterRun, logger, scheduleClock);
         _lifecycle.Changed += RefreshRuntimeControls;
         _lifecycle.ScheduledCompleted += terminal => ScheduledRunCompleted?.Invoke(this, terminal);
+        _lifecycle.ScheduledCleanupCompleted += () => AddScheduleActivity("全部完成，已关闭桌面分身");
         _lifecycle.CleanupPending += EndScheduledRunAsync;
         _environment.Ended += _lifecycle.EnvironmentRecovered;
         _environment.PendingLifecycleStart = view => _lifecycle.ReadOrchestration().PendingStart(view)?.RunId;

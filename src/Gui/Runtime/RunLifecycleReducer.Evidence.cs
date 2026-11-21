@@ -69,7 +69,7 @@ internal sealed partial class RunLifecycleReducer
             var fresh = state.Current.Fresh ? state.Current.WorkerSnapshot : null;
             if (!ReferenceEquals(frame, fresh) && frame.LastRun is { } last) {
                 var confirmed = query?.Run == new RunKey(id.WorkerInstanceId, last.RunId) && b.RunRegistered == true;
-                ObserveRun(frame, last, false, deferTerminal: !confirmed);
+                ObserveRun(frame, last, false, deferUntilReconnected: !confirmed);
             }
             // Settle the published view even if a full read is outstanding or its reply arrived behind it.
             if (fresh?.LastRun is { } currentLast) ObserveRun(fresh, currentLast, false);
@@ -155,7 +155,7 @@ internal sealed partial class RunLifecycleReducer
     }
 
     private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active, string? configurationName = null,
-        bool deferTerminal = false)
+        bool deferUntilReconnected = false)
     {
         var key = new RunKey(frame.WorkerInstanceId, snapshot.RunId);
         var r = state.Runs.GetValueOrDefault(key);
@@ -166,8 +166,9 @@ internal sealed partial class RunLifecycleReducer
         }
         if (r.Settled || r.Digest != snapshot.PlanDigest) return;
         if (!active) {
-            if (deferTerminal) {
-                Save(r with { AwaitingReconnectQuery = true, NeedQuery = true, ReconnectEvidence = frame });
+            // A revision gap alone does not open a reconnect query or invalidate a matching LastRun.
+            if (deferUntilReconnected && r.AwaitingReconnectQuery) {
+                Save(r with { NeedQuery = true, ReconnectEvidence = frame });
             } else {
                 Terminal(Conclude(r, StartConclusion.Accepted) with { AwaitingReconnectQuery = false,
                     ReconnectEvidence = null, ReconnectFaultPending = false }, snapshot);

@@ -46,9 +46,8 @@ internal sealed partial class WorkerCoordinator
     private readonly Dictionary<Guid, EvidenceRequest> _evidenceRequests = [];
     private WorkerConnectionId _connectionId;
     private long _writeSequence;
-    // Reserved before scheduling each full read. Only validated replies release starts on this connection.
-    private int _pendingSnapshotSyncs;
-    private TaskCompletionSource<bool>? _snapshotSync;
+    // Starts wait for the first full snapshot of this connection, even if a Ready event arrives first.
+    private TaskCompletionSource<bool>? _initialSnapshotSync;
     private bool _evidenceRequested;
 
     // Subscribers enqueue batches synchronously. Frame validation, publication and waiter
@@ -79,13 +78,7 @@ internal sealed partial class WorkerCoordinator
     {
         _connectionId = new(admission.WorkerInstanceId, _connectionId.Generation + 1);
         _writeSequence = 0;
-        ReserveSnapshotSyncLocked();
-    }
-
-    private void ReserveSnapshotSyncLocked()
-    {
-        _pendingSnapshotSyncs++;
-        _snapshotSync ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _initialSnapshotSync = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private void FinishEvidenceLocked(ProtocolConnection connection)
@@ -93,9 +86,8 @@ internal sealed partial class WorkerCoordinator
         // A clean peer EOF has no exception. All other closures carry their original cause.
         var batch = new WorkerObservationBatch(_connectionId, WorkerEvidenceKind.Disconnected,
             Error: connection.Closed.GetAwaiter().GetResult());
-        _pendingSnapshotSyncs = 0;
-        _snapshotSync?.TrySetResult(false);
-        _snapshotSync = null;
+        _initialSnapshotSync?.TrySetResult(false);
+        _initialSnapshotSync = null;
         PublishLocked(batch);
         foreach (var request in _evidenceRequests.Values) {
             request.Waiter?.TrySetResult(batch);
@@ -183,7 +175,7 @@ internal sealed partial class WorkerCoordinator
                     token.ThrowIfCancellationRequested();
                     if (connection != _connection || connection.IsClosed)
                         throw new IOException("目标 Worker IPC 已断开。");
-                    sync = _snapshotSync?.Task;
+                    sync = _initialSnapshotSync?.Task;
                     return sync == null && WorkerReadyForPlan();
                 }
             }

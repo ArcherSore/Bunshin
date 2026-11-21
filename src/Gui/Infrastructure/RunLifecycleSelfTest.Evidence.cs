@@ -359,7 +359,8 @@ internal static partial class RunLifecycleSelfTest
         }
         var pending = f.QueryWire();
         f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Failed)), f.State.Current with { SnapshotFresh = false });
-        Check(!f.Items<Present>().Any(), "失效快照中的终态应等待定向确认。");
+        Check(f.Items<Present>().SingleOrDefault()?.Kind == NoticeKind.Failed,
+            "补查在途时，跳号帧中的匹配终态应立即交付。");
         f.QueryResult(pending, true);
         f.Finish(typeof(Present));
         f.Conclusions(StartConclusion.Accepted);

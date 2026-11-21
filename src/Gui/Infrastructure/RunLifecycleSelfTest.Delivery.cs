@@ -86,12 +86,9 @@ internal static partial class RunLifecycleSelfTest
             var gap = f.Frame(last: terminal) with { StateRevision = active.StateRevision + 2 };
             var stale = f.State.Current with { SnapshotFresh = false };
             f.FrameEvent(gap, stale);
-            Check(!f.History.OfType<CompleteScheduled>().Any() && !f.Items<Present>().Any(),
-                "首次跳号导致视图失效时应暂存终态。");
-            // The coordinator accepts the repeated event while the full read is still outstanding.
-            f.FrameEvent(gap);
-            Check(f.History.OfType<CompleteScheduled>().Single() == new CompleteScheduled(f.Key, intent, terminal),
-                "跳号终态一经发布为新鲜视图，同一次转换就应提交一次原始终态。");
+            Check(f.History.OfType<CompleteScheduled>().SequenceEqual([new CompleteScheduled(f.Key, intent, terminal)]),
+                "跳号帧带有匹配终态时应当场完成原定时 Run。");
+            f.FrameEvent(gap, stale);
             f.FrameEvent(gap);
             Check(f.History.OfType<CompleteScheduled>().Count() == 1, "完整补查不能重复结算。");
             f.Finish(status == RunState.Cancelled ? [] : [typeof(Present)]);

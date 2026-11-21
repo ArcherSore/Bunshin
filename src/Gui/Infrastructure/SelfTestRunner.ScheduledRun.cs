@@ -93,7 +93,7 @@ internal static partial class SelfTestRunner
             RunState.Failed, tickBeforeDispatch: true);
     }
 
-    private enum SettlementOrder { Normal, Reconnect, Preview, Tray, Gap, Update }
+    private enum SettlementOrder { Normal, Reconnect, Preview, Tray, Gap, Update, ManualEndAfterUpdate }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
         bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false,
@@ -472,17 +472,36 @@ internal static partial class SelfTestRunner
                         });
                         PumpUntil(() => tray.IsCompleted, "确认后托盘应先结束分身。");
                         Require(tray.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Ended, "托盘结束分身应成功。");
-                    } else if (order == SettlementOrder.Update) {
+                    } else if (order is SettlementOrder.Update or SettlementOrder.ManualEndAfterUpdate) {
                         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         var gate = environment.RunExclusiveAsync(() => release.Task);
                         var failure = new IOException("模拟 Engine 交接失败");
+                        if (order == SettlementOrder.ManualEndAfterUpdate)
+                            wts.DuringLogoff = _ => throw new IOException("模拟更新首次注销失败");
                         var update = App.InstallAfterEnvironmentEndAsync(environment, window, logger, () => throw failure,
                             () => throw new InvalidOperationException("交接失败不应关闭 GUI。"));
                         Publish(done, 4);
                         Require(completions.Count == 0 && session.HasChildSession, "交接期间应缓冲 A 的完成和收尾。");
                         release.SetResult();
-                        PumpUntil(() => update.IsCompleted, "更新应结束旧环境并报告交接失败。");
+                        PumpUntil(() => update.IsCompleted, "更新退出失败后应恢复界面。");
                         gate.GetAwaiter().GetResult();
+                        if (order == SettlementOrder.ManualEndAfterUpdate) {
+                            PumpOnboarding();
+                            Require(update.IsFaulted && environment.EndUnconfirmed && !environment.Closing
+                                && completions.SequenceEqual([own.RunId])
+                                && !window.LogLines.OfType<LogEntry>().Any(e => e.Message == "全部完成，已关闭桌面分身"),
+                                "首次注销失败后应保留待收尾的定时任务。");
+                            wts.DuringLogoff = null;
+                            var manual = environment.EndAsync(() => true);
+                            PumpUntil(() => manual.IsCompleted, "用户重新结束分身应成功。");
+                            Require(manual.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Ended
+                                && AdmissionDiscarded(coordinator), "手动结束后应确认旧环境已结束。");
+                            PumpOnboarding();
+                            Require(window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1
+                                && completions.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([77u, sessionId, sessionId]),
+                                "手动结束成功后应立即记一次收尾，无需等下一班或再次注销。");
+                            return;
+                        }
                         Require(update.Exception?.GetBaseException() == failure && !environment.Closing
                             && AdmissionDiscarded(coordinator), "GUI 应在环境已确认结束后恢复。");
                         Require(window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,

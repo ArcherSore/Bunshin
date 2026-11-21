@@ -72,6 +72,8 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, tickBeforeDispatch: true, order: SettlementOrder.Gap)),
         new(Group.Project, "VerifyScheduledUpdateSettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Update)),
+        new(Group.Project, "VerifyScheduledManualEndAfterUpdate", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.ManualEndAfterUpdate)),
         new(Group.Project, nameof(WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite), c => {
             var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
                 WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite(c.Logger, c.Directory, c.Project)).Task.Unwrap();

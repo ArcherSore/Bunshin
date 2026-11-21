@@ -31,6 +31,7 @@ internal sealed class RunLifecycleHost : IDisposable
     internal RunOrchestration Orchestration { get; private set; } = new(new());
     private RunLifecycleState State => Orchestration.Lifecycle;
     internal event Action<RunSnapshot>? ScheduledCompleted;
+    internal event Action? ScheduledCleanupCompleted;
     internal event Func<ScheduledSettlement, bool, Task>? CleanupPending;
     internal event Action? Changed;
 
@@ -160,6 +161,10 @@ internal sealed class RunLifecycleHost : IDisposable
                 Orchestration = Orchestration with { Scheduled = own with { Completion = completion.Terminal.State,
                     Cleanup = completion.Terminal.State == RunState.Succeeded ? CleanupStage.Pending : CleanupStage.None } };
             _completed.Enqueue(completion);
+        }
+        if (input is LifecycleEvent.EnvironmentRecovered && Orchestration.Scheduled is { NeedsCleanup: true } pending) {
+            SetCleanup(pending.Key, CleanupStage.Finished);
+            ScheduledCleanupCompleted?.Invoke();
         }
         if (State.ExitCommitted) {
             Orchestration = new(State);

@@ -282,7 +282,9 @@ internal static partial class WorkerCoordinatorSelfTest
         var latest = await f.NextAsync(WorkerEvidenceKind.Snapshot);
         Require(latest.Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 3 },
             "重连后较高修订的就绪事件应更新生产快照。");
-        var initialStart = StartDuringSync(out var initialStarts);
+        var initialStarts = f.WireStarts;
+        var initialStart = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
+        Require(!initialStart.IsCompleted && f.WireStarts == initialStarts, "首次同步期间启动应等待完整回包。");
         await peer.WriteAsync(WireEnvelope.Response(initial.Operation, initial.RequestId!.Value,
             new GetSnapshotResponse(running)), f.Token);
         var older = await f.NextAsync(WorkerEvidenceKind.Snapshot);
@@ -308,30 +310,22 @@ internal static partial class WorkerCoordinatorSelfTest
             new StateChangedEvent(f.Run.WorkerInstanceId, 6, ready)), f.Token);
         Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current is { FreshReadyToStart: true, WorkerSnapshot.StateRevision: 6 },
             "补查回包前的 Ready/Idle 事件应照常更新生产快照。");
-        var gapStart = StartDuringSync(out var gapStarts);
+        var gapStart = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
+        await RequireStartAcceptedAsync(gapStart, beforeClick);
         await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value, new GetSnapshotResponse(gap)), f.Token);
         await f.NextAsync(WorkerEvidenceKind.Snapshot);
-        await RequireStartAcceptedAsync(gapStart, gapStarts);
         Require(f.WireStarts == beforeClick + 1, "恢复后只有第二次在新鲜 Ready 上的点击可以发出。");
-
-        Task<WorkerObservationBatch> StartDuringSync(out int starts)
-        {
-            starts = f.WireStarts;
-            var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
-            Require(!send.IsCompleted && f.WireStarts == starts, "完整快照尚未返回时，本次点击应等待同步。");
-            return send;
-        }
 
         async Task RequireStartAcceptedAsync(Task<WorkerObservationBatch> send, int starts)
         {
             var frame = await f.ReadAsync(peer, ProtocolOperations.RunStart);
             await peer.WriteAsync(WireEnvelope.Response(frame.Operation, frame.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
             Require((await send.WaitAsync(f.Token)).StartReply == StartReplyKind.Accepted && f.WireStarts == starts + 1,
-                "完整回包到达且生产快照允许启动时，同一次点击应取得接纳应答。");
+                "生产快照允许启动时，同一次点击应取得接纳应答。");
         }
     }
 
-    private static async Task VerifySnapshotGapTimeoutReconnectAsync(AppLogger logger, string directory, string project)
+    private static async Task VerifySnapshotGapTimeoutAsync(AppLogger logger, string directory, string project)
     {
         await using var f = new EvidenceFixture(logger, directory, project);
         await using var peer = await f.ConnectAsync();
@@ -345,33 +339,31 @@ internal static partial class WorkerCoordinatorSelfTest
         await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
             new StateChangedEvent(f.Run.WorkerInstanceId, 4, ready)), f.Token);
         await f.NextAsync(WorkerEvidenceKind.Snapshot);
-        await f.NextAsync(WorkerEvidenceKind.Snapshot);
+        Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current is { FreshReadyToStart: true },
+            "完整补查未返回时已收到新鲜 Ready。");
         f.Clock.Advance(TimeSpan.FromSeconds(5));
         var submission = f.NewSubmission();
         var waiting = f.Coordinator.SendStartAsync(submission, f.Attempt, f.Token);
-        Require(!waiting.IsCompleted, "补查截止前点击开始应等待这条连接。");
-        f.Clock.Advance(TimeSpan.FromSeconds(10));
-        // Wait until the sender has actually observed the deadline before attempting its late reply.
-        Require(SpinWait.SpinUntil(() => f.Server.WireClosed.Task.IsCompleted || f.Clock.PendingTimers > 1,
-            TimeSpan.FromSeconds(5)), "补查应已超时。");
+        var warning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnWarning(object? _, Models.LogEntry entry)
+        {
+            if (entry.Level == Models.LogLevel.Warn && entry.Message.Contains(ProtocolOperations.WorkerGetSnapshot))
+                warning.TrySetResult();
+        }
+        logger.EntryWritten += OnWarning;
         try {
-            await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value,
-                new GetSnapshotResponse(idle)), f.Token);
-            await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
-                new StateChangedEvent(f.Run.WorkerInstanceId, 4, idle with { StateRevision = 4 })), f.Token);
-        } catch (IOException) { } // The old pipe may already be closed.
-        Require(SpinWait.SpinUntil(() => f.History.Any(b => b.Kind == WorkerEvidenceKind.Disconnected
-            && b.Error is TimeoutException), TimeSpan.FromSeconds(3)), "完整补查逾期应关闭旧连接，允许 Worker 重连。");
-        await ExpectAsync<TimeoutException>(() => waiting.WaitAsync(f.Token), "等待补查的启动应收到原连接超时原因。");
-        Require(f.History.Count(b => b.Kind == WorkerEvidenceKind.NotSent && b.Request?.Submission == submission) == 1
-            && f.WireStarts == 0, "补查失败应结算原连接上等待的启动，不能在重连后补发。");
-        await peer.DisposeAsync();
-        await using var next = await f.ConnectAsync(4);
-        var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
-        var start = await f.ReadAsync(next, ProtocolOperations.RunStart);
-        await next.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value,
+            f.Clock.Advance(TimeSpan.FromSeconds(10));
+            await warning.Task.WaitAsync(f.Token);
+        } finally {
+            logger.EntryWritten -= OnWarning;
+        }
+        var start = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+        await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value, new GetSnapshotResponse(idle)), f.Token);
+        await peer.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value,
             new RunStartResponse("accepted")), f.Token);
-        Require((await send).StartReply == StartReplyKind.Accepted && f.WireStarts == 1, "重连首次同步后应能重新开始任务。");
+        Require((await waiting.WaitAsync(f.Token)).StartReply == StartReplyKind.Accepted && f.WireStarts == 1
+            && !f.History.Any(b => b.Kind == WorkerEvidenceKind.Disconnected),
+            "普通补查超时或迟到不应断线，本次点击应在原连接发送一次并获接纳。");
     }
 
     private static async Task VerifyQueuedStartSnapshotGapAsync(AppLogger logger, string directory, string project)
@@ -404,20 +396,16 @@ internal static partial class WorkerCoordinatorSelfTest
             releaseWriter.Cancel();
         }
         await ExpectAsync<OperationCanceledException>(() => held, "持锁请求应在首字节前取消。");
-        var refresh = await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
-        Require(!send.IsCompleted && f.WireStarts == 0 && f.Server.PartialFrameBytes == 0,
-            "排队的启动应释放写锁供补查使用，保留原提交。");
-        f.Clock.Advance(TimeSpan.FromSeconds(4));
-        await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value,
-            new GetSnapshotResponse(ready)), f.Token);
-        await f.NextAsync(WorkerEvidenceKind.Snapshot);
-        var start = await f.ReadAsync(peer, ProtocolOperations.RunStart);
-        f.Clock.Advance(TimeSpan.FromSeconds(1));
-        await ExpectAsync<TimeoutException>(() => send.WaitAsync(f.Token), "排队和等待补查用过的时间不能延长启动应答期限。");
-        await peer.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
+        var start = await peer.ReadAsync(f.Token);
+        if (start?.Operation == ProtocolOperations.WorkerGetSnapshot)
+            start = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+        Require(start?.Operation == ProtocolOperations.RunStart, "释放写锁后应按新鲜状态发送原提交，无需补查回包。");
+        f.Clock.Advance(TimeSpan.FromSeconds(5));
+        await ExpectAsync<TimeoutException>(() => send.WaitAsync(f.Token), "排队用过的时间不能延长启动应答期限。");
+        await peer.WriteAsync(WireEnvelope.Response(start!.Operation, start.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
         Require((await f.NextAsync(WorkerEvidenceKind.StartReply, submission)).StartReply == StartReplyKind.Accepted
             && f.WireStarts == 1 && f.Coordinator.EvidenceCounts == (0, 0),
-            "补查结束后应只发送最初排队的那次启动，迟到应答仍归原提交。");
+            "只发送最初排队的那次启动，迟到应答仍归原提交。");
     }
 
     private static async Task VerifyStartEvidenceWritesAsync(AppLogger logger, string directory, string project)
