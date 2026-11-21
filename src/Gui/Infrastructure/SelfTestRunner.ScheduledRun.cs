@@ -93,9 +93,12 @@ internal static partial class SelfTestRunner
             RunState.Failed, tickBeforeDispatch: true);
     }
 
+    private enum SettlementOrder { Normal, Reconnect, Preview, Tray }
+
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
         bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false,
-        bool cleanupDuringExit = false, bool forceCollision = true, bool failCleanup = true)
+        bool cleanupDuringExit = false, bool forceCollision = true, bool failCleanup = true,
+        SettlementOrder order = SettlementOrder.Normal)
     {
         using var process = Process.GetCurrentProcess();
         var sessionId = (uint)process.SessionId;
@@ -236,7 +239,7 @@ internal static partial class SelfTestRunner
                     // Keep IPC up and omit only the start reply: the state event is authoritative.
                     var running = snapshot with { StateRevision = 3, RunState = RunState.Running, ActiveRun = own };
                     Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
-                    if (bufferExit || cleanupDuringExit || cleanupCollision)
+                    if (bufferExit || cleanupDuringExit || cleanupCollision || order != SettlementOrder.Normal)
                         Task.Run(() => pipe.WriteAsync(WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
                             new RunStartResponse("accepted")), token)).GetAwaiter().GetResult();
                     // The observed Active already proves acceptance even with the start reply missing.
@@ -307,7 +310,41 @@ internal static partial class SelfTestRunner
                         project.ActivateConfiguration(target);
                         if (failCleanup) wts.DuringLogoff = _ => throw new IOException("模拟旧分身注销失败");
                     }
-                    Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
+                    if (order == SettlementOrder.Reconnect) {
+                        pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                        AwaitWorker(coordinator, s => s.Observation == WorkerObservation.IpcDisconnected, "A 运行期间应已断线。");
+                        var targeted = new TaskCompletionSource<Guid?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                        var sync = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
+                            pipeName, record!, 0, token, lastRun: done, stateRevision: received.StateRevision,
+                            beforeSnapshotReply: async peer => {
+                                await peer.WriteAsync(StateEvent(received), token);
+                                var q = await WorkerCoordinatorSelfTest.ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, token);
+                                targeted.SetResult(ProtocolJson.Deserialize<GetSnapshotRequest>(q.Data).RunId);
+                                await sync.Task.WaitAsync(token);
+                            }));
+                        PumpUntil(() => targeted.Task.IsCompleted, "首次同步前应定向复核已断线的 A。");
+                        Require(targeted.Task.Result == own.RunId && failures.Count == 0 && session.HasChildSession,
+                            "首次同步前的 LastRun 应暂存，不能提前提醒或收尾。");
+                        // The full reply repeats the event revision. Keep the targeted query unanswered
+                        // and the dispatcher on B's tick until this particular reply is published.
+                        using var synced = new ManualResetEventSlim();
+                        void OnFullReply(object? _, WorkerObservationBatch batch)
+                        {
+                            if (batch is { Kind: WorkerEvidenceKind.Snapshot, SnapshotSyncPending: false }
+                                && batch.ObservedSnapshot?.LastRun?.RunId == own.RunId) synced.Set();
+                        }
+                        coordinator.ObservationReceived += OnFullReply;
+                        try {
+                            sync.SetResult();
+                            pipe = connected.GetAwaiter().GetResult();
+                            synced.Wait(token);
+                        } finally {
+                            coordinator.ObservationReceived -= OnFullReply;
+                        }
+                    } else {
+                        Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
+                    }
                     // 迁移至 VerifyRunLifecycle / next-tick、cleanup-collision
                     AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                         "下一分钟已到时 Worker 应已报告此前 Run 的失败。");
@@ -369,7 +406,30 @@ internal static partial class SelfTestRunner
                         };
                     }
                     if (bufferExit) window.SetExitInProgress(true);
-                    Publish(done, terminal == RunState.Succeeded ? 4 : 3);
+                    if (order == SettlementOrder.Preview) {
+                        var preview = new RdpPreviewWindow { Owner = window };
+                        typeof(ChildSessionManager).GetField("_previewWindow",
+                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(session, preview);
+                        preview.Show();
+                        preview.Activate();
+                        PumpUntil(() => preview.IsActive, "成功前用户应正在查看分身预览。");
+                        int? balloonsAtClose = null;
+                        preview.Closed += (_, _) => balloonsAtClose = probe.Balloons.Count(n => n.Title == $"「{name}」已完成");
+                        Publish(done, 4);
+                        PumpUntil(() => balloonsAtClose.HasValue, "成功收尾应关闭预览。");
+                        Require(balloonsAtClose == 1, "定时成功提醒必须在收尾关闭预览之前发出一次。");
+                    } else if (order == SettlementOrder.Tray) {
+                        var tray = environment.EndAsync(() => {
+                            Publish(done, 4);
+                            Require(completions.SequenceEqual([own.RunId]) && session.HasChildSession,
+                                "托盘确认框内成功时，定时收尾应等待托盘释放闸门。");
+                            return true;
+                        });
+                        PumpUntil(() => tray.IsCompleted, "确认后托盘应先结束分身。");
+                        Require(tray.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Ended, "托盘结束分身应成功。");
+                    } else {
+                        Publish(done, terminal == RunState.Succeeded ? 4 : 3);
+                    }
                     if (cleanupDuringExit) {
                         PumpUntil(() => window.LogLines.OfType<LogEntry>().Any(e => e.Message.Contains("任务已完成，桌面分身未能关闭")),
                             "退出确认期间应已记录收尾失败。");

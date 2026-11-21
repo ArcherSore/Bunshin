@@ -140,7 +140,7 @@ public partial class MainWindow : FluentWindow
         _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, PresentRunAction, RequestQuitAfterRun, logger, scheduleClock);
         _lifecycle.Changed += RefreshRuntimeControls;
         _lifecycle.ScheduledCompleted += terminal => ScheduledRunCompleted?.Invoke(this, terminal);
-        _lifecycle.CleanupPending += () => Dispatcher.InvokeAsync(ResumeScheduledCleanup);
+        _lifecycle.CleanupPending += EndScheduledRunAsync;
         _environment.Ended += _lifecycle.EnvironmentRecovered;
         _environment.PendingLifecycleStart = view => _lifecycle.ReadOrchestration().PendingStart(view)?.RunId;
         _prepareEnvironment = prepareEnvironment ?? environment.PrepareAsync;
@@ -203,7 +203,6 @@ public partial class MainWindow : FluentWindow
         if (!exitInProgress && _closingId is Guid id) {
             _closingId = null;
             _lifecycle.Apply(new LifecycleEvent.ClosingCancelled(id));
-            ResumeScheduledCleanup();
         }
     }
 
@@ -842,7 +841,6 @@ public partial class MainWindow : FluentWindow
         } else {
             await RunWindowOperationAsync(pending, () => _environment.RunExclusiveAsync(operation), unattended);
         }
-        ResumeScheduledCleanup();
     }
 
     private async Task RunWindowOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended)
@@ -1032,7 +1030,6 @@ public partial class MainWindow : FluentWindow
         // coordinator's current snapshot is applied rather than the one the event carried.
         _workerSnapshot = _workerCoordinator.Snapshot;
         RefreshRuntimeControls();
-        ResumeScheduledCleanup();
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)

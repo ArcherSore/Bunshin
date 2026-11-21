@@ -29,15 +29,12 @@ internal sealed record RunOrchestration(RunLifecycleState Lifecycle)
         || Lifecycle.Deliveries.Any(d => d.Item is RequestQuit quit && quit.Key == key);
     internal string? PendingQuitReason => Lifecycle.Deliveries.Any(d => d.Item is RequestQuit)
         || Lifecycle.Quits.Values.Any(stage => stage is QuitStage.Requested or QuitStage.AwaitingRecovery or QuitStage.RecoveredWhileClosing)
-        || Lifecycle.Current is { Fresh: true, WorkerSnapshot: { LastRun: { } last } worker }
-            && WaitingForQuit(new(worker.WorkerInstanceId, last.RunId))
         ? "开机任务已结束，正在等待退出" : null;
 
     internal RunKey? PendingStart(WorkerCoordinatorSnapshot view) =>
         Lifecycle.Runs.Values.FirstOrDefault(r => r.Owner != null && !r.Settled
             && (view.WorkerSnapshot == null || view.WorkerSnapshot.WorkerInstanceId == r.Key.WorkerInstanceId)
-            && !(view.Fresh && view.WorkerSnapshot is { } snapshot
-                && (Matches(snapshot.ActiveRun, r) || Matches(snapshot.LastRun, r))))?.Key;
+            && !(view.Fresh && Matches(view.WorkerSnapshot?.ActiveRun, r)))?.Key;
 
     private static bool Matches(RunSnapshot? snapshot, TrackedRun run) =>
         snapshot?.RunId == run.Key.RunId && snapshot.PlanDigest == run.Digest;

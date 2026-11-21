@@ -107,7 +107,6 @@ public partial class MainWindow
         if (result.Disposition == ScheduledRunDisposition.Busy) {
             ReportScheduledSkip(name, result.Reason!);
         }
-        ResumeScheduledCleanup();
         return result;
     }
 
@@ -196,7 +195,10 @@ public partial class MainWindow
         var own = _lifecycle.ReadOrchestration().Scheduled;
         async Task<ScheduledRunResult?> SettlePreviousAsync(ScheduledSettlement? settlement)
         {
-            if (settlement is { NeedsCleanup: true }) await EndScheduledRunAsync(settlement, gateHeld: true);
+            if (settlement is { NeedsCleanup: true }) {
+                await _lifecycle.IssuePendingPresentationsAsync();
+                await _lifecycle.DeliverScheduledCleanupAsync(gateHeld: true);
+            }
             await _lifecycle.IssuePendingPresentationsAsync();
             if (!force && _lifecycle.Orchestration.ManualErrorPending)
                 return new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
@@ -308,27 +310,15 @@ public partial class MainWindow
         }
     }
 
-    // A single delivered request can wait for the same Worker to reconnect. RuntimeEnvironment
-    // checks the live session and Run again after acquiring its gate.
-    private void ResumeScheduledCleanup()
-    {
-        if (!_exitInProgress && !_environment.Closing
-            && _lifecycle.Orchestration.Scheduled is { Cleanup: CleanupStage.Pending } own
-            && _workerCoordinator.Snapshot is { Fresh: true, WorkerSnapshot: { } worker }
-            && worker.WorkerInstanceId == own.Key.WorkerInstanceId) {
-            _ = EndScheduledRunAsync(own, gateHeld: false);
-        }
-    }
-
     private async Task EndScheduledRunAsync(ScheduledSettlement own, bool gateHeld)
     {
+        if (_exitInProgress || _environment.Closing) return;
         async Task EndInGateAsync()
         {
             // A tick can service the request while its queued consumer is waiting on this same gate.
             if (_lifecycle.ReadOrchestration().Scheduled is not { NeedsCleanup: true } current
                 || current.Key != own.Key || _exitInProgress || _environment.Closing) return;
-            var authorized = false;
-            bool CanClose() => authorized = _environment.CanEndSuccessfulRun(own.Key.WorkerInstanceId, own.Key.RunId);
+            bool CanClose() => _environment.CanEndSuccessfulRun(own.Key.WorkerInstanceId, own.Key.RunId);
             EnvironmentEndResult ended;
             try {
                 ended = await _environment.EndWhileExclusiveAsync(CanClose);
@@ -342,7 +332,7 @@ public partial class MainWindow
                 const string reason = "任务已完成，桌面分身未能关闭";
                 AddScheduleActivity(reason, LogLevel.Error);
                 _lifecycle.Apply(new LifecycleEvent.CleanupFailed(own.Key, own.Name, reason));
-            } else if (authorized) {
+            } else {
                 AddScheduleActivity("全部完成，已关闭桌面分身");
             }
         }
@@ -360,7 +350,7 @@ public partial class MainWindow
         } finally {
             if (_lifecycle.Orchestration.Scheduled is { Cleanup: CleanupStage.WaitingForGate } queued && queued.Key == own.Key)
                 _lifecycle.SetCleanup(own.Key, CleanupStage.Pending);
-            if (exitGeneration != _exitGeneration) ResumeScheduledCleanup();
+            if (exitGeneration != _exitGeneration) await _lifecycle.DeliverScheduledCleanupAsync();
         }
     }
 }

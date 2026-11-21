@@ -87,6 +87,10 @@ internal static partial class RunLifecycleSelfTest
             var stale = f.State.Current with { SnapshotFresh = false };
             f.FrameEvent(gap, stale);
             f.FrameEvent(gap, stale);
+            Check(!f.History.OfType<CompleteScheduled>().Any() && !f.Items<Present>().Any(),
+                "跳号时的终态应保留到补查完成。");
+            f.FrameEvent(gap);
+            f.FrameEvent(gap);
             Check(f.History.OfType<CompleteScheduled>().Single() == new CompleteScheduled(f.Key, intent, terminal),
                 "定时完成应随转换提交一次，保留原始终态，不等待呈现回执");
             f.Finish(status == RunState.Cancelled ? [] : [typeof(Present)]);
@@ -340,7 +344,7 @@ internal static partial class RunLifecycleSelfTest
             f.FrameEvent(fault);
             f.FrameEvent(fault);
             var terminal = outcome is "terminal" or "terminal-exit";
-            if (terminal) f.Terminal(RunState.Succeeded);
+            if (terminal) f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)), syncPending: true);
             var beforeConfirmation = f.History.Count;
             if (outcome is "process-exit" or "terminal-exit") f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, terminal ? f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded)) : fault);

@@ -66,7 +66,16 @@ internal sealed partial class RunLifecycleReducer
             if (b.RunRegistered.HasValue) ApplyReconnectEvidence(state.Runs[query.Run]);
         }
         if (b.ObservedSnapshot is { } frame && frame.WorkerInstanceId == id.WorkerInstanceId) {
-            if (frame.LastRun != null) ObserveRun(frame, frame.LastRun, false);
+            if (frame.LastRun is { } last) {
+                var confirmed = query?.Run == new RunKey(id.WorkerInstanceId, last.RunId) && b.RunRegistered == true;
+                var current = !b.SnapshotSyncPending && state.Current is { Fresh: true, WorkerSnapshot: { } latest }
+                    && latest.StateRevision == frame.StateRevision;
+                ObserveRun(frame, last, false, deferTerminal: !confirmed && !current);
+            }
+            // A full read may return behind an event already published on this connection.
+            if (!b.SnapshotSyncPending && state.Current is { Fresh: true, WorkerSnapshot: { LastRun: { } currentLast } synced }
+                && synced.StateRevision > frame.StateRevision)
+                ObserveRun(synced, currentLast, false);
             if (frame.ActiveRun != null) ObserveRun(frame, frame.ActiveRun, true, configurationName);
             foreach (var r in state.Runs.Values.Where(r => r.Key.WorkerInstanceId == id.WorkerInstanceId && !r.Settled)) {
                 if (!state.Current.Fresh || r.Conclusion == StartConclusion.Accepted && !CurrentShowsActive(r))
@@ -148,7 +157,8 @@ internal sealed partial class RunLifecycleReducer
         }
     }
 
-    private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active, string? configurationName = null)
+    private void ObserveRun(WorkerSnapshot frame, RunSnapshot snapshot, bool active, string? configurationName = null,
+        bool deferTerminal = false)
     {
         var key = new RunKey(frame.WorkerInstanceId, snapshot.RunId);
         var r = state.Runs.GetValueOrDefault(key);
@@ -158,9 +168,18 @@ internal sealed partial class RunLifecycleReducer
             if (!active || !CurrentShowsActive(r)) return;
         }
         if (r.Settled || r.Digest != snapshot.PlanDigest) return;
+        if (!active) {
+            if (deferTerminal) {
+                Save(r with { AwaitingReconnectQuery = true, NeedQuery = true, ReconnectEvidence = frame });
+            } else {
+                Terminal(Conclude(r, StartConclusion.Accepted) with { AwaitingReconnectQuery = false,
+                    ReconnectEvidence = null, ReconnectFaultPending = false }, snapshot);
+            }
+            return;
+        }
         if (r.AwaitingReconnectQuery && r.ReconnectEvidence?.LastRun is { } terminal
             && terminal.RunId == key.RunId && terminal.PlanDigest == r.Digest) return;
-        if (active && CurrentShowsActive(r)) {
+        if (CurrentShowsActive(r)) {
             if (r.Owner == null && r.TakeoverConfigurationName == null && !string.IsNullOrWhiteSpace(configurationName))
                 r = r with { TakeoverConfigurationName = configurationName };
             var faulted = state.Current.WorkerSnapshot!.WorkerState == WorkerState.Faulted;
@@ -175,10 +194,6 @@ internal sealed partial class RunLifecycleReducer
             return;
         }
         r = Conclude(r, StartConclusion.Accepted);
-        if (!active) {
-            Terminal(r, snapshot);
-            return;
-        }
         if (CurrentShowsActive(r)) {
             CancelTimer(r);
             r = r with { NeedQuery = false, Confirmation = r.Confirmation with { Failures = 0, Due = null, Timer = 0 } };

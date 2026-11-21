@@ -23,7 +23,7 @@ internal static partial class SelfTestRunner
 
     // A check owns its directory, project fixture and logger, so it runs the same alone as in the full list.
     private static readonly Check[] Checks = [
-        new(Group.Support, nameof(VerifyTerminalNotifications), _ => VerifyTerminalNotifications()),
+        new(Group.Support, nameof(VerifyTerminalNotifications), c => VerifyTerminalNotifications(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyFileLogging), c => VerifyFileLogging(c.Directory)),
         new(Group.Support, nameof(VerifyUserProfileMasking), c => VerifyUserProfileMasking(c.Directory)),
         new(Group.Support, nameof(VerifyRunResultLog), c => VerifyRunResultLog(c.Directory)),
@@ -49,7 +49,7 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyAutostartTask), _ => VerifyAutostartTask()),
         new(Group.Support, nameof(VerifyLaunchHelp), _ => VerifyLaunchHelp()),
         new(Group.Support, nameof(VerifyHelpOutput), _ => VerifyHelpOutput()),
-        new(Group.Support, nameof(VerifyQuitAfterRunTracker), _ => VerifyQuitAfterRunTracker()),
+        new(Group.Support, nameof(VerifyQuitAfterRunTerminals), c => VerifyQuitAfterRunTerminals(c.Logger, c.Directory)),
         new(Group.Project, "VerifyRunDeliveryTerminalDuringEnumeration", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, terminalDuringEnumeration: true)),
         new(Group.Project, "VerifyRunDeliveryCleanupCollision", c => {
@@ -59,6 +59,15 @@ internal static partial class SelfTestRunner
         }),
         new(Group.Project, "VerifyRunDeliveryCleanupDuringExit", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, cleanupDuringExit: true)),
+        new(Group.Project, "VerifyScheduledReconnectSettlement", c => {
+            foreach (var fail in new[] { false, true })
+                VerifyScheduledTerminal(c.Logger, Path.Combine(c.Directory, fail.ToString()), RunState.Succeeded,
+                    tickBeforeDispatch: true, forceCollision: false, failCleanup: fail, order: SettlementOrder.Reconnect);
+        }),
+        new(Group.Project, "VerifyScheduledPreviewSettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview)),
+        new(Group.Project, "VerifyScheduledTraySettlement", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Tray)),
         new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
         new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),
         new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),

@@ -294,6 +294,13 @@ internal static partial class WorkerCoordinatorSelfTest
         var refresh = await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
         Require((await f.NextAsync(WorkerEvidenceKind.Snapshot)).Current?.Resynchronising == true,
             "修订从 3 跳到 5 应触发完整快照补查。");
+        var stale = f.NewSubmission();
+        var beforeClick = f.WireStarts;
+        var refused = f.Coordinator.SendStartAsync(stale, f.Attempt, f.Token);
+        Require(refused.IsCompleted && f.History.Count(b => b.Kind == WorkerEvidenceKind.NotSent
+            && b.Request?.Submission == stale) == 1 && f.WireStarts == beforeClick,
+            "补查期间尚无新鲜 Ready 帧时，本次点击必须立即 NotSent，发送次数为零。");
+        await ExpectAsync<InvalidOperationException>(() => refused, "快照已失效应当场拒绝启动。");
         ready = ready with { StateRevision = 6 };
         await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
             new StateChangedEvent(f.Run.WorkerInstanceId, 6, ready)), f.Token);
@@ -303,6 +310,7 @@ internal static partial class WorkerCoordinatorSelfTest
         await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value, new GetSnapshotResponse(gap)), f.Token);
         await f.NextAsync(WorkerEvidenceKind.Snapshot);
         await RequireStartAcceptedAsync(gapStart, gapStarts);
+        Require(f.WireStarts == beforeClick + 1, "恢复后只有第二次在新鲜 Ready 上的点击可以发出。");
 
         Task<WorkerObservationBatch> StartDuringSync(out int starts)
         {

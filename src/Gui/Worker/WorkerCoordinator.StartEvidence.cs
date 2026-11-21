@@ -28,7 +28,7 @@ internal enum StartReplyKind { Accepted, AlreadyAccepted, RejectedBeforeRegistra
 internal sealed record WorkerObservationBatch(WorkerConnectionId? Connection, WorkerEvidenceKind Kind,
     WorkerRequestEvidence? Request = null, WorkerCoordinatorSnapshot? Current = null,
     WorkerSnapshot? ObservedSnapshot = null, StartReplyKind? StartReply = null, string? ReplyCode = null,
-    bool? RunRegistered = null, Exception? Error = null);
+    bool? RunRegistered = null, Exception? Error = null, bool SnapshotSyncPending = false);
 
 internal sealed partial class WorkerCoordinator
 {
@@ -138,12 +138,14 @@ internal sealed partial class WorkerCoordinator
             && attempt!.Plan.RuntimeProfileDigest == worker.RuntimeProfileDigest;
         ProtocolConnection? connection;
         EvidenceRequest entry;
+        bool readyAtEntry;
         lock (_gate) {
             _evidenceRequested = true;
             connection = _connection;
             WorkerConnectionId? id = connection is { IsClosed: false } && _connectionId.WorkerInstanceId == run.WorkerInstanceId
                 ? _connectionId : null;
             entry = new(new(Guid.NewGuid(), run, submission, queryId, id));
+            readyAtEntry = attempt == null || WorkerReadyForPlan();
             if (submission is not null) {
                 PublishLocked(new(id, WorkerEvidenceKind.BeforeBody, entry.Identity));
             }
@@ -155,7 +157,7 @@ internal sealed partial class WorkerCoordinator
                     throw new InvalidOperationException("目标 Worker IPC 已失效。");
                 }
                 if (attempt is not null && (attempt.RunId != run.RunId || attempt.PlanDigest != submission!.PlanDigest
-                    || _snapshotSync == null && !WorkerReadyForPlan())) {
+                    || !readyAtEntry)) {
                     throw new InvalidOperationException("当前 Worker、计划或 Run 状态不允许 Start。");
                 }
                 reply = entry.Waiter!.Task;
@@ -305,7 +307,8 @@ internal sealed partial class WorkerCoordinator
     private bool ObservingEvidence => _evidenceRequested || ObservationReceived is not null;
 
     private WorkerObservationBatch SnapshotBatchLocked(WorkerSnapshot observed) =>
-        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed);
+        new(_connectionId, WorkerEvidenceKind.Snapshot, Current: Snapshot, ObservedSnapshot: observed,
+            SnapshotSyncPending: _snapshotSync != null);
 
     private static void ValidateEvidenceSnapshot(WorkerSnapshot snapshot)
     {

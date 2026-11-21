@@ -207,7 +207,7 @@ internal static partial class WorkerCoordinatorSelfTest
         string pipeName, WorkerAdmissionRecord record, long lastLogSequence,
         CancellationToken cancellationToken, RunSnapshot? activeRun = null,
         WorkerState initialState = WorkerState.Ready, RunSnapshot? lastRun = null, long stateRevision = 1,
-        Action<Stream>? connected = null)
+        Action<Stream>? connected = null, Func<ProtocolConnection, Task>? beforeSnapshotReply = null)
     {
         var pipe = new NamedPipeClientStream(
             ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification);
@@ -229,6 +229,7 @@ internal static partial class WorkerCoordinatorSelfTest
 
             var snapshotRequest = await ReadRequestAsync(
                 connection, ProtocolOperations.WorkerGetSnapshot, cancellationToken);
+            if (beforeSnapshotReply != null) await beforeSnapshotReply(connection);
             await connection.WriteAsync(
                 WireEnvelope.Response(
                     ProtocolOperations.WorkerGetSnapshot, snapshotRequest.RequestId!.Value,

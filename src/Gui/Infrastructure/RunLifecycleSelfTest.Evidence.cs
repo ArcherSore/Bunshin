@@ -228,7 +228,7 @@ internal static partial class RunLifecycleSelfTest
             f.Timeout(f.Body());
             f.Eof();
             var terminal = f.Frame(last: SnapshotOf(f.Plan, RunState.Succeeded));
-            f.Reconnect(terminal);
+            f.Reconnect(terminal, syncPending: true);
             var before = f.History.Count;
             if (exits) f.ExitWorker();
             else f.QueryResult(f.QueryWire(), true, f.Frame(last: SnapshotOf(Attempt(8), RunState.Failed)));
@@ -237,6 +237,19 @@ internal static partial class RunLifecycleSelfTest
             Check(f.History.Take(before).All(e => e is QueryRun or CancelQuery) && f.History.OfType<QueryRun>().Count() == 2
                 && f.Items<Present>().Single().Terminal == terminal.LastRun, "定向结果或进程退出释放重连期间收到的真实终态");
         }
+        var g = new Scenario();
+        g.Begin(Intent(RunSource.Scheduled));
+        g.Body();
+        g.Eof();
+        var older = g.Frame();
+        var last = g.Frame(last: SnapshotOf(g.Plan, RunState.Succeeded));
+        g.Reconnect(last, syncPending: true);
+        Check(g.History.OfType<CompleteScheduled>().Count() == 0 && new RunOrchestration(g.State).PendingStart(g.State.Current) == g.Key,
+            "首次同步前的终态不能放行下一次启动。");
+        g.FrameEvent(older, g.State.Current);
+        Check(g.History.OfType<CompleteScheduled>().Single().Terminal == last.LastRun
+            && new RunOrchestration(g.State).PendingStart(g.State.Current) == null,
+            "补齐同步后，最新匹配终态与解除待启动必须在同一次转换生效。");
     }
 
     private static void VerifyRunLifecycleRetirementOrder()
@@ -344,7 +357,10 @@ internal static partial class RunLifecycleSelfTest
             f.Now = timer.Due;
             f.Step(new RetryDue(f.Key, timer.Token));
         }
+        var pending = f.QueryWire();
         f.FrameEvent(f.Frame(last: SnapshotOf(f.Plan, RunState.Failed)), f.State.Current with { SnapshotFresh = false });
+        Check(!f.Items<Present>().Any(), "失效快照中的终态应等待定向确认。");
+        f.QueryResult(pending, true);
         f.Finish(typeof(Present));
         f.Conclusions(StartConclusion.Accepted);
         Check(f.History.OfType<ArmRetry>().Select(a => a.Due).SequenceEqual(expectedDue)

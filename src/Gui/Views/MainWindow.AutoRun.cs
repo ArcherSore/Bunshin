@@ -96,7 +96,6 @@ public partial class MainWindow
         if (!entered) {
             _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
         }
-        ResumeScheduledCleanup();
         return entered;
     }
 

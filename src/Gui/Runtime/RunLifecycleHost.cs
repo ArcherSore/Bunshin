@@ -31,7 +31,7 @@ internal sealed class RunLifecycleHost : IDisposable
     internal RunOrchestration Orchestration { get; private set; } = new(new());
     private RunLifecycleState State => Orchestration.Lifecycle;
     internal event Action<RunSnapshot>? ScheduledCompleted;
-    internal event Action? CleanupPending;
+    internal event Func<ScheduledSettlement, bool, Task>? CleanupPending;
     internal event Action? Changed;
 
     internal RunLifecycleHost(WorkerCoordinator worker, Dispatcher dispatcher, Func<string> configurationName,
@@ -84,6 +84,16 @@ internal sealed class RunLifecycleHost : IDisposable
             Orchestration = Orchestration with { Scheduled = own with { Cleanup = stage, Failure = failure } };
     }
 
+    internal Task DeliverScheduledCleanupAsync(bool gateHeld = false)
+    {
+        if (_disposed || State.Closing != null || Orchestration.Scheduled is not { NeedsCleanup: true } own
+            || Orchestration.PendingConclusions.Any(d => d.Item.Key == own.Key)) return Task.CompletedTask;
+        if (!gateHeld && (own.Cleanup != CleanupStage.Pending
+            || State.Current is not { Fresh: true, WorkerSnapshot: { } worker }
+            || worker.WorkerInstanceId != own.Key.WorkerInstanceId)) return Task.CompletedTask;
+        return CleanupPending?.Invoke(own, gateHeld) ?? Task.CompletedTask;
+    }
+
     // A modal presenter pumps the Dispatcher. Signal entry, so a replacement can proceed
     // inside that frame and never depends on a user's receipt.
     internal async Task IssuePendingPresentationsAsync()
@@ -105,6 +115,7 @@ internal sealed class RunLifecycleHost : IDisposable
         CommitEvidence();
         while (!_disposed && State.ReadyDeliveries(HoldManualErrors).FirstOrDefault() is { Item: RequestQuit quit })
             Reduce(new LifecycleEvent.DispatchPending(quit.Key));
+        _ = DeliverScheduledCleanupAsync();
     }
 
     private void CommitEvidence()
@@ -157,7 +168,6 @@ internal sealed class RunLifecycleHost : IDisposable
         PostDeliveries();
         while (State.Closing == null && _completed.TryDequeue(out var completed)) {
             ScheduledCompleted?.Invoke(completed.Terminal);
-            if (completed.Terminal.State == RunState.Succeeded) CleanupPending?.Invoke();
         }
         foreach (var effect in transition.Effects) {
             switch (effect) {
