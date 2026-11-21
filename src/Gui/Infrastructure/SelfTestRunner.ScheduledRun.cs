@@ -96,7 +96,7 @@ internal static partial class SelfTestRunner
     }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
-        bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false)
+        bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false, bool cleanupDuringExit = false)
     {
         using var process = Process.GetCurrentProcess();
         var sessionId = (uint)process.SessionId;
@@ -110,6 +110,7 @@ internal static partial class SelfTestRunner
         string digest = "";
         var preparations = 0;
         var exitRequests = 0;
+        var probe = new PresentationProbe();
         var cleanupCollision = tickBeforeDispatch && terminal == RunState.Succeeded;
         var clock = new ScheduleTestClock();
         if (cleanupCollision) {
@@ -124,6 +125,7 @@ internal static partial class SelfTestRunner
                 connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, token));
                 return Task.FromResult(new VerifiedChildSessionProcessLaunch((uint)process.Id, id, null, null));
             });
+        var environment = CreateEnvironment(logger, session, coordinator);
         try {
             WithRuntimeControlWindow(logger, directory, window => {
                 var project = ProjectOf(window);
@@ -235,7 +237,7 @@ internal static partial class SelfTestRunner
                     // Keep IPC up and omit only the start reply: the state event is authoritative.
                     var running = snapshot with { StateRevision = 3, RunState = RunState.Running, ActiveRun = own };
                     Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
-                    if (bufferExit)
+                    if (bufferExit || cleanupDuringExit)
                         Task.Run(() => pipe.WriteAsync(WireEnvelope.Response(request.Result.Operation, request.Result.RequestId!.Value,
                             new RunStartResponse("accepted")), token)).GetAwaiter().GetResult();
                     // The observed Active already proves acceptance even with the start reply missing.
@@ -277,6 +279,22 @@ internal static partial class SelfTestRunner
                     // 迁移后仍须断言：从提交待观察转为已在运行，另一机会始终返回 Busy。
                     ExpectBusy();
                     Publish(done, 4);
+                } else if (terminalDuringEnumeration) {
+                    var running = snapshot with { StateRevision = 3, ActiveRun = own, RunState = RunState.Running };
+                    Task.Run(() => pipe.WriteAsync(StateEvent(running), token)).GetAwaiter().GetResult();
+                    PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "定时入口应已观察到旧 Run 运行中。");
+                    wts.DuringEnumeration = () => {
+                        wts.DuringEnumeration = null;
+                        var ended = snapshot with { StateRevision = 4, LastRun = done };
+                        Task.Run(() => pipe.WriteAsync(StateEvent(ended), token)).GetAwaiter().GetResult();
+                        AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
+                            "本次 WTS 枚举期间应收到旧 Run 的终态。");
+                    };
+                    var next = window.TryStartScheduledRunAsync(target);
+                    PumpUntil(() => next.IsCompleted, "普通定时应继续处理本次机会。");
+                    Require(next.Result.Disposition == ScheduledRunDisposition.Admitted && preparations == 2,
+                        "枚举分身期间到达的终态应允许下一班执行。");
+                    return;
                 } else if (tickBeforeDispatch) {
                     // Advance IPC on the pool while the dispatcher is still handling the clock tick.
                     var received = snapshot with { LastRun = done, StateRevision = cleanupCollision ? 4 : 3 };
@@ -325,8 +343,30 @@ internal static partial class SelfTestRunner
                             };
                         }
                     };
+                    if (cleanupDuringExit) {
+                        window.Hide();
+                        wts.DuringLogoff = _ => {
+                            window.Dispatcher.Invoke(() => {
+                                environment.Closing = true;
+                                window.SetExitInProgress(true);
+                            });
+                            throw new IOException("模拟退出确认期间注销失败");
+                        };
+                    }
                     if (bufferExit) window.SetExitInProgress(true);
                     Publish(done, terminal == RunState.Succeeded ? 4 : 3);
+                    if (cleanupDuringExit) {
+                        PumpUntil(() => window.LogLines.OfType<LogEntry>().Any(e => e.Message.Contains("任务已完成，桌面分身未能关闭")),
+                            "退出确认期间应已记录收尾失败。");
+                        int CleanupBalloons() => probe.Balloons.Count(n => n.Failed && n.Message.Contains("桌面分身未能关闭"));
+                        Require(CleanupBalloons() == 0, "退出期间应暂存收尾失败提醒。");
+                        environment.Closing = false;
+                        window.SetExitInProgress(false);
+                        Publish(done, 5);
+                        Require(CleanupBalloons() == 1 && wts.LogoffAttempts.SequenceEqual([77u, sessionId]),
+                            "取消退出后应向托盘补发一次收尾失败提醒。");
+                        return;
+                    }
                     if (bufferExit) {
                         Publish(done, 5);
                         Require(completions.Count == 0 && wts.LogoffAttempts.SequenceEqual([77u]),
@@ -375,7 +415,9 @@ internal static partial class SelfTestRunner
                     ExpectBusy("运行环境状态未知");
                     Require(wts.LogoffAttempts.Count == 0, "已知空闲的 Worker 不属于当前 WTS 分身时不得注销。");
                     wts.ReportedId = sessionId;
-                    var retry = coordinator.StartRunAsync(new(own.RunId, payload.Plan, payload.PlanDigest));
+                    var key = new RunKey(record!.WorkerInstanceId, own.RunId);
+                    var retry = coordinator.SendStartAsync(new(Guid.NewGuid(), Guid.NewGuid(), key, payload.PlanDigest),
+                        new(own.RunId, payload.Plan, payload.PlanDigest), token);
                     var duplicate = Task.Run(async () => {
                         var request = await WorkerCoordinatorSelfTest.ReadRequestAsync(
                             pipe, ProtocolOperations.RunStart, token, snapshot with { LastRun = done, StateRevision = 4 });
@@ -384,15 +426,15 @@ internal static partial class SelfTestRunner
                     });
                     // 迁移至 WorkerCoordinatorSelfTest / 已接纳的同 ID 重试
                     PumpUntil(() => retry.IsCompleted && duplicate.IsCompleted, "已终结的同 ID 重试应返回已接纳。");
-                    Require(retry.Result.Disposition == "already_accepted", "应保留 Worker 对同一 Run 的幂等答复。");
+                    Require(retry.Result.StartReply == StartReplyKind.AlreadyAccepted, "应保留 Worker 对同一 Run 的幂等答复。");
                     var next = window.TryStartScheduledRunAsync(target);
                     // 迁移至 VerifyRunLifecycle / 已知终态后的新机会
                     PumpUntil(() => next.IsCompleted, "相同 Run 的终态已知时无需再等一次快照。");
                     Require(next.Result.Disposition == ScheduledRunDisposition.Admitted,
                         "重试已终结的 Run 之后仍应可以运行新的配置。");
                 }
-            }, session: session, coordinator: coordinator, environment: CreateEnvironment(logger, session, coordinator),
-                scheduleClock: clock, quitAfterRun: () => exitRequests++,
+            }, session: session, coordinator: coordinator, environment: environment,
+                scheduleClock: clock, quitAfterRun: () => exitRequests++, presentation: probe.Presentation,
                 prepareEnvironment: async (project, options, show) => {
                     if (failPreparation) {
                         failPreparation = false;

@@ -201,13 +201,16 @@ public partial class App : System.Windows.Application
         _trayIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowMainWindow);
     }
 
-    private void ShowBalloon(RunTerminalNotification notice)
+    private bool ShowBalloon(RunTerminalNotification notice)
     {
+        if (_trayIcon == null) return false;
         try {
-            _trayIcon?.ShowBalloonTip(5000, notice.Title, notice.Message,
+            _trayIcon.ShowBalloonTip(5000, notice.Title, notice.Message,
                 notice.Failed ? Forms.ToolTipIcon.Error : Forms.ToolTipIcon.Info);
+            return true;
         } catch (System.ComponentModel.Win32Exception exception) {
             _logger?.Warn("显示任务通知失败。", exception);
+            return false;
         }
     }
 

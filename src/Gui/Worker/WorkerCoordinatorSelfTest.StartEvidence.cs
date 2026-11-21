@@ -326,6 +326,37 @@ internal static partial class WorkerCoordinatorSelfTest
         }
     }
 
+    private static async Task VerifySnapshotGapTimeoutReconnectAsync(AppLogger logger, string directory, string project)
+    {
+        await using var f = new EvidenceFixture(logger, directory, project);
+        await using var peer = await f.ConnectAsync();
+        var idle = CreateSnapshot(f.Admission, 0) with { StateRevision = 3 };
+        await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
+            new StateChangedEvent(f.Run.WorkerInstanceId, 3, idle)), f.Token);
+        var refresh = await ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, f.Token);
+        Require(ProtocolJson.Deserialize<GetSnapshotRequest>(refresh.Data).RunId is null
+            && SpinWait.SpinUntil(() => f.Clock.PendingTimers == 1, TimeSpan.FromSeconds(5)), "断档应触发完整补查。");
+        f.Clock.Advance(TimeSpan.FromSeconds(20));
+        // Wait until the sender has actually observed the deadline before attempting its late reply.
+        Require(SpinWait.SpinUntil(() => f.Server.WireClosed.Task.IsCompleted || f.Clock.PendingTimers > 0,
+            TimeSpan.FromSeconds(5)), "补查应已超时。");
+        try {
+            await peer.WriteAsync(WireEnvelope.Response(refresh.Operation, refresh.RequestId!.Value,
+                new GetSnapshotResponse(idle)), f.Token);
+            await peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.WorkerStateChanged,
+                new StateChangedEvent(f.Run.WorkerInstanceId, 4, idle with { StateRevision = 4 })), f.Token);
+        } catch (IOException) { } // The old pipe may already be closed.
+        Require(SpinWait.SpinUntil(() => f.History.Any(b => b.Kind == WorkerEvidenceKind.Disconnected
+            && b.Error is TimeoutException), TimeSpan.FromSeconds(3)), "完整补查逾期应关闭旧连接，允许 Worker 重连。");
+        await peer.DisposeAsync();
+        await using var next = await f.ConnectAsync(4);
+        var send = f.Coordinator.SendStartAsync(f.NewSubmission(), f.Attempt, f.Token);
+        var start = await f.ReadAsync(next, ProtocolOperations.RunStart);
+        await next.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value,
+            new RunStartResponse("accepted")), f.Token);
+        Require((await send).StartReply == StartReplyKind.Accepted && f.WireStarts == 1, "重连首次同步后应能重新开始任务。");
+    }
+
     private static async Task VerifyQueuedStartSnapshotGapAsync(AppLogger logger, string directory, string project)
     {
         await using var f = new EvidenceFixture(logger, directory, project);

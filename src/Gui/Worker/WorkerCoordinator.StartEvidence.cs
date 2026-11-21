@@ -261,7 +261,7 @@ internal sealed partial class WorkerCoordinator
                 if (!frame.Data.GetProperty("snapshot").TryGetProperty("stateRevision", out _)) {
                     throw new ProtocolException("定向 getSnapshot 缺少 snapshot.stateRevision。");
                 }
-                stateChanged = ApplyFreshSnapshotLocked(response.Snapshot, admission, reconciledStart: null);
+                stateChanged = ApplyFreshSnapshotLocked(response.Snapshot, admission);
                 batch = SnapshotBatchLocked(response.Snapshot) with {
                     Kind = WorkerEvidenceKind.QueryReply, Request = request, RunRegistered = registered
                 };

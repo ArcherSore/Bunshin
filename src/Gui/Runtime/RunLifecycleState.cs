@@ -10,12 +10,11 @@ internal enum StartConclusion { Accepted, NotStarted, StartUnknown, EndUnconfirm
 internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
 internal enum QuitStage { AwaitingBody, Bound, Requested, AwaitingRecovery, RecoveredWhileClosing }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
-internal enum PresentationChannel { ForegroundError, Tray }
 internal enum NoticeKind { NotStarted, StartUnknown, EndUnconfirmed, Faulted, Succeeded, Failed }
 
 internal sealed record InputVersion(Guid ConfigurationId, long ProjectVersion, long EditVersion);
 internal sealed record RunIntent(Guid Id, RunSource Source, string OperationName, InputVersion Input,
-    string ConfigurationName, bool Foreground = false, bool QuitAfterRun = false, RunKey? RetryOf = null);
+    string ConfigurationName, bool QuitAfterRun = false, RunKey? RetryOf = null);
 internal sealed record SendRecord(Submission Identity, SendBoundary Boundary = SendBoundary.BeforeBody,
     WorkerRequestEvidence? Wire = null, string? RejectionCode = null, Exception? Error = null);
 internal sealed record Confirmation(QueryId? InFlight = null, int Failures = 0, long Timer = 0, TimeSpan? Due = null);

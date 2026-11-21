@@ -25,8 +25,6 @@ internal enum WorkerObservation
     ChildSessionEnded
 }
 
-internal enum StartObservation { Unknown, Accepted, NotAccepted }
-
 internal sealed record WorkerCoordinatorSnapshot(
     WorkerObservation Observation, bool SnapshotFresh,
     WorkerSnapshot? WorkerSnapshot, string Detail)
@@ -76,7 +74,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     private readonly Func<uint, Guid, string, string, CancellationToken, Task<VerifiedChildSessionProcessLaunch>>
         _launchWorker;
     private readonly CancellationTokenSource _shutdown = new();
-    private sealed record PendingRequest(string Operation, Guid? ReconciledStart, TaskCompletionSource<WireEnvelope> Completion)
+    private sealed record PendingRequest(string Operation, TaskCompletionSource<WireEnvelope> Completion)
     {
         internal GetSnapshotResponse? SnapshotResponse;
     }
@@ -143,6 +141,13 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     internal event EventHandler<WorkerLogEntry>? LogReceived;
 
     internal WorkerCoordinatorSnapshot Snapshot { get; private set; }
+
+    // Scheduling can see a terminal before its dispatcher callback. Wait for the pipe reader to
+    // enqueue that frame's lifecycle evidence before the gate decides to replace the old Run.
+    internal WorkerCoordinatorSnapshot ReadPublishedSnapshot()
+    {
+        lock (_gate) return Snapshot;
+    }
 
     // The user's current choice, which a Worker connected earlier may no longer hold.
     internal Func<MaaFrameworkOptions>? FrameworkOptions { get; set; }
@@ -224,11 +229,11 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             _launchingWorkerInstanceId = instanceId;
             fresh = new TaskCompletionSource<WorkerSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
             _awaitedFreshSnapshot = fresh;
-            UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
+            Snapshot = new WorkerCoordinatorSnapshot(
                 WorkerObservation.WorkerStarting,
                 false,
                 null,
-                "Pending Admission 已写入，正在启动 Worker"));
+                "Pending Admission 已写入，正在启动 Worker");
         }
         RaiseStateChanged();
 
@@ -381,9 +386,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 changed = true;
             }
             if (Snapshot.Observation != WorkerObservation.Connected) {
-                UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
+                Snapshot = new WorkerCoordinatorSnapshot(
                     WorkerObservation.WorkerStarting, false, Snapshot.WorkerSnapshot,
-                    $"Worker 进程已验证：PID={workerPid}，SessionId={launch.SessionId}；等待 admission + fresh Snapshot"));
+                    $"Worker 进程已验证：PID={workerPid}，SessionId={launch.SessionId}；等待 admission + fresh Snapshot");
                 changed = true;
             }
         }
@@ -444,70 +449,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    // A response can precede the first state event, or be lost altogether. Cached idle is then inconclusive.
-    private Guid? _startAwaitingObservation;
-
-    internal StartObservation ObserveStart(Guid workerId, Guid runId)
-    {
-        var (current, awaitingStart) = ReadRunObservation();
-        if (current is not { Fresh: true, WorkerSnapshot: { } worker }
-            || worker.WorkerInstanceId != workerId) {
-            return StartObservation.Unknown;
-        }
-        if (worker.ActiveRun?.RunId == runId || worker.LastRun?.RunId == runId) {
-            return StartObservation.Accepted;
-        }
-        return awaitingStart.HasValue ? StartObservation.Unknown : StartObservation.NotAccepted;
-    }
-
-    internal bool StartAwaitingObservation => ReadRunObservation().PendingStart.HasValue;
-
-    internal (WorkerCoordinatorSnapshot State, Guid? PendingStart) ReadRunObservation()
-    {
-        lock (_gate) {
-            return (Snapshot, _startAwaitingObservation);
-        }
-    }
-
-    // The caller holds the environment gate, so this read follows the pending run.start on the wire.
-    internal Task ReconcilePendingStartAsync() =>
-        ReadRunObservation().PendingStart is Guid id ? RefreshSnapshotAsync(id) : Task.CompletedTask;
-
-    internal async Task<RunStartResponse> StartRunAsync(
-        RunStartAttempt attempt, CancellationToken cancellationToken = default, Action? onSending = null)
-    {
-        ProtocolConnection connection;
-        lock (_gate) {
-            EnsureStartAllowedLocked(attempt.Plan.RuntimeProfileDigest);
-            connection = _connection ?? throw new InvalidOperationException("Worker IPC 尚未连接。");
-            if (_startAwaitingObservation is Guid pending && pending != attempt.RunId) {
-                throw new InvalidOperationException("上一次开始请求尚未确认。");
-            }
-            // A retry of the known Last Run can return already_accepted without another state event.
-            if (Snapshot.WorkerSnapshot?.LastRun?.RunId != attempt.RunId) {
-                _startAwaitingObservation = attempt.RunId;
-            }
-        }
-        try {
-            return await SendRequestAsync<RunStartRequest, RunStartResponse>(
-                ProtocolOperations.RunStart,
-                new RunStartRequest(attempt.RunId, attempt.PlanDigest, attempt.Plan) {
-                    RedactionValues = attempt.RedactionValues
-                }, cancellationToken, onSending, connection);
-        } catch (WorkerProtocolErrorException) {
-            lock (_gate) {
-                if (_startAwaitingObservation == attempt.RunId) {
-                    _startAwaitingObservation = null;
-                }
-            }
-            throw;
-        } catch {
-            // Worker handles requests in wire order. This read, or the snapshot on reconnect, follows run.start.
-            _ = RefreshSnapshotAsync(attempt.RunId);
-            throw;
-        }
-    }
-
     internal async Task<RunStopResponse> StopRunAsync(Guid runId, CancellationToken cancellationToken = default)
     {
         return await SendRequestAsync<RunStopRequest, RunStopResponse>(
@@ -549,9 +490,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 _connection = null;
                 _awaitedFreshSnapshot = null;
                 _logRecovery.InvalidateConnectionLocked();
-                UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
+                Snapshot = new WorkerCoordinatorSnapshot(
                     WorkerObservation.ChildSessionEnded, false, Snapshot.WorkerSnapshot,
-                    "Child Session 已结束"));
+                    "Child Session 已结束");
             }
         }
         if (record is not null) {
@@ -624,10 +565,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             return;
         }
         var (admission, logRecoveryGeneration) = admitted;
-        Guid? previousStart;
-        lock (_gate) {
-            previousStart = _startAwaitingObservation;
-        }
         RaiseStateChanged();
 
         using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -677,7 +614,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         {
             try {
                 var response = await SendRequestAsync<object, GetSnapshotResponse>(
-                    ProtocolOperations.WorkerGetSnapshot, new { }, token, connection: connection, reconciledStart: previousStart);
+                    ProtocolOperations.WorkerGetSnapshot, new { }, token, connection: connection);
                 _ = SynchroniseFrameworkOptionsAsync(token);
                 await _logRecovery.EnsureLogRecoveryAsync(admission.WorkerInstanceId, logRecoveryGeneration,
                     response.Snapshot.LastLogSequence, token);
@@ -755,9 +692,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                     CancelExitWatchLocked();
                     BeginEvidenceLocked(admission);
                     var logRecoveryGeneration = _logRecovery.ConnectionAdmittedLocked(admission.WorkerInstanceId);
-                    UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
+                    Snapshot = new WorkerCoordinatorSnapshot(
                         WorkerObservation.Connected, false, Snapshot.WorkerSnapshot,
-                        "Worker 已接纳，正在同步 Snapshot"));
+                        "Worker 已接纳，正在同步 Snapshot");
                     return (admission, logRecoveryGeneration);
                 }
             }
@@ -880,7 +817,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                     throw new ProtocolException("getSnapshot 响应的操作或协议版本不匹配。");
                 }
                 var response = ProtocolJson.Deserialize<GetSnapshotResponse>(frame.Data);
-                changed = ApplyFreshSnapshotLocked(response.Snapshot, admission, pending.ReconciledStart);
+                changed = ApplyFreshSnapshotLocked(response.Snapshot, admission);
                 _receivedFullSnapshot = true;
                 PublishLocked(SnapshotBatchLocked(response.Snapshot));
                 pending.SnapshotResponse = response;
@@ -893,24 +830,21 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    private bool ApplyFreshSnapshotLocked(WorkerSnapshot snapshot, WorkerAdmissionRecord admission, Guid? reconciledStart)
+    private bool ApplyFreshSnapshotLocked(WorkerSnapshot snapshot, WorkerAdmissionRecord admission)
     {
         if (ObservingEvidence) {
             ValidateEvidenceSnapshot(snapshot);
         }
         ValidateSnapshot(snapshot, admission);
-        if (_startAwaitingObservation == reconciledStart) {
-            _startAwaitingObservation = null;
-        }
         var older = Snapshot.WorkerSnapshot is { } current && current.WorkerInstanceId == snapshot.WorkerInstanceId
             && current.StateRevision > snapshot.StateRevision;
         if (!older) {
-            UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true, snapshot,
-                "Worker Snapshot 已同步"));
+            Snapshot = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true, snapshot,
+                "Worker Snapshot 已同步");
         }
         _awaitedFreshSnapshot?.TrySetResult(Snapshot.WorkerSnapshot!);
         _awaitedFreshSnapshot = null;
-        return !older || reconciledStart.HasValue;
+        return !older;
     }
 
     private void ApplyStateEvent(StateChangedEvent state, int protocolVersion, ProtocolConnection connection)
@@ -938,17 +872,17 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             if (Snapshot.Fresh && state.StateRevision != currentRevision + 1) {
                 _receivedFullSnapshot = false;
                 _scheduledSnapshotSyncs++;
-                UpdateSnapshotLocked(Snapshot with {
+                Snapshot = Snapshot with {
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
-                });
-                _ = Task.Run(() => RefreshSnapshotAsync(connection: connection));
+                };
+                _ = Task.Run(() => RefreshSnapshotAsync(connection));
                 revisionGapFrom = currentRevision;
             } else {
                 ValidateSnapshot(state.Snapshot, admission);
-                UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(
+                Snapshot = new WorkerCoordinatorSnapshot(
                     WorkerObservation.Connected, true, state.Snapshot,
-                    "Worker 状态已更新"));
+                    "Worker 状态已更新");
             }
             PublishLocked(SnapshotBatchLocked(state.Snapshot));
         }
@@ -961,21 +895,20 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
     }
 
-    private async Task RefreshSnapshotAsync(Guid? reconciledStart = null, ProtocolConnection? connection = null)
+    private async Task RefreshSnapshotAsync(ProtocolConnection connection)
     {
         try {
             await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection, reconciledStart: reconciledStart);
+                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection);
         } catch (Exception exception) {
-            _logger.Warn($"刷新 Worker Snapshot 失败：{exception.GetBaseException().Message}");
+            connection.Close(exception);
         }
     }
 
     private Task<TResponse> SendRequestAsync<TRequest, TResponse>(
-        string operation, TRequest data, CancellationToken cancellationToken, Action? onSending = null,
-        ProtocolConnection? connection = null, Guid? reconciledStart = null) =>
+        string operation, TRequest data, CancellationToken cancellationToken, ProtocolConnection? connection = null) =>
         TraceRequestAsync(operation, () => SendRequestCoreAsync<TRequest, TResponse>(
-            operation, data, cancellationToken, onSending, connection, reconciledStart));
+            operation, data, cancellationToken, connection));
 
     private async Task<TResponse> TraceRequestAsync<TResponse>(string operation, Func<Task<TResponse>> send)
     {
@@ -999,12 +932,11 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     }
 
     private async Task<TResponse> SendRequestCoreAsync<TRequest, TResponse>(
-        string operation, TRequest data, CancellationToken cancellationToken, Action? onSending,
-        ProtocolConnection? connection, Guid? reconciledStart)
+        string operation, TRequest data, CancellationToken cancellationToken, ProtocolConnection? connection)
     {
         var requestId = Guid.NewGuid();
         var completion = new TaskCompletionSource<WireEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var pending = new PendingRequest(operation, reconciledStart, completion);
+        var pending = new PendingRequest(operation, completion);
         lock (_gate) {
             if (operation == ProtocolOperations.WorkerGetSnapshot && connection is not null && connection == _connection) {
                 _scheduledSnapshotSyncs--;
@@ -1016,7 +948,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             }
         }
         try {
-            await WriteRequestAsync(connection, WireEnvelope.Request(operation, requestId, data), cancellationToken, onSending);
+            await WriteRequestAsync(connection, WireEnvelope.Request(operation, requestId, data), cancellationToken, null);
             var response = await completion.Task.WaitAsync(RequestTimeout, _requestClock, cancellationToken);
             if (response.Success != true) {
                 throw new WorkerProtocolErrorException(
@@ -1074,14 +1006,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             }
         }
         _abandonedRequests.Clear();
-    }
-
-    private void EnsureStartAllowedLocked(string desiredRuntimeProfileDigest)
-    {
-        if (Snapshot is not { FreshReadyToStart: true, WorkerSnapshot: { } worker }
-            || worker.RuntimeProfileDigest != desiredRuntimeProfileDigest) {
-            throw new InvalidOperationException("当前 Worker/Snapshot/Run 状态不允许 Start。 ");
-        }
     }
 
     private void ValidateSnapshot(WorkerSnapshot snapshot, WorkerAdmissionRecord admission)
@@ -1224,7 +1148,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             CancelExitWatchLocked();
             RemoveAdmissionLocked(record, confirmedExit: true);
             _awaitedFreshSnapshot = null;
-            UpdateSnapshotLocked(WorkerCoordinatorSnapshot.Empty with { Detail = detail });
+            Snapshot = WorkerCoordinatorSnapshot.Empty with { Detail = detail };
             try {
                 _store.DeleteManifest(record.WorkerInstanceId);
             } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
@@ -1255,7 +1179,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             if (observation == WorkerObservation.WorkerExited && Snapshot.Observation != observation) {
                 ObserveAdmissionLocked(record, WorkerEvidenceKind.ProcessExited);
             }
-            UpdateSnapshotLocked(new WorkerCoordinatorSnapshot(observation, false, Snapshot.WorkerSnapshot, detail));
+            Snapshot = new WorkerCoordinatorSnapshot(observation, false, Snapshot.WorkerSnapshot, detail);
         }
         RaiseStateChanged();
     }
@@ -1311,16 +1235,6 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             throw new UnauthorizedAccessException("Pipe client PID 与 Admission Record 不匹配。 ");
         }
         return current;
-    }
-
-    private void UpdateSnapshotLocked(WorkerCoordinatorSnapshot snapshot)
-    {
-        if (snapshot.Observation is WorkerObservation.WorkerExited or WorkerObservation.ChildSessionEnded
-            || snapshot.Fresh && _startAwaitingObservation is Guid id
-                && (snapshot.WorkerSnapshot?.ActiveRun?.RunId == id || snapshot.WorkerSnapshot?.LastRun?.RunId == id)) {
-            _startAwaitingObservation = null;
-        }
-        Snapshot = snapshot;
     }
 
     private void RaiseStateChanged()

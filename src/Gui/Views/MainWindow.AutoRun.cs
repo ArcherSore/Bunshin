@@ -14,19 +14,20 @@ public partial class MainWindow
     private readonly Action? _quitAfterRun;
     internal event EventHandler<RunTerminalNotification>? NotificationRequested;
 
-    private void Notify(RunTerminalNotification notice)
+    private bool Notify(RunTerminalNotification notice)
     {
         NotificationRequested?.Invoke(this, notice);
-        if (!_environment.Closing && !_exitInProgress && !(IsVisible && IsActive && WindowState != WindowState.Minimized))
-            _presentation.ShowBalloon?.Invoke(notice);
+        return !_environment.Closing && !_exitInProgress && !(IsVisible && IsActive && WindowState != WindowState.Minimized)
+            && _presentation.ShowBalloon?.Invoke(notice) == true;
     }
 
-    private void DeliverRunAction(Payload item)
+    private bool DeliverRunAction(Payload item)
     {
         switch (item) {
             case Present notice:
-                PresentRunOutcome(notice);
-                break;
+                return PresentRunOutcome(notice);
+            case PresentCleanupFailure failure:
+                return Notify(new($"「{failure.Name}」收尾失败", failure.Detail, true));
             case CompleteScheduled completed:
                 ScheduledRunCompleted?.Invoke(this, completed.Terminal);
                 break;
@@ -42,31 +43,36 @@ public partial class MainWindow
                 _quitAfterRun?.Invoke();
                 break;
         }
+        return true;
     }
 
-    private void PresentRunOutcome(Present notice)
+    private bool PresentRunOutcome(Present notice)
     {
         if (notice.Kind is NoticeKind.Succeeded or NoticeKind.Failed or NoticeKind.Faulted) {
-            Notify(new(notice.Operation, notice.Detail, notice.Kind != NoticeKind.Succeeded));
-            return;
+            return Notify(new(notice.Operation, notice.Detail, notice.Kind != NoticeKind.Succeeded));
         }
 
         var detail = notice.Kind is NoticeKind.StartUnknown or NoticeKind.EndUnconfirmed ? notice.Detail : null;
         var error = notice.Error ?? new InvalidOperationException(detail ?? "任务未能启动。");
-        if (notice.Channel == PresentationChannel.ForegroundError) {
-            PresentOperationError(notice.Operation, error, detail);
+        if (notice.Intent?.Source == RunSource.Manual) {
+            if (IsVisible && WindowState != WindowState.Minimized) {
+                PresentOperationError(notice.Operation, error, detail);
+                return true;
+            }
+            _logger.Error($"{notice.Operation}。", error);
+            return Notify(new(notice.Operation, detail ?? error.GetBaseException().Message, true, notice.Operation, error));
         } else if (notice.Intent is { Source: RunSource.Scheduled } scheduled) {
             if (notice.Kind == NoticeKind.NotStarted) {
-                ReportScheduledStartFailure(scheduled.ConfigurationName,
+                return ReportScheduledStartFailure(scheduled.ConfigurationName,
                     error is WorkerProtocolErrorException ? "桌面分身启动失败（任务提交未成功）" : "桌面分身启动失败（任务未被接纳）", error);
             } else {
                 AddScheduleActivity($"「{scheduled.ConfigurationName}」：{detail}", LogLevel.Error);
-                Notify(new($"「{scheduled.ConfigurationName}」运行未确认", notice.Detail, true, notice.Operation, error));
+                return Notify(new($"「{scheduled.ConfigurationName}」运行未确认", notice.Detail, true, notice.Operation, error));
             }
         } else if (notice.Intent == null) {
-            Notify(new("任务未能确认结束", notice.Detail, true, notice.Operation, error));
+            return Notify(new("任务未能确认结束", notice.Detail, true, notice.Operation, error));
         } else {
-            ReportUnattendedFailure(notice.Operation, error, detail);
+            return ReportUnattendedFailure(notice.Operation, error, detail);
         }
     }
 
@@ -144,10 +150,10 @@ public partial class MainWindow
     private void ReportAutoRunFailure(string message) =>
         ReportUnattendedFailure("自动执行", new InvalidOperationException(message));
 
-    private void ReportUnattendedFailure(string operation, Exception exception, string? detail = null)
+    private bool ReportUnattendedFailure(string operation, Exception exception, string? detail = null)
     {
         _logger.Error($"{operation}。", exception);
         var message = $"{operation}：{detail ?? exception.GetBaseException().Message}";
-        Notify(new("自动执行未能完成", message, true, operation, exception));
+        return Notify(new("自动执行未能完成", message, true, operation, exception));
     }
 }

@@ -51,6 +51,7 @@ internal static partial class SelfTestRunner
         var pipeName = $"Bunshin.Schedule.Boot.{Guid.NewGuid():N}";
         var workers = new List<Task>();
         var bootAccepted = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingQuery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var publishPendingRun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishManualStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -79,16 +80,21 @@ internal static partial class SelfTestRunner
                     PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "开机 Run 应可停止。");
                 }
                 var warnings = new List<ForcedScheduledStartCountdown>();
-                window.ForcedScheduledStartPending += (_, e) => warnings.Add(e);
+                window.ForcedScheduledStartPending += (_, e) => {
+                    if (scenario == BootReplacement.PendingStart)
+                        Require(coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == bootAccepted.Task.Result,
+                            "宣布倒计时时应已确认旧 Run 正在运行。");
+                    warnings.Add(e);
+                };
                 clock.Advance(TimeSpan.FromMinutes(1));
                 var scheduled = window.CheckScheduledRunsAsync();
-                PumpUntil(() => warnings.Count == 1, "顶替开机 Run 前应有倒计时。");
-                Require(wts.LogoffAttempts.Count == 0 && !stopReply.Task.IsCompleted, "倒计时前不能停止任务或关闭分身。");
                 if (scenario == BootReplacement.PendingStart) {
+                    PumpUntil(() => pendingQuery.Task.IsCompleted, "定时入口应先等开机 Run 的有序复核。");
+                    Require(warnings.Count == 0, "有序复核应答前不能宣布倒计时。");
                     publishPendingRun.SetResult();
-                    PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == bootAccepted.Task.Result,
-                        "倒计时内有序查询应确认原开机 Run 仍在运行。");
                 }
+                PumpUntil(() => warnings.Count == 1, "确认开机 Run 仍在运行后应有倒计时。");
+                Require(wts.LogoffAttempts.Count == 0 && !stopReply.Task.IsCompleted, "倒计时前不能停止任务或关闭分身。");
                 if (manual) {
                     Click(window, "StopTaskHeaderButton");
                     PumpUntil(() => stopReply.Task.IsCompleted, "倒计时内应允许手动停止。");
@@ -168,7 +174,14 @@ internal static partial class SelfTestRunner
                 new RunStartResponse("accepted")), token);
             if (boot) {
                 bootAccepted.SetResult(active.RunId);
-                if (scenario == BootReplacement.PendingStart) await publishPendingRun.Task.WaitAsync(token);
+                if (scenario == BootReplacement.PendingStart) {
+                    var query = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.WorkerGetSnapshot, token);
+                    Require(ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId == active.RunId, "应复核原开机 Run。");
+                    pendingQuery.SetResult();
+                    await publishPendingRun.Task.WaitAsync(token);
+                    await pipe.WriteAsync(WireEnvelope.Response(query.Operation, query.RequestId!.Value,
+                        new GetSnapshotResponse(running, true)), token);
+                }
                 var stop = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.RunStop,
                     token, running);
                 Require(ProtocolJson.Deserialize<RunStopRequest>(stop.Data).RunId == active.RunId,

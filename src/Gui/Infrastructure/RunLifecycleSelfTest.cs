@@ -34,7 +34,7 @@ internal static partial class RunLifecycleSelfTest
     }
 
     private static RunIntent Intent(RunSource source, int n = 1) => new(Id(n), source, "开始任务", Input, "第一班",
-        Foreground: source == RunSource.Manual, QuitAfterRun: source == RunSource.Launch);
+        QuitAfterRun: source == RunSource.Launch);
 
     private static RunSnapshot SnapshotOf(RunStartAttempt attempt, RunState status)
     {
@@ -83,10 +83,10 @@ internal static partial class RunLifecycleSelfTest
             Step(Start);
         }
 
-        internal void Ack(long id)
+        internal void Ack(long id, bool presented = true)
         {
             if (History.OfType<Deliver>().Any(d => d.Id == id)) acknowledged.Add(id);
-            Step(new Delivered(id));
+            Step(new Delivered(id, presented));
         }
 
         // Drive exactly the actions the consumer actually received. A missing dispatch or a

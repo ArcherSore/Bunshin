@@ -26,6 +26,10 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
         switch (input) {
             case SubmissionStarted e: Register(e); break;
             case Observed e: Observe(e.Batch, e.ConfigurationName); break;
+            case ConfirmNow e when state.Runs.TryGetValue(e.Key, out var pending) && !pending.Settled:
+                CancelTimer(pending);
+                Save(pending with { NeedQuery = true, Confirmation = pending.Confirmation with { Timer = 0, Due = null } });
+                break;
             case RetryDue e when state.Runs.TryGetValue(e.Key, out var run)
                     && run.Confirmation.Timer == e.Token && run.Confirmation.Due is { } due:
                 if (state.Now < due) {
@@ -34,7 +38,8 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                     effects.Add(new ArmRetry(run.Key, token, due));
                 } else Save(run with { Confirmation = run.Confirmation with { Timer = 0, Due = null } });
                 break;
-            case Delivered e: Acknowledge(e.Id); break;
+            case Delivered e: Acknowledge(e); break;
+            case CleanupFailed e: Queue(new PresentCleanupFailure(e.Key, e.Name, e.Detail)); break;
             case DeferQuit e when e.Deferred || state.DeferredQuit == e.Key:
                 state = state with { DeferredQuit = e.Deferred ? e.Key : null };
                 break;

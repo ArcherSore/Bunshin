@@ -138,7 +138,7 @@ public partial class MainWindow : FluentWindow
         OnFrameworkOptionsChanged(_settings.SaveDraw);
         ClearDebugFilesOnStartup();
         _environment = environment;
-        _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, DeliverRunAction, logger);
+        _lifecycle = new(workerCoordinator, Dispatcher, () => ActiveConfigurationName, DeliverRunAction, logger, scheduleClock);
         _lifecycle.Changed += RefreshRuntimeControls;
         _environment.PendingLifecycleStart = view => _lifecycle.PendingStart(view)?.RunId;
         _prepareEnvironment = prepareEnvironment ?? environment.PrepareAsync;
@@ -679,7 +679,7 @@ public partial class MainWindow : FluentWindow
     private RunIntent CreateRunIntent(RunSource source, Guid configurationId, string name,
         PendingOperation operation = PendingOperation.StartingRun) =>
         new(Guid.NewGuid(), source, OperationLabel(operation) + "失败",
-            new(configurationId, _projectVersion, _editVersion), name, Foreground: source == RunSource.Manual,
+            new(configurationId, _projectVersion, _editVersion), name,
             QuitAfterRun: source == RunSource.Launch && _launchCommand.QuitAfterRun);
 
     private Task SubmitRunAsync(RunIntent intent, RunKey key, RunStartAttempt attempt)

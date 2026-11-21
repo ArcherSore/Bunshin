@@ -31,7 +31,8 @@ internal static partial class RunLifecycleSelfTest
                 StartConclusion.StartUnknown => NoticeKind.StartUnknown,
                 _ => NoticeKind.EndUnconfirmed
             };
-            Check(notices[0].Channel == PresentationChannel.Tray && notices[1] is { Channel: PresentationChannel.ForegroundError } p
+            var p = notices[1];
+            Check(notices[0].Intent?.Source == RunSource.Launch
                 && p.Kind == kind && p.Intent == retry && p.Operation == retry.OperationName
                 && (kind != NoticeKind.NotStarted || p.Error == error)
                 && f.History.OfType<SubmissionConclusion>().Last() is { } c && c.Submission == send.Submission && c.Conclusion == conclusion,
@@ -272,7 +273,7 @@ internal static partial class RunLifecycleSelfTest
             f.Finish(typeof(Present));
             f.Conclusions();
             var notice = f.Items<Present>().Single();
-            Check(notice.Intent == null && notice.Terminal == terminal.LastRun && notice.Channel == PresentationChannel.Tray
+            Check(notice.Intent == null && notice.Terminal == terminal.LastRun
                 && notice.Operation == (status == RunState.Succeeded ? "「周常」已完成" : "「周常」运行失败"),
                 "外部 Active 冻结观察期间首次非空配置名，历史 Last 不补发");
         }
@@ -292,6 +293,23 @@ internal static partial class RunLifecycleSelfTest
         f.Conclusions(StartConclusion.Accepted, StartConclusion.EndUnconfirmed);
         Check(f.Items<Present>().Single() is { Kind: NoticeKind.Faulted, Terminal: null } p && p.Detail.Contains("结束桌面分身"),
             "已观察 Active 才提示恢复，进程退出不能再占用同一个通知槽");
+
+        foreach (var status in new RunState?[] { null, RunState.Succeeded, RunState.Cancelled }) {
+            var race = new Scenario();
+            race.Begin(Intent(RunSource.Manual));
+            race.Body();
+            race.Active();
+            race.Active(WorkerState.Faulted);
+            var fault = race.History.OfType<Deliver>().Single();
+            if (status.HasValue) race.Terminal(status.Value);
+            else race.ExitWorker();
+            race.Ack(fault.Id, presented: false);
+            race.Finish(status == RunState.Cancelled ? [typeof(Present)] : [typeof(Present), typeof(Present)]);
+            var final = race.Items<Present>().Skip(1).SingleOrDefault();
+            Check(final?.Kind == (status switch {
+                RunState.Succeeded => NoticeKind.Succeeded, RunState.Cancelled => null, _ => NoticeKind.EndUnconfirmed
+            }), "未呈现的 Faulted 回执晚于结算时，仍应交付最终结论，取消保持静默");
+        }
 
         var g = new Scenario();
         var external = Attempt(8);
@@ -341,8 +359,7 @@ internal static partial class RunLifecycleSelfTest
         manual.ExitWorker();
         manual.Step(new ClosingCancelled(Id(18)));
         manual.Finish(typeof(Present));
-        Check(manual.Items<Present>().Single() is { Kind: NoticeKind.EndUnconfirmed,
-            Channel: PresentationChannel.ForegroundError } notice && notice.Error == timeout,
+        Check(manual.Items<Present>().Single() is { Kind: NoticeKind.EndUnconfirmed, Intent.Source: RunSource.Manual } notice && notice.Error == timeout,
             "退出期间由 Faulted 转为运行未确认的手动任务应补发原异常到前台");
 
         foreach (var status in new RunState?[] { null, RunState.Succeeded, RunState.Cancelled }) {

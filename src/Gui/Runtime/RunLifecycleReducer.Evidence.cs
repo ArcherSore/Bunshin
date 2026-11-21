@@ -187,7 +187,7 @@ internal sealed partial class RunLifecycleReducer
 
     private TrackedRun NotifyFault(TrackedRun r)
     {
-        Queue(new Present(r.Key, r.Owner, NoticeKind.Faulted, PresentationChannel.Tray, "任务未能确认结束"));
+        Queue(new Present(r.Key, r.Owner, NoticeKind.Faulted, "任务未能确认结束"));
         return r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
     }
 

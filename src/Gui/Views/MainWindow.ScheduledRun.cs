@@ -34,12 +34,12 @@ public partial class MainWindow
         AddActivityEntry(new(_scheduleClock.GetLocalNow(), level, message, TaskLabel: "定时"));
     }
 
-    private void ReportScheduledStartFailure(string name, string reason, Exception? exception = null)
+    private bool ReportScheduledStartFailure(string name, string reason, Exception? exception = null)
     {
         var message = $"「{name}」未能启动：{reason}";
         _logger.Error(message, exception);
         AddScheduleActivity(message, LogLevel.Error);
-        Notify(new("定时任务未能启动", $"「{name}」：{reason}", true, "开始任务失败", exception));
+        return Notify(new("定时任务未能启动", $"「{name}」：{reason}", true, "开始任务失败", exception));
     }
 
     private void ReportScheduledSkip(string name, string reason)
@@ -187,7 +187,7 @@ public partial class MainWindow
             return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
         }
         if (force) {
-            await _workerCoordinator.ReconcilePendingStartAsync();
+            await _lifecycle.ConfirmPendingStartAsync();
         } else if (_environment.ScheduledRunBlocker(out _, out _) is { } blocker) {
             return new(ScheduledRunDisposition.Busy, Reason: blocker);
         }
@@ -322,7 +322,7 @@ public partial class MainWindow
                 _logger.Error($"定时执行「{own.Name}」未能关闭桌面分身。", failure);
                 const string reason = "任务已完成，桌面分身未能关闭";
                 AddScheduleActivity(reason, LogLevel.Error);
-                Notify(new($"「{own.Name}」收尾失败", reason, true));
+                _lifecycle.Apply(new LifecycleEvent.CleanupFailed(own.Key, own.Name, reason));
             } else if (authorized) {
                 AddScheduleActivity("全部完成，已关闭桌面分身");
             }

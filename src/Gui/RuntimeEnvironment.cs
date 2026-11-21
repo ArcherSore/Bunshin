@@ -67,8 +67,8 @@ internal sealed class RuntimeEnvironment
 
     internal (WorkerCoordinatorSnapshot State, Guid? PendingStart) ReadRunObservation()
     {
-        var (view, pending) = _coordinator.ReadRunObservation();
-        return (view, PendingLifecycleStart?.Invoke(view) ?? pending);
+        var view = _coordinator.ReadPublishedSnapshot();
+        return (view, PendingLifecycleStart?.Invoke(view));
     }
 
     internal string? ScheduledRunBlocker(out WorkerCoordinatorSnapshot observation, out bool hasSession)

@@ -24,16 +24,15 @@ internal sealed partial class RunLifecycleReducer
     {
         CancelConfirmation(r);
         r = Conclude(r, conclusion, error);
-        var foreground = r.Owner is { Source: RunSource.Manual, Foreground: true };
         // Each retrying click needs its own error, even if the Run's proactive slot was used.
-        if (r.Notification == NotificationSlot.Open || foreground && r.Owner?.RetryOf == r.Key && r.NotificationIntent != r.Owner.Id) {
+        if (r.Notification == NotificationSlot.Open
+            || r.Owner is { Source: RunSource.Manual } retry && retry.RetryOf == r.Key && r.NotificationIntent != retry.Id) {
             var kind = conclusion switch {
                 StartConclusion.StartUnknown => NoticeKind.StartUnknown,
                 StartConclusion.EndUnconfirmed => NoticeKind.EndUnconfirmed,
                 _ => NoticeKind.NotStarted
             };
-            Queue(new Present(r.Key, r.Owner, kind, foreground ? PresentationChannel.ForegroundError : PresentationChannel.Tray,
-                r.Owner?.OperationName ?? "任务运行", error));
+            Queue(new Present(r.Key, r.Owner, kind, r.Owner?.OperationName ?? "任务运行", error));
             if (r.Notification == NotificationSlot.Open)
                 r = r with { Notification = NotificationSlot.Claimed, NotificationIntent = r.Owner?.Id };
         }
@@ -69,7 +68,7 @@ internal sealed partial class RunLifecycleReducer
         var subject = string.IsNullOrWhiteSpace(name) ? "任务" : $"「{name}」";
         var succeeded = terminal.State == RunState.Succeeded;
         return new(r.Key, r.Owner, succeeded ? NoticeKind.Succeeded : NoticeKind.Failed,
-            PresentationChannel.Tray, subject + (succeeded ? "已完成" : "运行失败"), Terminal: terminal);
+            subject + (succeeded ? "已完成" : "运行失败"), Terminal: terminal);
     }
 
     private void DispatchDelivery()
@@ -82,14 +81,8 @@ internal sealed partial class RunLifecycleReducer
             if (d == null) return;
             state = state with { Deliveries = state.Deliveries.Remove(d) };
             if (d.Item is Present { Kind: NoticeKind.Faulted } fault && state.Runs[fault.Key] is { Retired: true } r) {
-                if (r.Terminal?.State == RunState.Cancelled) {
-                    Save(r with { Notification = NotificationSlot.Silent });
-                    continue;
-                }
-                d = d with { Item = r.Terminal is { } terminal ? TerminalNotice(r, terminal)
-                    : fault with { Kind = NoticeKind.EndUnconfirmed, Operation = r.Owner?.OperationName ?? "任务运行",
-                        Error = LastError(r), Channel = r.Owner is { Source: RunSource.Manual, Foreground: true }
-                            ? PresentationChannel.ForegroundError : PresentationChannel.Tray } };
+                if (FinalNoticeAfterFault(r, fault) is not { } final) continue;
+                d = d with { Item = final };
             }
             state = state with { InFlightDelivery = d };
             if (d.Item is RequestQuit) SetQuit(d.Item.Key, QuitStage.Requested);
@@ -98,11 +91,28 @@ internal sealed partial class RunLifecycleReducer
         }
     }
 
-    private void Acknowledge(long id)
+    private void Acknowledge(LifecycleEvent.Delivered receipt)
     {
-        if (state.InFlightDelivery is not { } d || d.Id != id) return;
+        if (state.InFlightDelivery is not { } d || d.Id != receipt.Id) return;
         state = state with { InFlightDelivery = null };
-        if (d.Item is Present && state.Runs[d.Item.Key] is { Notification: NotificationSlot.Claimed } r)
-            Save(r with { Notification = NotificationSlot.Delivered });
+        if (d.Item is not Present notice || state.Runs[notice.Key] is not { Notification: NotificationSlot.Claimed } r
+            || r.NotificationIntent != notice.Intent?.Id) return;
+
+        if (!receipt.Presented && notice.Kind == NoticeKind.Faulted && r.Settled) {
+            // Settlement raced the receipt. Dispatch the final outcome which the reserved slot held back.
+            if (FinalNoticeAfterFault(r, notice) is { } final) Queue(final);
+        } else {
+            Save(r with { Notification = receipt.Presented ? NotificationSlot.Delivered : NotificationSlot.Open });
+        }
+    }
+
+    private Present? FinalNoticeAfterFault(TrackedRun run, Present fault)
+    {
+        if (run.Terminal is not { } terminal)
+            return fault with { Kind = NoticeKind.EndUnconfirmed, Operation = run.Owner?.OperationName ?? "任务运行",
+                Error = LastError(run) };
+        if (terminal.State != RunState.Cancelled) return TerminalNotice(run, terminal);
+        Save(run with { Notification = NotificationSlot.Silent });
+        return null;
     }
 }

@@ -50,6 +50,13 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifyLaunchHelp), _ => VerifyLaunchHelp()),
         new(Group.Support, nameof(VerifyHelpOutput), _ => VerifyHelpOutput()),
         new(Group.Support, nameof(VerifyQuitAfterRunTracker), _ => VerifyQuitAfterRunTracker()),
+        new(Group.Project, "VerifyRunDeliveryTerminalDuringEnumeration", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, terminalDuringEnumeration: true)),
+        new(Group.Project, "VerifyRunDeliveryCleanupDuringExit", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, cleanupDuringExit: true)),
+        new(Group.Project, "VerifyRunDeliveryForegroundFault", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault)),
+        new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),
+        new(Group.Project, "VerifyRunDeliveryForcedQuery", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForcedQuery)),
         new(Group.Project, nameof(VerifyRunDelivery), c => VerifyRunDelivery(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
             c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),

@@ -13,5 +13,5 @@ internal sealed class RunPresentation
             ? System.Windows.MessageBox.Show(owner, message, title, buttons, MessageBoxImage.Error)
             : System.Windows.MessageBox.Show(message, title, buttons, MessageBoxImage.Error,
                 buttons == MessageBoxButton.YesNo ? MessageBoxResult.No : MessageBoxResult.OK);
-    internal Action<RunTerminalNotification>? ShowBalloon { get; init; }
+    internal Func<RunTerminalNotification, bool>? ShowBalloon { get; init; }
 }

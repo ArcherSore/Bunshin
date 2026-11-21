@@ -38,10 +38,8 @@ internal static partial class RunLifecycleSelfTest
                 StartConclusion.StartUnknown => NoticeKind.StartUnknown, _ => NoticeKind.EndUnconfirmed
             };
             Check(notice.Run == f.Key && notice.Intent == f.Start.Intent && notice.Kind == kind
-                && notice.Channel == (source == RunSource.Manual && conclusion != StartConclusion.Accepted
-                    ? PresentationChannel.ForegroundError : PresentationChannel.Tray)
                 && f.History.OfType<SubmissionConclusion>().All(c => c.Submission == f.Start.Submission),
-                $"{source} / {conclusion} 应交付给原提交与渠道");
+                $"{source} / {conclusion} 应交付给原提交");
         }
     }
 
@@ -60,7 +58,7 @@ internal static partial class RunLifecycleSelfTest
             f.Finish(typeof(Present));
             f.Conclusions(StartConclusion.NotStarted);
             Check(f.Items<Present>().Single() == new Present(f.Key, intent, NoticeKind.NotStarted,
-                PresentationChannel.ForegroundError, intent.OperationName, error)
+                intent.OperationName, error)
                 && f.History.OfType<SubmissionConclusion>().Single().Error == error && f.State.Runs.IsEmpty,
                 "保留调用方的操作名、原始异常链；回执后回收退休 Run");
         }
@@ -319,7 +317,7 @@ internal static partial class RunLifecycleSelfTest
             var worker = f.Key.WorkerInstanceId;
             var reusable = f.State.ReusableAttempt(retry, worker);
             Check(f.Items<Present>().Single() == new Present(f.Key, f.Start.Intent, NoticeKind.NotStarted,
-                    PresentationChannel.ForegroundError, f.Start.Intent.OperationName, error)
+                    f.Start.Intent.OperationName, error)
                 && (code is "invalid_run_plan" or "invalid_request" or "run_id_conflict" ? reusable == null : ReferenceEquals(reusable, f.Plan))
                 && f.State.ReusableAttempt(retry, Id(101)) == null, "明确拒绝只交付一次原错，复用须符合拒绝码和 Worker 身份");
             foreach (var changed in new[] { Input with { ConfigurationId = Id(9) }, Input with { ProjectVersion = 2 },

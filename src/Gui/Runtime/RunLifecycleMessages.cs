@@ -9,8 +9,10 @@ internal abstract record LifecycleEvent
     internal TimeSpan At { get; init; }
     internal sealed record SubmissionStarted(RunIntent Intent, RunKey Key, Submission Submission, RunStartAttempt Attempt) : LifecycleEvent;
     internal sealed record Observed(WorkerObservationBatch Batch, string? ConfigurationName = null) : LifecycleEvent;
+    internal sealed record ConfirmNow(RunKey Key) : LifecycleEvent;
     internal sealed record RetryDue(RunKey Key, long Token) : LifecycleEvent;
-    internal sealed record Delivered(long Id) : LifecycleEvent;
+    internal sealed record Delivered(long Id, bool Presented = true) : LifecycleEvent;
+    internal sealed record CleanupFailed(RunKey Key, string Name, string Detail) : LifecycleEvent;
     internal sealed record DeferQuit(RunKey Key, bool Deferred) : LifecycleEvent;
     internal sealed record AbandonQuit(RunKey Key) : LifecycleEvent;
     // A later recovery (or successful environment end) makes a previously failed quit eligible again.
@@ -30,8 +32,7 @@ internal abstract record LifecycleEffect
     internal sealed record CancelRetry(RunKey Key, long Token) : LifecycleEffect;
 
     internal abstract record Payload(RunKey Key);
-    internal sealed record Present(RunKey Run, RunIntent? Intent, NoticeKind Kind, PresentationChannel Channel,
-        string Operation, Exception? Error = null, RunSnapshot? Terminal = null) : Payload(Run)
+    internal sealed record Present(RunKey Run, RunIntent? Intent, NoticeKind Kind, string Operation, Exception? Error = null, RunSnapshot? Terminal = null) : Payload(Run)
     {
         internal string Detail => Kind switch {
             NoticeKind.StartUnknown => "启动结果未知：任务可能已经开始执行。",
@@ -51,6 +52,7 @@ internal abstract record LifecycleEffect
         }
     }
     internal sealed record CompleteScheduled(RunKey Run, RunIntent Intent, RunSnapshot Terminal) : Payload(Run);
+    internal sealed record PresentCleanupFailure(RunKey Run, string Name, string Detail) : Payload(Run);
     internal sealed record RequestCleanup(RunKey Run) : Payload(Run);
     internal sealed record RequestQuit(RunKey Run) : Payload(Run);
     internal sealed record Deliver(long Id, Payload Item) : LifecycleEffect;
