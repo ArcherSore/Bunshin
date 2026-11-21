@@ -80,6 +80,7 @@ internal static partial class SelfTestRunner
                 });
         }
 
+        VerifyScheduledTerminal(logger, Path.Combine(directory, "failed"), RunState.Failed);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "cancelled"), RunState.Cancelled);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "lost-reply"), RunState.Succeeded, lostReply: true);
         VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle);
@@ -467,6 +468,7 @@ internal static partial class SelfTestRunner
                         Require(window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
                             "交接失败恢复时应立即记一次定时收尾，不等下一班。");
                     } else {
+                        if (terminal == RunState.Failed) window.Hide();
                         Publish(done, terminal == RunState.Succeeded ? 4 : 3);
                     }
                     if (cleanupDuringExit) {
@@ -505,6 +507,11 @@ internal static partial class SelfTestRunner
                         && window.LogLines.OfType<LogEntry>().Count(e => e.Message == "全部完成，已关闭桌面分身") == 1,
                         "成功收尾和旧分身关闭应分别出现在运行动态。");
                     Require(wts.LogoffAttempts.SequenceEqual([77u, sessionId]), "应先清理旧分身，成功后只关闭新分身。");
+                } else if (terminal == RunState.Failed) {
+                    Require(probe.Balloons is [{ Failed: true } notice] && notice.Title == $"「{name}」运行失败",
+                        "本次定时任务的失败提醒应已交付托盘一次。");
+                    Require(session.HasChildSession && wts.LogoffAttempts.Count == 0,
+                        "没有下一班时，交付失败提醒后应保留分身，注销次数应为零。");
                 } else {
                     Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession, "手停应保留现场。");
                     Require(failures.Count == 0, "手停不应通知运行失败。");
