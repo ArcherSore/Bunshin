@@ -44,27 +44,13 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;
             case ClosingCancelled e when state.Closing == e.Id:
                 state = state with { Closing = null,
+                    Quits = state.Quits.RemoveRange(state.Quits.Where(p => p.Value == QuitStage.Requested).Select(p => p.Key)),
                     InFlight = state.InFlight.RemoveRange(state.InFlight.Where(p => p.Value.Item is RequestQuit).Select(p => p.Key)) };
-                foreach (var (key, stage) in state.Quits) {
-                    if (stage == QuitStage.Requested) SetQuit(key, QuitStage.AwaitingRecovery);
-                    else if (stage == QuitStage.RecoveredWhileClosing) QueueQuit(key);
-                }
-                break;
-            case EnvironmentRecovered:
-                RecoverQuitRequests();
                 break;
             case ClosingCommitted e when state.Closing == e.Id:
                 foreach (var r in state.Runs.Values) CancelConfirmation(r);
                 state = new() { ExitCommitted = true };
                 break;
-        }
-    }
-
-    private void RecoverQuitRequests()
-    {
-        foreach (var (key, stage) in state.Quits) {
-            if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
-            else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
         }
     }
 

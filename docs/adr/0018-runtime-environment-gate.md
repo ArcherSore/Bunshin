@@ -14,3 +14,7 @@
 ## 依据
 
 用户参考 MXU 停止超时后取消退出、MFAAvalonia 在锁外确认等退出交互调研，确定了以上顺序和取闸门方式。[父票 #154（含 BetterGI 调研）](https://github.com/ArcherSore/Bunshin/issues/154) · [决定 #159](https://github.com/ArcherSore/Bunshin/issues/159) · [ADR 0011](0011-busy-environment-first-come-no-queue.md)
+
+## 2026-11-22 更新
+
+结束运行环境未确认导致 `-q` 退出取消时，放弃该退出请求。此后由 `EndUnconfirmed` 拦住开始和定时。用户再次结束桌面分身并确认成功后，GUI 保留，后续定时照常启动。参见 [ADR 0013](0013-quit-after-run-tracks-own-run.md)。

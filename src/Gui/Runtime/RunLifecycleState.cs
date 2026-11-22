@@ -9,7 +9,7 @@ namespace Gui.Runtime;
 internal enum RunSource { Manual, Launch, Scheduled }
 internal enum StartConclusion { Accepted, NotStarted, StartUnknown, EndUnconfirmed }
 internal enum NotificationSlot { Open, Claimed, Delivered, Silent }
-internal enum QuitStage { AwaitingBody, Bound, Requested, AwaitingRecovery, RecoveredWhileClosing }
+internal enum QuitStage { AwaitingBody, Bound, Requested }
 internal enum SendBoundary { BeforeBody, PossiblySent, Excluded, Accepted }
 internal enum NoticeKind { NotStarted, StartUnknown, EndUnconfirmed, Faulted, Succeeded, Failed }
 

@@ -153,14 +153,15 @@ internal static partial class RunLifecycleSelfTest
             if (recoveredFirst) idle.Step(new EnvironmentRecovered());
             idle.Finish(typeof(RequestQuit));
             idle.Step(new ClosingCancelled(Id(69)));
+            Check(!new RunOrchestration(idle.State).HasTrackedQuitRun, "取消退出应立即解除该 Run 的 -q 跟踪");
             if (!recoveredFirst) {
                 idle.Terminal(RunState.Cancelled);
                 idle.Finish(typeof(RequestQuit));
                 idle.Step(new EnvironmentRecovered());
             }
-            idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+            idle.Finish(typeof(RequestQuit));
             idle.Step(new EnvironmentRecovered());
-            idle.Finish(typeof(RequestQuit), typeof(RequestQuit));
+            idle.Finish(typeof(RequestQuit));
         }
 
         foreach (var ackFirst in new[] { true, false })
@@ -179,7 +180,7 @@ internal static partial class RunLifecycleSelfTest
             f.Terminal(RunState.Succeeded);
             f.ExitWorker();
             f.Step(commit ? new ClosingCommitted(Id(70)) : new ClosingCancelled(Id(70)));
-            Check(f.Items<RequestQuit>().Count() == 1, "取消退出不能立即循环请求 -q");
+            Check(!new RunOrchestration(f.State).HasTrackedQuitRun, "退出完成或取消后均应释放退出资格");
             f.Step(new EnvironmentRecovered());
             f.Step(new EnvironmentRecovered());
             if (!commit) {
@@ -187,17 +188,13 @@ internal static partial class RunLifecycleSelfTest
                 Check(notice.Item is Present && f.History.OfType<CompleteScheduled>().Single().Run == f.Key,
                     "取消退出后其他 Run 的完成和提醒应可独立交付");
                 f.Ack(notice.Id);
-                Check(f.Items<RequestQuit>().Count() == 2, "恢复后应再次派发一次退出请求");
-                var retry = f.History.OfType<Deliver>().Last(d => d.Item is RequestQuit);
                 f.Ack(quit.Id);
-                Check(f.State.InFlight[boot] == retry, "旧退出回执不能确认重新派发的请求");
-                f.Ack(retry.Id);
             }
             f.Step(new EnvironmentRecovered());
             f.Finish(commit ? [typeof(Present), typeof(RequestQuit)]
-                : [typeof(Present), typeof(RequestQuit), typeof(Present), typeof(RequestQuit)]);
-            Check(f.Items<RequestQuit>().All(q => q.Key == boot) && f.State.ExitCommitted == commit,
-                "恢复只重发原 Run 的退出，提交退出后清除资格");
+                : [typeof(Present), typeof(RequestQuit), typeof(Present)]);
+            Check(f.Items<RequestQuit>().Single().Key == boot && f.State.ExitCommitted == commit,
+                "原 Run 只请求一次退出，取消后恢复或收到迟到回执均不能提交退出");
         }
     }
 

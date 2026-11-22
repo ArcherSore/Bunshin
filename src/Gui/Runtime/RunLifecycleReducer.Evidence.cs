@@ -25,7 +25,6 @@ internal sealed partial class RunLifecycleReducer
                     }));
                 }
             }
-            RecoverQuitRequests();
             return;
         }
         if (b.Kind is WorkerEvidenceKind.Disconnected or WorkerEvidenceKind.AdmissionRemoved && b.Connection is { } closed) {

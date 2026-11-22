@@ -27,7 +27,7 @@ internal sealed record RunOrchestration(RunLifecycleState Lifecycle)
 
     internal bool HasTrackedQuitRun => Lifecycle.Quits.ContainsValue(QuitStage.Bound) || PendingQuitReason != null;
     internal string? PendingQuitReason => Lifecycle.Deliveries.Any(d => d.Item is RequestQuit)
-        || Lifecycle.Quits.Values.Any(stage => stage is QuitStage.Requested or QuitStage.AwaitingRecovery or QuitStage.RecoveredWhileClosing)
+        || Lifecycle.Quits.ContainsValue(QuitStage.Requested)
         ? "命令行任务已结束，正在等待退出" : null;
 
     internal RunKey? PendingStart(WorkerCoordinatorSnapshot view) =>

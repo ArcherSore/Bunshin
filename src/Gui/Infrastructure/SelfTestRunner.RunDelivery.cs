@@ -42,12 +42,17 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(root, Path.Combine(root, "config", "configurations.json"));
         var clock = new ScheduleTestClock();
         var listed = true;
+        var nextWorker = new TaskCompletionSource<WorkerAdmissionRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
         WithFakeWorker(logger, Path.Combine(root, "worker"), (worker, record, name) => {
             var check = Dispatcher.CurrentDispatcher.InvokeAsync(() => ExerciseRunDeliveryAsync(logger, root,
-                project.ActiveConfigurationId, worker, record, name, clock, scenario, () => Volatile.Write(ref listed, false))).Task.Unwrap();
+                project.ActiveConfigurationId, worker, record, name, clock, scenario,
+                () => Volatile.Write(ref listed, false), nextWorker.Task)).Task.Unwrap();
             PumpUntil(() => check.IsCompleted, $"接线场景 {scenario} 未完成。");
             check.GetAwaiter().GetResult();
-        }, () => Volatile.Read(ref listed), project.RuntimeProfileDigest, clock);
+        }, () => Volatile.Read(ref listed), project.RuntimeProfileDigest, clock, launchPeer: (next, _) => {
+            Volatile.Write(ref listed, true);
+            nextWorker.SetResult(next);
+        });
     }
 
     private enum ManualSettlement { ForegroundFault, HiddenFailure, ForcedQuery, NotRegistered, DialogGate, OrdinaryDialog }
@@ -218,7 +223,8 @@ internal static partial class SelfTestRunner
         && message.IndexOf("超时", StringComparison.Ordinal) > message.IndexOf("未登记", StringComparison.Ordinal);
 
     private static async Task ExerciseRunDeliveryAsync(AppLogger logger, string root, Guid configurationId,
-        WorkerCoordinator worker, WorkerAdmissionRecord record, string name, ScheduleTestClock clock, string scenario, Action workerExited)
+        WorkerCoordinator worker, WorkerAdmissionRecord record, string name, ScheduleTestClock clock, string scenario,
+        Action workerExited, Task<WorkerAdmissionRecord> nextWorker)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var token = timeout.Token;
@@ -243,7 +249,12 @@ internal static partial class SelfTestRunner
         var exitErrors = new List<Exception>();
         MainWindow? window = null;
         window = new MainWindow(logger, session, worker, environment, () => Task.CompletedTask,
-            () => Task.CompletedTask, _ => Task.CompletedTask, root, prepareEnvironment: (_, _, _) => throw loginError,
+            () => Task.CompletedTask, _ => Task.CompletedTask, root, prepareEnvironment: (plan, options, _) => {
+                if (scenario != "quit-recovery") throw loginError;
+                wts.ReportedId = record.ChildSessionId;
+                wts.Sessions.Add(record.ChildSessionId);
+                return worker.PrepareWorkerAsync(record.ChildSessionId, plan, token, options());
+            },
             launchCommand: new(AutoStart: true, Instance: configurationId.ToString(), QuitAfterRun: true),
             autostart: InertAutostart(), presentation: probe.Presentation, quitAfterRun: () => {
                 exits++;
@@ -314,8 +325,8 @@ internal static partial class SelfTestRunner
                 pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 AwaitWorker(worker, v => v.Observation == WorkerObservation.WorkerExited, "旧 Worker 应已确认退出。");
                 var due = await window.TryStartScheduledRunAsync(configurationId);
-                Require(exits == 1 && due.Disposition == ScheduledRunDisposition.Busy && due.Reason?.Contains("退出") == true
-                    && wts.LogoffAttempts.Count == 1, "旧退出请求待恢复时，定时必须跳过并说明原因。");
+                Require(exits == 1 && due.Disposition == ScheduledRunDisposition.Busy && due.Reason == "运行环境状态未知"
+                    && wts.LogoffAttempts.Count == 1, "Worker 已退出但环境结束仍未确认时，定时应因环境状态未知而跳过。");
                 string? skip = null;
                 void RecordSkip(object? _, Gui.Models.LogEntry entry)
                 {
@@ -323,16 +334,33 @@ internal static partial class SelfTestRunner
                 }
                 logger.EntryWritten += RecordSkip;
                 try {
-                    Require(!await window.AutoRunOnLaunchAsync() && skip?.Contains("退出") == true,
-                        "开机启动也应跳过并记录旧退出请求的原因。");
+                    Require(!await window.AutoRunOnLaunchAsync() && skip?.Contains("运行环境状态未知") == true && starts == 1,
+                        "开机启动应因环境状态未知而跳过，不能提交新的 Run。");
                 } finally {
                     logger.EntryWritten -= RecordSkip;
                 }
+                var ended = await environment.RequestEnd(() => true)!;
                 await Dispatcher.Yield(DispatcherPriority.Background);
-                await exit!.WaitAsync(token);
-                Require(exits == 2 && starts == 1 && closed && shutdowns == 1 && exitErrors.Count == 1
+                Require(ended == EnvironmentEndResult.Ended && exits == 1 && !closed && shutdowns == 0 && exitErrors.Count == 1
                     && !environment.EndUnconfirmed && AdmissionDiscarded(worker),
-                    "原退出请求应在恢复后恰好重试一次，确认结束并关闭 GUI。");
+                    "手动确认结束后应清除旧 Admission，保留 GUI 和首次取消提示。");
+                var scheduled = window.TryStartScheduledRunAsync(configurationId);
+                await Task.WhenAny(nextWorker, scheduled).WaitAsync(token);
+                Require(nextWorker.IsCompletedSuccessfully, "确认结束后定时应准备新的 Worker。");
+                var next = await nextWorker;
+                await using var nextPipe = await WorkerCoordinatorSelfTest.OpenConnectionAsync(name, next, 0, token);
+                var scheduledStart = await WorkerCoordinatorSelfTest.ReadRequestAsync(nextPipe, ProtocolOperations.RunStart, token);
+                var run = ProtocolJson.Deserialize<RunStartRequest>(scheduledStart.Data);
+                var activeRun = WorkerCoordinatorSelfTest.CreateActiveRun(new(run.RunId, run.Plan, run.PlanDigest));
+                await nextPipe.WriteAsync(StateEvent(WorkerCoordinatorSelfTest.CreateSnapshot(next, 0, activeRun)
+                    with { StateRevision = 2 }), token);
+                await nextPipe.WriteAsync(WireEnvelope.Response(scheduledStart.Operation, scheduledStart.RequestId!.Value,
+                    new RunStartResponse("accepted")), token);
+                var result = await scheduled.WaitAsync(token);
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                Require(result.Disposition == ScheduledRunDisposition.Admitted && result.RunId == run.RunId && result.Reason == null
+                    && run.RunId != bootPlan.RunId && starts == 2 && exits == 1 && !closed && shutdowns == 0,
+                    "确认结束后，定时应向新 Worker 启动一次新的 Run，GUI 保持打开。");
                 return;
             }
             if (scenario == "update-failed") {
