@@ -310,6 +310,63 @@ internal static partial class SelfTestRunner
         });
     }
 
+    // #140: clicks made while the end confirmation is open join it, so one decline answers them all. An exit clicked
+    // meanwhile asks once after that answer; an end still queued when the exit started is refused without asking.
+    private static void VerifyRepeatedEndRequests(AppLogger logger, string directory)
+    {
+        var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7] };
+        using var session = wts.CreateManager(logger);
+        WithFakeWorker(logger, Path.Combine(directory, "repeated-end"), (coordinator, _, _) => {
+            var environment = CreateEnvironment(logger, session, coordinator);
+            var endAsked = 0;
+            var exitAsked = 0;
+            var (declined, joined, exitDeclined, again) = OnPool(async () => {
+                Task<EnvironmentEndResult>? exit = null;
+                var joined = 0;
+                var first = environment.RequestEnd(() => {
+                    endAsked++;
+                    // The tray stays clickable while the box is modal: two more ends, then an exit.
+                    joined += (environment.RequestEnd(() => ++endAsked > 0) is null ? 1 : 0)
+                        + (environment.RequestEnd(() => ++endAsked > 0) is null ? 1 : 0);
+                    environment.Closing = true;
+                    exit = environment.EndAsync(() => ++exitAsked < 0);
+                    return false;
+                })!;
+                var declined = await first;
+                var exitDeclined = await exit!;
+                environment.Closing = false;
+                var again = await environment.RequestEnd(() => ++endAsked < 0)!;
+                return (declined, joined, exitDeclined, again);
+            });
+            Require(declined == EnvironmentEndResult.Declined && joined == 2 && endAsked == 2
+                && exitDeclined == EnvironmentEndResult.Declined && exitAsked == 1
+                && again == EnvironmentEndResult.Declined && wts.LogoffAttempts.Count == 0,
+                "确认框打开期间的重复点击应并入该请求，取消一次只问一次；之后的退出与新的点击各问一次。");
+
+            var refused = OnPool(async () => {
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var held = environment.RunExclusiveAsync(() => release.Task);
+                var queued = environment.RequestEnd(() => ++endAsked > 0)!;
+                environment.Closing = true;
+                var exit = environment.EndAsync(() => ++exitAsked < 0);
+                release.SetResult();
+                await held;
+                var refused = false;
+                try {
+                    await queued;
+                } catch (OperationCanceledException) {
+                    refused = true;
+                }
+                Require(await exit == EnvironmentEndResult.Declined, "退出应在排队的结束之后询问。");
+                environment.Closing = false;
+                return refused;
+            });
+            Require(refused && endAsked == 2 && exitAsked == 2 && !environment.Ending && !environment.EndUnconfirmed
+                && coordinator.TrackedWorkerPid is not null && wts.LogoffAttempts.Count == 0,
+                "退出开始前已排队的结束请求应被拒绝且不询问，由退出确认决定。");
+        });
+    }
+
     // While the application is closing, operations are refused; the end that closes it still runs.
     private static void VerifyEnvironmentClosing(AppLogger logger, string directory)
     {

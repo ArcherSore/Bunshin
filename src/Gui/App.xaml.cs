@@ -150,17 +150,27 @@ public partial class App : System.Windows.Application
         MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
     // The tray and the main window end the Runtime Environment through this routine. The question is asked inside
-    // the operation gate, so an exit that started meanwhile turns it into a decline.
+    // the operation gate; repeated clicks join the pending request, and an exit that started meanwhile refuses it.
     internal async Task EndEnvironmentAsync()
     {
         if (IsExiting || _environment is null) {
             return;
         }
 
-        var ended = await _environment.EndAsync(() => !IsExiting && WpfMessageBox.Show(
-            "结束桌面分身将先停止正在运行的任务，再注销 Session，并结束其中运行的程序。确认继续吗？",
-            "结束桌面分身",
-            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes);
+        EnvironmentEndResult ended;
+        try {
+            if (_environment.RequestEnd(() => WpfMessageBox.Show(
+                "结束桌面分身将先停止正在运行的任务，再注销 Session，并结束其中运行的程序。确认继续吗？",
+                "结束桌面分身",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes)
+                is not { } request) {
+                return;
+            }
+            ended = await request;
+        } catch (OperationCanceledException) {
+            // Only an exit refuses the request; the exit may have finished asking by the time this resumes.
+            return;
+        }
         if (ended.Error is not { } error) {
             return;
         }
