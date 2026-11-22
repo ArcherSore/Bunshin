@@ -17,7 +17,7 @@ public partial class MainWindow
 {
     private TaskCompletionSource<bool>? _forcedStartCountdown;
     private int _exitGeneration;
-    private Guid? _manuallyStoppedRun;
+    private const string TrackedQuitReason = "命令行任务尚未结束，须等待退出";
     internal event EventHandler<ForcedScheduledStartCountdown>? ForcedScheduledStartPending;
     internal event EventHandler? ForcedScheduledStartEnded;
 
@@ -58,9 +58,9 @@ public partial class MainWindow
         ScheduledRunResult? result = null;
         var force = _settings.ForceScheduledStart.Value;
         var view = _lifecycle.ReadOrchestration();
-        if (view.PendingQuitReason is { } pendingQuit) {
-            ReportScheduledSkip(name, pendingQuit);
-            return new(ScheduledRunDisposition.Busy, Reason: pendingQuit);
+        if (view.HasTrackedQuitRun) {
+            ReportScheduledSkip(name, TrackedQuitReason);
+            return new(ScheduledRunDisposition.Busy, Reason: TrackedQuitReason);
         }
         var exitGeneration = _exitGeneration;
         var dueMinute = CurrentScheduleMinute();
@@ -78,8 +78,8 @@ public partial class MainWindow
                     await _environment.RunExclusiveAsync(() => StartInGateAsync(false));
                 }
                 if (result?.Disposition == ScheduledRunDisposition.CountdownRequired) {
-                    if (_lifecycle.ReadOrchestration().PendingQuitReason is { } reasonToQuit) {
-                        result = new(ScheduledRunDisposition.Busy, Reason: reasonToQuit);
+                    if (_lifecycle.ReadOrchestration().HasTrackedQuitRun) {
+                        result = new(ScheduledRunDisposition.Busy, Reason: TrackedQuitReason);
                     } else if (CurrentScheduleMinute() != dueMinute) {
                         result = new(ScheduledRunDisposition.Busy, Reason: "当前时间已离开本次定时的分钟");
                     } else if (!ScheduledStartClosing(exitGeneration)) {
@@ -179,8 +179,8 @@ public partial class MainWindow
     private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(Guid configurationId, string name,
         string? policyTime, bool force, bool countdownElapsed, ScheduledSettlement? previous, int exitGeneration)
     {
-        if (_lifecycle.ReadOrchestration().PendingQuitReason is { } pendingQuit)
-            return new(ScheduledRunDisposition.Busy, Reason: pendingQuit);
+        if (_lifecycle.ReadOrchestration().HasTrackedQuitRun)
+            return new(ScheduledRunDisposition.Busy, Reason: TrackedQuitReason);
         if (ScheduledStartClosing(exitGeneration)) {
             return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
         }
@@ -247,15 +247,8 @@ public partial class MainWindow
                 return new(ScheduledRunDisposition.Busy, Reason: "尚未确认当前任务状态");
             }
         }
-        RunKey? replacing = countdownElapsed && current.WorkerSnapshot is { } currentWorker && atRisk is Guid id
-            && _lifecycle.Orchestration.WaitingForQuit(new(currentWorker.WorkerInstanceId, id))
-            ? new(currentWorker.WorkerInstanceId, id) : null;
-        if (_lifecycle.ReadOrchestration().PendingQuitReason is { } quitReason)
-            return new(ScheduledRunDisposition.Busy, Reason: quitReason);
-        if (replacing.HasValue && _manuallyStoppedRun == atRisk
-            && current.WorkerSnapshot?.WorkerState != WorkerState.Faulted) {
-            return new(ScheduledRunDisposition.Busy, Reason: "正在等待开机任务停止并退出");
-        }
+        if (_lifecycle.ReadOrchestration().HasTrackedQuitRun)
+            return new(ScheduledRunDisposition.Busy, Reason: TrackedQuitReason);
         Guid? submitted = null;
         var endingOldSession = false;
         SetPendingOperation(PendingOperation.PreparingEnvironment, scheduled: true);
@@ -264,12 +257,10 @@ public partial class MainWindow
             RenderScheduledActivation(configurationId);
             AddScheduleActivity(policyTime is null ? $"启动「{name}」" : $"启动「{name}」（{policyTime}）");
             endingOldSession = true;
-            if (replacing is { } boot) _lifecycle.Apply(new LifecycleEvent.DeferQuit(boot, true));
             var ended = await _environment.EndWhileExclusiveAsync();
             if (ended.Outcome != EnvironmentEndOutcome.Ended) {
                 throw ended.Error ?? new InvalidOperationException("旧桌面分身未确认结束。");
             }
-            if (replacing is { } endedBoot) _lifecycle.Apply(new LifecycleEvent.AbandonQuit(endedBoot));
             await _lifecycle.IssuePendingPresentationsAsync();
             if (_lifecycle.ReadOrchestration().PendingQuitReason is { } afterEnd)
                 return new(ScheduledRunDisposition.Busy, Reason: afterEnd);
@@ -305,7 +296,6 @@ public partial class MainWindow
             ReportScheduledStartFailure(name, reason, exception);
             return new(ScheduledRunDisposition.Admitted, submitted, exception.Message);
         } finally {
-            if (endingOldSession && replacing is { } original) _lifecycle.Apply(new LifecycleEvent.DeferQuit(original, false));
             SetPendingOperation(PendingOperation.None, scheduled: true);
         }
     }

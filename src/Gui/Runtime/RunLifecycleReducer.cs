@@ -41,14 +41,6 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                 break;
             case Delivered e: Acknowledge(e); break;
             case CleanupFailed e: Queue(new PresentCleanupFailure(e.Key, e.Name, e.Detail)); break;
-            case DeferQuit e when e.Deferred || state.DeferredQuit == e.Key:
-                state = state with { DeferredQuit = e.Deferred ? e.Key : null };
-                break;
-            case AbandonQuit e:
-                state = state with { Quits = state.Quits.Remove(e.Key),
-                    DeferredQuit = state.DeferredQuit == e.Key ? null : state.DeferredQuit,
-                    Deliveries = state.Deliveries.RemoveAll(d => d.Item is RequestQuit q && q.Key == e.Key) };
-                break;
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;
             case ClosingCancelled e when state.Closing == e.Id:
                 state = state with { Closing = null,

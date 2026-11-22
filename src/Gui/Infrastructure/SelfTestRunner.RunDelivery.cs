@@ -289,7 +289,7 @@ internal static partial class SelfTestRunner
                 await pipe.WriteAsync(WireEnvelope.Response(boot.Operation, boot.RequestId!.Value, new RunStartResponse("accepted")), token);
                 await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 2, LastRun = SucceededRun(bootPlan) }), token);
                 await launch;
-                PumpUntil(() => exits == 1, "开机 Run 结束应请求退出。");
+                PumpUntil(() => exits == 1, "命令行 -q 任务结束应请求退出。");
                 Require((await environment.EndAsync()).Outcome == EnvironmentEndOutcome.Unconfirmed, "首次退出应因旧环境注销失败而取消。");
                 window.SetExitInProgress(false);
                 wts.DuringLogoff = null;
