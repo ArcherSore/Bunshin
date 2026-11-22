@@ -121,7 +121,13 @@ internal static partial class SelfTestRunner
                 connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, token));
                 return Task.FromResult(new VerifiedChildSessionProcessLaunch((uint)process.Id, id, null, null));
             }, requestClock: bufferExit || terminal == RunState.Idle ? requestClock : null);
-        var environment = CreateEnvironment(logger, session, coordinator);
+        var gateEntries = 0;
+        var environment = order is SettlementOrder.UserExit or SettlementOrder.UserEnd
+            ? WindowEnvironment(logger, session, coordinator, operation => {
+                gateEntries++;
+                return operation();
+            })
+            : CreateEnvironment(logger, session, coordinator);
         try {
             WithRuntimeControlWindow(logger, directory, window => {
                 var project = ProjectOf(window);
@@ -467,6 +473,7 @@ internal static partial class SelfTestRunner
                     } else if (order is SettlementOrder.UserExit or SettlementOrder.UserEnd) {
                         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         var holder = environment.RunExclusiveAsync(() => release.Task);
+                        var entriesWhileHeld = gateEntries;
                         var errors = new List<Exception>();
                         var shutdowns = 0;
                         async Task EndManuallyAsync()
@@ -490,6 +497,7 @@ internal static partial class SelfTestRunner
                         PumpUntil(() => higherPriority.IsCompleted && holder.IsCompleted, "用户操作应已结束。");
                         higherPriority.GetAwaiter().GetResult();
                         window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                        Require(gateEntries - entriesWhileHeld == 2, "放行后，排队的定时收尾和用户操作应各进入闸门一次。");
                         Require(errors.Count == 1 && shutdowns == 0 && !AdmissionDiscarded(coordinator)
                             && session.HasChildSession && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
                             && completions.SequenceEqual([own.RunId]) && !probe.Balloons.Any(n => n.Failed),

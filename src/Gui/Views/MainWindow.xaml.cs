@@ -666,7 +666,7 @@ public partial class MainWindow : FluentWindow
         if (orchestration.PendingQuitReason != null || orchestration.ManualErrorPending) return;
         var worker = view.WorkerSnapshot ?? throw new InvalidOperationException("Worker 快照已失效。");
         if (orchestration.PendingStart(view) != null
-            || _exitInProgress || _environment.Closing) return;
+            || _exitInProgress || _environment.Closing || _environment.ManualEndPending) return;
 
         var intent = CreateRunIntent(source, project.ActiveConfigurationId, ActiveConfigurationName, operation);
         var retry = intent with { RetryOf = _lastStartKey };

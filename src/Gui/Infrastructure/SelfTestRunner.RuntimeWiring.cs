@@ -146,7 +146,8 @@ internal static partial class SelfTestRunner
 
     private static void VerifyPrepareAndRunScenarios(AppLogger logger, string directory)
     {
-        foreach (var scenario in new[] { "run", "delayed-ready", "exit-waiting", "prepare-only", "cancel" }) {
+        foreach (var scenario in new[] { "run", "delayed-ready", "exit-waiting", "manual-end-waiting",
+            "launch-end-waiting", "prepare-only", "cancel" }) {
             var windowDirectory = Path.Combine(directory, $"prepare-run-{scenario}");
             var projectDirectory = CreateProjectFixture(windowDirectory);
             var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "plan.json"));
@@ -156,7 +157,8 @@ internal static partial class SelfTestRunner
                 var begin = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                var starting = scenario is "delayed-ready" or "exit-waiting";
+                var endWhileWaiting = scenario is "manual-end-waiting" or "launch-end-waiting";
+                var starting = endWhileWaiting || scenario is "delayed-ready" or "exit-waiting";
                 var runs = scenario is "run" or "delayed-ready";
                 var received = new TaskCompletionSource<RunStartRequest>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
@@ -188,7 +190,8 @@ internal static partial class SelfTestRunner
                     } catch (OperationCanceledException) when (timeout.IsCancellationRequested) {
                     }
                 });
-                using var session = new SimulatedWts().CreateManager(logger);
+                var wts = new SimulatedWts();
+                using var session = wts.CreateManager(logger);
                 var environment = CreateEnvironment(logger, session, coordinator);
                 var prepareCount = 0;
                 try {
@@ -223,14 +226,25 @@ internal static partial class SelfTestRunner
                         Require(typeof(MainWindow).GetField("_lastStartKey", flags)!.GetValue(window) is null,
                             "修改勾选必须清除旧的启动重试请求。");
                         var button = scenario == "prepare-only" ? "StartSessionMenuItem" : "PrepareEnvironmentButton";
+                        Task<bool>? launch = null;
                         if (scenario == "prepare-only") {
                             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                             var holder = environment.RunExclusiveAsync(() => release.Task);
-                            Named<System.Windows.Controls.MenuItem>(window, button).RaiseEvent(
-                                new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
-                            release.SetResult();
+                            try {
+                                Named<System.Windows.Controls.MenuItem>(window, button).RaiseEvent(
+                                    new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+                                window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                                Require(prepareCount == 0, "闸门仍被占用时，仅启动分身不得提前准备。");
+                            } finally {
+                                release.SetResult();
+                            }
                             PumpUntil(() => holder.IsCompleted && prepareCount == 1,
                                 "仅启动分身应等待当前环境操作完成，然后准备一次。");
+                        } else if (scenario == "launch-end-waiting") {
+                            var choice = SettingsPageFor(window).Sections.SelectMany(section => section.Items)
+                                .Single(item => item.Definition.ChoiceKey == "autorun.configuration").Choice!;
+                            choice.Selected = choice.Options.Single(option => option.Id == CurrentProject().ActiveConfigurationId.ToString());
+                            launch = window.AutoRunOnLaunchAsync();
                         } else {
                             Click(window, button);
                         }
@@ -262,6 +276,14 @@ internal static partial class SelfTestRunner
                                     "Worker 仍在 Starting 时应进入原有清理入口，且不得启动任务。");
                                 environment.Closing = false;
                                 window.SetExitInProgress(false);
+                            } else if (endWhileWaiting) {
+                                var ending = environment.RequestEnd(() => true)!;
+                                Require(environment.ManualEndPending && !ending.IsCompleted, "确认结束应排在等待就绪的开始操作之后。");
+                                ready.SetResult();
+                                PumpUntil(() => ending.IsCompleted, "Worker 就绪后应让已确认的结束操作完成。");
+                                Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended
+                                    && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([record.ChildSessionId])
+                                    && requests == 0, "等待就绪期间确认结束后，应只注销一次，且不得发送 run.start。");
                             } else {
                                 ready.TrySetResult();
                             }
@@ -281,9 +303,14 @@ internal static partial class SelfTestRunner
                                 "自动运行必须提交当前任务计划及其参数。");
                         }
                         PumpUntil(() => window.CurrentOperation is PendingOperation.None, "准备/启动操作完成后未释放操作锁。");
+                        if (launch != null) {
+                            PumpUntil(() => launch.IsCompleted, "命令行自动执行应已返回。");
+                            Require(launch.GetAwaiter().GetResult(), "命令行自动执行应已进入准备。");
+                        }
                         Require(requests == (runs ? 1 : 0),
                             "仅启动或取消准备不得提交任务，一键启动只能提交一次。");
                     }, session: session, coordinator: coordinator, environment: environment,
+                        launchCommand: scenario == "launch-end-waiting" ? new(AutoStart: true) : null,
                         prepareEnvironment: async (_, _, showDesktop) => {
                             prepareCount++;
                             Require(showDesktop == (scenario == "prepare-only"),
@@ -292,6 +319,11 @@ internal static partial class SelfTestRunner
                             await prepared.Task;
                             if (scenario == "cancel") {
                                 throw new OperationCanceledException("scripted preparation cancellation");
+                            }
+                            if (endWhileWaiting) {
+                                wts.ReportedId = record.ChildSessionId;
+                                wts.Sessions.Add(record.ChildSessionId);
+                                wts.DuringLogoff = _ => timeout.Cancel();
                             }
                             typeof(ChildSessionManager).GetProperty("Snapshot",
                                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
