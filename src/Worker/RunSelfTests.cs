@@ -205,6 +205,9 @@ internal static partial class RunSelfTests
         var valid = Plan(1);
         var cases = new (string Name, RunStartRequest Request, string Expected)[] {
             ("digest 格式", new RunStartRequest(Guid.NewGuid(), "bad", valid), "error:invalid_request"),
+            ("缺少 runId", Request(valid, Guid.Empty), "error:invalid_request"),
+            ("空 Plan Item", new RunStartRequest(Guid.NewGuid(), Request(valid).PlanDigest,
+                valid with { Items = [null!] }), "error:invalid_request"),
             ("planVersion", Request(valid with { PlanVersion = ProtocolConstants.PlanVersion + 1 }),
                 "error:invalid_run_plan"),
             ("无 Plan Item", Request(Plan(0)), "error:invalid_run_plan"),

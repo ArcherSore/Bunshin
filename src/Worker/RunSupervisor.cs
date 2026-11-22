@@ -120,6 +120,10 @@ internal sealed class RunSupervisor
 
     private RunSnapshot? RegisterRunLocked(RunStartRequest request)
     {
+        // Malformed requests are rejected before the ledger sees them, so they can never register.
+        if (request.RunId == Guid.Empty || request.Plan?.Items is null || request.Plan.Items.Any(item => item is null)) {
+            throw new WorkerRequestException("invalid_request", "run.start 缺少 runId、Run Plan 或含空 Plan Item。 ");
+        }
         if (_ledger.TryGetValue(request.RunId, out var digest)) {
             if (digest != request.PlanDigest) {
                 throw new WorkerRequestException("run_id_conflict", "相同 runId 使用了不同 planDigest。 ");

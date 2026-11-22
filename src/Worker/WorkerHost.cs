@@ -336,6 +336,10 @@ internal sealed class WorkerHost
             || response.RequestId != requestId) {
             throw new ProtocolException("connection.open response 与请求不匹配。 ");
         }
+        if (response.ProtocolVersion != ProtocolConstants.ProtocolVersion) {
+            throw new ProtocolException(
+                $"connection.open response 协议版本不符：Worker={ProtocolConstants.ProtocolVersion}，response={response.ProtocolVersion}。 ");
+        }
     }
 }
 
