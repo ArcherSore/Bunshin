@@ -105,20 +105,11 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        _environment.Closing = true;
-        _mainWindow.SetExitInProgress(true);
+        var exitStarted = false;
         var exitCompleted = false;
         try {
-            await _environment.EndAsync(confirm ? ConfirmExit : () => true, async ended => {
-                if (ended.Outcome != EnvironmentEndOutcome.Ended) {
-                    if (ended.Error is { } error) {
-                        WpfMessageBox.Show(
-                            $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。",
-                            AppIdentity.Name,
-                            MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                    return;
-                }
+            var result = await _environment.EndAsync(confirm ? ConfirmExit : null, async ended => {
+                if (ended.Outcome != EnvironmentEndOutcome.Ended) return;
 
                 _mainWindow.CommitExit();
                 _logger.Info($"{AppIdentity.Name} 正常退出。");
@@ -135,9 +126,19 @@ public partial class App : System.Windows.Application
                 _logger.Dispose();
                 exitCompleted = true;
                 Shutdown(0);
+            }, onAccepted: () => {
+                exitStarted = true;
+                _environment.Closing = true;
+                _mainWindow.SetExitInProgress(true);
             });
+            if (result.Error is { } error) {
+                WpfMessageBox.Show(
+                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。",
+                    AppIdentity.Name,
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         } finally {
-            if (!exitCompleted) {
+            if (exitStarted && !exitCompleted) {
                 _environment.Closing = false;
                 _mainWindow?.SetExitInProgress(false);
             }
@@ -149,8 +150,7 @@ public partial class App : System.Windows.Application
         "确认退出",
         MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
-    // The tray and the main window end the Runtime Environment through this routine. The question is asked inside
-    // the operation gate; repeated clicks join the pending request, and an exit that started meanwhile refuses it.
+    // The tray and the main window share this confirmation and report any teardown error once.
     internal async Task EndEnvironmentAsync()
     {
         if (IsExiting || _environment is null) {

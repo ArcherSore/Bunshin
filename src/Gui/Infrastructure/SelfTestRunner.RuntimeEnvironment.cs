@@ -17,7 +17,7 @@ internal static partial class SelfTestRunner
     private static readonly TimeSpan OnPoolLimit = TimeSpan.FromSeconds(30);
 
     // U1, U9: the Active Run is stopped and has ended before logoff, and the Admission is discarded only after the
-    // Worker has exited. The end is in progress from asking the user to the last step.
+    // Worker has exited. The end is in progress from the stop request through the last step.
     private static void VerifyEndStopsRunFirst(AppLogger logger, string directory)
     {
         RuntimeEnvironment? environment = null;
@@ -53,7 +53,7 @@ internal static partial class SelfTestRunner
             Require(ended == EnvironmentEndResult.Ended && atLogoff == (true, true, false)
                 && waitedPid == Environment.ProcessId && AdmissionDiscarded(coordinator),
                 "结束应先停止 Run 并等待其结束，再注销、等待 Worker 退出，最后丢弃 Admission。");
-            Require(endingAtConfirm == true && endingAtStop == true && !environment.Ending && changes == 2
+            Require(endingAtConfirm == false && endingAtStop == true && !environment.Ending && changes == 2
                 && !environment.EndUnconfirmed, "结束期间应一直处于正在结束，结束后清除并各通知一次。");
         });
     }
@@ -229,7 +229,7 @@ internal static partial class SelfTestRunner
         }
     }
 
-    // U7, U8: the user is asked only when a Runtime Environment may remain, and only after any in-flight operation;
+    // U7, U8: the user is asked before queueing when a Runtime Environment may remain;
     // declining changes nothing. An Admission without a Child Session still needs ending.
     private static void VerifyEndConfirmation(AppLogger logger, string directory)
     {
@@ -253,15 +253,16 @@ internal static partial class SelfTestRunner
                 var environment = CreateEnvironment(logger, existing, coordinator);
                 var declined = OnPool(async () => {
                     var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var asked = false;
                     var held = environment.RunExclusiveAsync(() => release.Task);
                     var ending = environment.EndAsync(() => {
-                        asked.TrySetResult();
+                        asked = true;
                         return false;
                     });
-                    Require(!asked.Task.Wait(200), "确认应等待进行中的操作完成后再询问。");
+                    var declinedBeforeRelease = asked && ending.IsCompletedSuccessfully;
                     release.SetResult();
                     await held;
+                    Require(declinedBeforeRelease, "其他操作持有闸门时也应立即询问，取消退出无需等待闸门。");
                     return await ending;
                 });
                 Require(declined == EnvironmentEndResult.Declined && wts.LogoffAttempts.Count == 0
@@ -342,8 +343,7 @@ internal static partial class SelfTestRunner
         });
     }
 
-    // #140: clicks made while the end confirmation is open join it, so one decline answers them all. An exit clicked
-    // meanwhile asks once after that answer; an end still queued when the exit started is refused without asking.
+    // Repeated end clicks share one answer. An accepted exit supersedes an already confirmed, queued end.
     private static void VerifyRepeatedEndRequests(AppLogger logger, string directory)
     {
         var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7] };
@@ -360,13 +360,11 @@ internal static partial class SelfTestRunner
                     // The tray stays clickable while the box is modal: two more ends, then an exit.
                     joined += (environment.RequestEnd(() => ++endAsked > 0) is null ? 1 : 0)
                         + (environment.RequestEnd(() => ++endAsked > 0) is null ? 1 : 0);
-                    environment.Closing = true;
                     exit = environment.EndAsync(() => ++exitAsked < 0);
                     return false;
                 })!;
                 var declined = await first;
                 var exitDeclined = await exit!;
-                environment.Closing = false;
                 var again = await environment.RequestEnd(() => ++endAsked < 0)!;
                 return (declined, joined, exitDeclined, again);
             });
@@ -379,8 +377,8 @@ internal static partial class SelfTestRunner
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var held = environment.RunExclusiveAsync(() => release.Task);
                 var queued = environment.RequestEnd(() => ++endAsked > 0)!;
-                environment.Closing = true;
-                var exit = environment.EndAsync(() => ++exitAsked < 0);
+                var joined = environment.RequestEnd(() => ++endAsked > 0) is null;
+                var exit = environment.EndAsync(() => ++exitAsked > 0, onAccepted: () => environment.Closing = true);
                 release.SetResult();
                 await held;
                 var refused = false;
@@ -389,14 +387,50 @@ internal static partial class SelfTestRunner
                 } catch (OperationCanceledException) {
                     refused = true;
                 }
-                Require(await exit == EnvironmentEndResult.Declined, "退出应在排队的结束之后询问。");
-                environment.Closing = false;
-                return refused;
+                Require(await exit == EnvironmentEndResult.Ended, "退出应取得闸门并完成结束。");
+                return refused && joined;
             });
-            Require(refused && endAsked == 2 && exitAsked == 2 && !environment.Ending && !environment.EndUnconfirmed
-                && coordinator.TrackedWorkerPid is not null && wts.LogoffAttempts.Count == 0,
-                "退出开始前已排队的结束请求应被拒绝且不询问，由退出确认决定。");
+            Require(refused && endAsked == 3 && exitAsked == 2 && !environment.Ending && !environment.EndUnconfirmed
+                && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([7u]),
+                "已确认的结束请求应合并排队期间的点击；退出开始后，只有退出可以注销分身。");
         });
+    }
+
+    private static void VerifyExitDuringEndConfirmation(AppLogger logger, string directory)
+    {
+        foreach (var failLogoff in new[] { false, true }) {
+            var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], LogoffError = failLogoff ? 5 : null };
+            using var session = wts.CreateManager(logger);
+            WithFakeWorker(logger, Path.Combine(directory, $"exit-{failLogoff}"), (coordinator, _, _) => {
+                var environment = CreateEnvironment(logger, session, coordinator);
+                var exitsStarted = 0;
+                var exitsCompleted = 0;
+                var questions = 0;
+                void BeginExit() { exitsStarted++; environment.Closing = true; }
+                Task FinishExit(EnvironmentEndResult result)
+                {
+                    if (result == EnvironmentEndResult.Ended) exitsCompleted++;
+                    else environment.Closing = false;
+                    return Task.CompletedTask;
+                }
+
+                var end = OnPool(() => environment.RequestEnd(() => {
+                    var userExit = environment.EndAsync(() => {
+                        questions++;
+                        // Re-enter from the modal dialog, first with another click, then with automatic quit.
+                        environment.EndAsync(() => { questions++; return false; }).GetAwaiter().GetResult();
+                        environment.EndAsync(inGate: FinishExit, onAccepted: BeginExit).GetAwaiter().GetResult();
+                        return true;
+                    }, FinishExit, BeginExit).GetAwaiter().GetResult();
+                    Require(userExit == EnvironmentEndResult.Declined, "自动退出开始后应忽略退出框的迟到回答。");
+                    return true;
+                })!);
+                Require(end == EnvironmentEndResult.Declined && questions == 1 && exitsStarted == 1
+                    && exitsCompleted == (failLogoff ? 0 : 1) && wts.LogoffAttempts.SequenceEqual([7u])
+                    && environment.EndUnconfirmed == failLogoff && AdmissionDiscarded(coordinator) == !failLogoff,
+                    "自动退出应在确认框打开期间完成或报告失败；两个旧回答都不能再次结束环境。");
+            });
+        }
     }
 
     // While the application is closing, operations are refused; the end that closes it still runs.
