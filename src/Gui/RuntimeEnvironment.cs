@@ -20,7 +20,6 @@ internal sealed class RuntimeEnvironment
     private readonly TimeSpan _waitLimit;
     private readonly Func<Func<Task>, Task>? _runExclusive;
     private bool _endRequested;
-    private bool _confirmingExit;
     private int _closingGeneration;
 
     // The optional parameters are self-test seams. Production waits for the Worker process itself, allows 30 seconds
@@ -152,15 +151,7 @@ internal sealed class RuntimeEnvironment
     internal async Task<EnvironmentEndResult> EndAsync(
         Func<bool>? confirm = null, Func<EnvironmentEndResult, Task>? inGate = null, Action? onAccepted = null)
     {
-        if (confirm is not null) {
-            if (_confirmingExit) return EnvironmentEndResult.Declined;
-            _confirmingExit = true;
-            try {
-                if (ConfirmEnd(confirm) is { } refused) return refused;
-            } finally {
-                _confirmingExit = false;
-            }
-        }
+        if (confirm is not null && ConfirmEnd(confirm) is { } refused) return refused;
         onAccepted?.Invoke();
         var result = EnvironmentEndResult.Ended;
         await RunGatedAsync(async () => {

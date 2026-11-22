@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private bool _hasShownTrayNotification;
+    private bool _userExitRequested;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -69,7 +70,7 @@ public partial class App : System.Windows.Application
         _environment = new RuntimeEnvironment(_logger, _sessionManager, _workerCoordinator);
         _mainWindow = new MainWindow(
             _logger, _sessionManager, _workerCoordinator, _environment, RequestExitAsync, EndEnvironmentAsync,
-            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: () => _ = ExitAsync(confirm: false),
+            InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: () => _ = ExitAsync(confirm: null),
             presentation: new RunPresentation { ShowBalloon = ShowBalloon });
         _mainWindow.HiddenToTray += MainWindow_HiddenToTray;
         _mainWindow.ProjectIdentityChanged += MainWindow_ProjectIdentityChanged;
@@ -97,53 +98,58 @@ public partial class App : System.Windows.Application
             + $"[args={string.Join(' ', Environment.GetCommandLineArgs().Skip(1))}]");
     }
 
-    internal Task RequestExitAsync() => ExitAsync(confirm: true);
+    internal Task RequestExitAsync() => ExitAsync(ConfirmExit);
 
-    private async Task ExitAsync(bool confirm)
+    internal async Task ExitAsync(Func<bool>? confirm, RuntimeEnvironment? environment = null, MainWindow? window = null,
+        Action<Exception>? reportError = null, Action? shutdown = null)
     {
-        if (IsExiting || _logger is null || _sessionManager is null || _mainWindow is null || _environment is null) {
+        environment ??= _environment;
+        window ??= _mainWindow;
+        if (environment is null || window is null || environment.Closing || (confirm is not null && _userExitRequested)) {
             return;
         }
-
+        // A manual request owns its dialogs until they close. Automatic quit can enter while the user is deciding.
+        if (confirm is not null) _userExitRequested = true;
         var exitStarted = false;
         var exitCompleted = false;
         try {
-            var result = await _environment.EndAsync(confirm ? ConfirmExit : null, async ended => {
+            var result = await environment.EndAsync(confirm, async ended => {
                 if (ended.Outcome != EnvironmentEndOutcome.Ended) return;
 
-                _mainWindow.CommitExit();
-                _logger.Info($"{AppIdentity.Name} 正常退出。");
+                window.CommitExit();
+                _logger?.Info($"{AppIdentity.Name} 正常退出。");
                 _trayIcon?.Dispose();
                 _trayIcon = null;
-                _sessionManager.Dispose();
+                _sessionManager?.Dispose();
                 if (_workerCoordinator is not null) {
                     await _workerCoordinator.DisposeAsync();
                     _workerCoordinator = null;
                 }
-                _mainWindow.HiddenToTray -= MainWindow_HiddenToTray;
-                _mainWindow.AllowClose();
-                _mainWindow.Close();
-                _logger.Dispose();
+                window.HiddenToTray -= MainWindow_HiddenToTray;
+                window.AllowClose();
+                window.Close();
+                _logger?.Dispose();
                 exitCompleted = true;
-                Shutdown(0);
+                if (shutdown is null) Shutdown(0);
+                else shutdown();
             }, onAccepted: () => {
                 exitStarted = true;
-                _environment.Closing = true;
-                _mainWindow.SetExitInProgress(true);
+                environment.Closing = true;
+                window.SetExitInProgress(true);
             });
-            if (result.Error is { } error) {
-                WpfMessageBox.Show(
-                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。",
-                    AppIdentity.Name,
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            if (result.Error is { } error) (reportError ?? ShowExitError)(error);
         } finally {
             if (exitStarted && !exitCompleted) {
-                _environment.Closing = false;
-                _mainWindow?.SetExitInProgress(false);
+                environment.Closing = false;
+                window.SetExitInProgress(false);
             }
+            if (confirm is not null) _userExitRequested = false;
         }
     }
+
+    private static void ShowExitError(Exception error) => WpfMessageBox.Show(
+        $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。",
+        AppIdentity.Name, MessageBoxButton.OK, MessageBoxImage.Error);
 
     private static bool ConfirmExit() => WpfMessageBox.Show(
         "桌面分身仍在运行。退出程序将先停止正在运行的任务，再注销该 Session，并结束其中的游戏和自动化程序。\n\n确认退出吗？",

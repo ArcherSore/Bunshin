@@ -312,6 +312,7 @@ internal static partial class SelfTestRunner
     private sealed class SimulatedWts
     {
         internal uint? ReportedId { get; set; }
+        internal bool QueryFails { get; set; }
         internal HashSet<uint> Sessions { get; init; } = [0, 1];
         internal bool EnumerationFails { get; init; }
         internal Action? DuringEnumeration { get; set; }
@@ -324,7 +325,7 @@ internal static partial class SelfTestRunner
 
         // Never the real WTS or Windows Credential Manager: what is on this machine must not affect a check.
         internal ChildSessionManager CreateManager(AppLogger logger, ChildSessionCredentialStore? credentials = null) =>
-            new(logger, () => ReportedId, Enumerate, Logoff,
+            new(logger, () => QueryFails ? throw new Win32Exception(5, "self-test WTS query failure") : ReportedId, Enumerate, Logoff,
                 credentials ?? new ChildSessionCredentialStore(logger, new MemoryCredentialVault()));
 
         private IReadOnlyCollection<uint> Enumerate()

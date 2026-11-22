@@ -399,36 +399,54 @@ internal static partial class SelfTestRunner
     private static void VerifyExitDuringEndConfirmation(AppLogger logger, string directory)
     {
         foreach (var failLogoff in new[] { false, true }) {
-            var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], LogoffError = failLogoff ? 5 : null };
+            var wts = new SimulatedWts { Sessions = [0, 1, 7], LogoffError = failLogoff ? 5 : null };
             using var session = wts.CreateManager(logger);
             WithFakeWorker(logger, Path.Combine(directory, $"exit-{failLogoff}"), (coordinator, _, _) => {
                 var environment = CreateEnvironment(logger, session, coordinator);
-                var exitsStarted = 0;
-                var exitsCompleted = 0;
-                var questions = 0;
-                void BeginExit() { exitsStarted++; environment.Closing = true; }
-                Task FinishExit(EnvironmentEndResult result)
-                {
-                    if (result == EnvironmentEndResult.Ended) exitsCompleted++;
-                    else environment.Closing = false;
-                    return Task.CompletedTask;
-                }
+                WithRuntimeControlWindow(logger, Path.Combine(directory, $"window-{failLogoff}"), window => {
+                    wts.ReportedId = 7;
+                    var app = (App)System.Windows.Application.Current;
+                    var closed = false;
+                    var shutdowns = 0;
+                    window.Closed += (_, _) => closed = true;
+                    var errors = 0;
+                    var questions = 0;
+                    bool Decline() { questions++; return false; }
+                    void Exit(Func<bool>? confirm)
+                    {
+                        var exit = app.ExitAsync(confirm, environment, window, reportError: _ => {
+                            errors++;
+                            if (wts.QueryFails && errors == 1) Exit(Decline);
+                        }, shutdown: () => shutdowns++);
+                        PumpUntil(() => exit.IsCompleted, "退出请求应在当前确认框返回前完成。");
+                        exit.GetAwaiter().GetResult();
+                    }
 
-                var end = OnPool(() => environment.RequestEnd(() => {
-                    var userExit = environment.EndAsync(() => {
-                        questions++;
-                        // Re-enter from the modal dialog, first with another click, then with automatic quit.
-                        environment.EndAsync(() => { questions++; return false; }).GetAwaiter().GetResult();
-                        environment.EndAsync(inGate: FinishExit, onAccepted: BeginExit).GetAwaiter().GetResult();
+                    wts.QueryFails = true;
+                    Exit(Decline);
+                    Require(errors == 1 && questions == 0 && !closed && !environment.Closing,
+                        "WTS 查询失败的错误框打开期间再次请求退出，应只显示一个错误框。");
+                    wts.QueryFails = false;
+
+                    var end = environment.RequestEnd(() => {
+                        Exit(() => {
+                            questions++;
+                            Exit(Decline);
+                            Exit(null); // -q goes through the same application exit guard as the tray.
+                            Require(closed == !failLogoff && shutdowns == (failLogoff ? 0 : 1) && errors == (failLogoff ? 2 : 1),
+                                "用户尚未回答时，自动退出应已关闭主窗口或已报告注销失败。");
+                            return true;
+                        });
                         return true;
-                    }, FinishExit, BeginExit).GetAwaiter().GetResult();
-                    Require(userExit == EnvironmentEndResult.Declined, "自动退出开始后应忽略退出框的迟到回答。");
-                    return true;
-                })!);
-                Require(end == EnvironmentEndResult.Declined && questions == 1 && exitsStarted == 1
-                    && exitsCompleted == (failLogoff ? 0 : 1) && wts.LogoffAttempts.SequenceEqual([7u])
-                    && environment.EndUnconfirmed == failLogoff && AdmissionDiscarded(coordinator) == !failLogoff,
-                    "自动退出应在确认框打开期间完成或报告失败；两个旧回答都不能再次结束环境。");
+                    })!;
+                    PumpUntil(() => end.IsCompleted, "两个确认框都应能返回。");
+                    Require(end.GetAwaiter().GetResult() == EnvironmentEndResult.Declined && questions == 1
+                        && closed == !failLogoff && shutdowns == (failLogoff ? 0 : 1) && errors == (failLogoff ? 2 : 1)
+                        && wts.LogoffTargets.SequenceEqual([(uint?)null]) && wts.LogoffAttempts.SequenceEqual([7u])
+                        && environment.Closing == !failLogoff && environment.EndUnconfirmed == failLogoff
+                        && AdmissionDiscarded(coordinator) == !failLogoff,
+                        "两个旧回答都不能再次结束环境，注销失败时应保留窗口和 Admission。");
+                }, session: session, coordinator: coordinator, environment: environment);
             });
         }
     }
