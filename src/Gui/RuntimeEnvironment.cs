@@ -19,6 +19,7 @@ internal sealed class RuntimeEnvironment
     private readonly Func<int, CancellationToken, Task> _waitForWorkerExit;
     private readonly TimeSpan _waitLimit;
     private readonly Func<Func<Task>, Task>? _runExclusive;
+    private bool _endRequested;
 
     // The optional parameters are self-test seams. Production waits for the Worker process itself, allows 30 seconds
     // each for the Run to stop and for the Worker to exit, and serialises operations through its own gate.
@@ -148,6 +149,35 @@ internal sealed class RuntimeEnvironment
             }
         }, refuseWhileClosing: false);
         return result;
+    }
+
+    // The user's own end request. A repeat while one is queued or asking joins it and returns null, so one answer
+    // settles every click. An exit that started meanwhile ends the environment itself, so the queued request is
+    // refused without asking, like any operation that has not started.
+    internal Task<EnvironmentEndResult>? RequestEnd(Func<bool> confirm)
+    {
+        if (_endRequested) {
+            _logger.Info("结束桌面分身：已有结束请求，忽略重复请求。");
+            return null;
+        }
+        // Marked before the end starts: with the gate free, the question is asked before EndAsync returns.
+        _endRequested = true;
+        return RequestedEndAsync(confirm);
+    }
+
+    private async Task<EnvironmentEndResult> RequestedEndAsync(Func<bool> confirm)
+    {
+        try {
+            return await EndAsync(() => {
+                if (Closing) {
+                    _logger.Info("结束桌面分身：应用正在退出，未询问排队的结束请求。");
+                    ThrowIfRefused(refuseWhileClosing: true);
+                }
+                return confirm();
+            });
+        } finally {
+            _endRequested = false;
+        }
     }
 
     internal async Task<EnvironmentEndResult> EndWhileExclusiveAsync(Func<bool>? confirm = null)
