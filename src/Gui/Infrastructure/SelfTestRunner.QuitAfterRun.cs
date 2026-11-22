@@ -203,7 +203,7 @@ internal static partial class SelfTestRunner
             if (terminalState.HasValue) {
                 var historical = CreateNotificationSnapshot(RunState.Running);
                 await PublishTerminal(FinishNotificationRun(historical, RunState.Succeeded).WorkerSnapshot!.LastRun!, 2);
-                Require(exitRequests == 0, "提交开机 Run 前的历史终态不得触发退出。");
+                Require(exitRequests == 0, "提交命令行 -q 任务前的历史终态不得触发退出。");
             }
             var launch = window.AutoRunOnLaunchAsync();
             if (scenario == "prepare-failure") {
@@ -218,7 +218,7 @@ internal static partial class SelfTestRunner
                 var snapshot = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0, running) with { StateRevision = 3 };
                 await pipe.WriteAsync(StateEvent(snapshot), token);
                 await Accept(start);
-                Require(await launch && exitRequests == 0, "开机 Run 已提交且正在运行时不得退出。");
+                Require(await launch && exitRequests == 0, "命令行 -q 任务已提交且正在运行时不得退出。");
                 await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 4, WorkerState = WorkerState.Faulted,
                     LastRun = last with { RunId = Guid.NewGuid() } }), token);
                 AwaitWorker(coordinator, v => v.WorkerSnapshot?.StateRevision == 4, "应收到 Faulted 和其他 Run 的终态。");
@@ -254,7 +254,7 @@ internal static partial class SelfTestRunner
                     pipeName, record, 0, token, lastRun: scenario == "reconnect" ? last : null, stateRevision: 2);
                 if (scenario == "retry-ended") {
                     var query = await WorkerCoordinatorSelfTest.ReadRequestAsync(restored, ProtocolOperations.WorkerGetSnapshot, token);
-                    Require(ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId == last.RunId, "应复核原开机 Run。");
+                    Require(ProtocolJson.Deserialize<GetSnapshotRequest>(query.Data).RunId == last.RunId, "应复核原命令行 -q 任务。");
                     var starts = 0;
                     var clickedBeforeQuit = false;
                     void StartOnTerminal(object? _, RunTerminalNotification notice)

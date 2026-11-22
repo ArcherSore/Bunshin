@@ -41,38 +41,16 @@ internal sealed partial class RunLifecycleReducer(RunLifecycleState initial)
                 break;
             case Delivered e: Acknowledge(e); break;
             case CleanupFailed e: Queue(new PresentCleanupFailure(e.Key, e.Name, e.Detail)); break;
-            case DeferQuit e when e.Deferred || state.DeferredQuit == e.Key:
-                state = state with { DeferredQuit = e.Deferred ? e.Key : null };
-                break;
-            case AbandonQuit e:
-                state = state with { Quits = state.Quits.Remove(e.Key),
-                    DeferredQuit = state.DeferredQuit == e.Key ? null : state.DeferredQuit,
-                    Deliveries = state.Deliveries.RemoveAll(d => d.Item is RequestQuit q && q.Key == e.Key) };
-                break;
             case ClosingStarted e when state.Closing == null: state = state with { Closing = e.Id }; break;
             case ClosingCancelled e when state.Closing == e.Id:
                 state = state with { Closing = null,
+                    Quits = state.Quits.RemoveRange(state.Quits.Where(p => p.Value == QuitStage.Requested).Select(p => p.Key)),
                     InFlight = state.InFlight.RemoveRange(state.InFlight.Where(p => p.Value.Item is RequestQuit).Select(p => p.Key)) };
-                foreach (var (key, stage) in state.Quits) {
-                    if (stage == QuitStage.Requested) SetQuit(key, QuitStage.AwaitingRecovery);
-                    else if (stage == QuitStage.RecoveredWhileClosing) QueueQuit(key);
-                }
-                break;
-            case EnvironmentRecovered:
-                RecoverQuitRequests();
                 break;
             case ClosingCommitted e when state.Closing == e.Id:
                 foreach (var r in state.Runs.Values) CancelConfirmation(r);
                 state = new() { ExitCommitted = true };
                 break;
-        }
-    }
-
-    private void RecoverQuitRequests()
-    {
-        foreach (var (key, stage) in state.Quits) {
-            if (stage == QuitStage.AwaitingRecovery) QueueQuit(key);
-            else if (stage == QuitStage.Requested && state.Closing != null) SetQuit(key, QuitStage.RecoveredWhileClosing);
         }
     }
 

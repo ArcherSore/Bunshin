@@ -16,8 +16,11 @@ internal sealed record ForcedScheduledStartCountdown(string ConfigurationName, D
 public partial class MainWindow
 {
     private TaskCompletionSource<bool>? _forcedStartCountdown;
+    private int _forcedStartsInProgress;
     private int _exitGeneration;
-    private Guid? _manuallyStoppedRun;
+    private const string TrackedQuitReason = "命令行任务尚未结束，须等待退出";
+    private string? ScheduledPriorityBlocker(RunOrchestration view) =>
+        view.HasTrackedQuitRun ? TrackedQuitReason : _environment.ManualEndPending ? ManualEndReason : null;
     internal event EventHandler<ForcedScheduledStartCountdown>? ForcedScheduledStartPending;
     internal event EventHandler? ForcedScheduledStartEnded;
 
@@ -58,9 +61,14 @@ public partial class MainWindow
         ScheduledRunResult? result = null;
         var force = _settings.ForceScheduledStart.Value;
         var view = _lifecycle.ReadOrchestration();
-        if (view.PendingQuitReason is { } pendingQuit) {
-            ReportScheduledSkip(name, pendingQuit);
-            return new(ScheduledRunDisposition.Busy, Reason: pendingQuit);
+        if (ScheduledPriorityBlocker(view) is { } priorityReason) {
+            ReportScheduledSkip(name, priorityReason);
+            return new(ScheduledRunDisposition.Busy, Reason: priorityReason);
+        }
+        if (_environment.EndUnconfirmed) {
+            const string reason = "运行环境状态未知";
+            ReportScheduledSkip(name, reason);
+            return new(ScheduledRunDisposition.Busy, Reason: reason);
         }
         var exitGeneration = _exitGeneration;
         var dueMinute = CurrentScheduleMinute();
@@ -70,6 +78,7 @@ public partial class MainWindow
                 view.Scheduled, exitGeneration);
         }
         if (force && !ScheduledStartClosing(exitGeneration)) {
+            _forcedStartsInProgress++;
             try {
                 if (_workerCoordinator.Snapshot is { NoLiveAdmission: false, WorkerSnapshot.ActiveRun: not null }) {
                     result = ValidateScheduledStart(_projectPlan, configurationId, name, out _)
@@ -78,8 +87,8 @@ public partial class MainWindow
                     await _environment.RunExclusiveAsync(() => StartInGateAsync(false));
                 }
                 if (result?.Disposition == ScheduledRunDisposition.CountdownRequired) {
-                    if (_lifecycle.ReadOrchestration().PendingQuitReason is { } reasonToQuit) {
-                        result = new(ScheduledRunDisposition.Busy, Reason: reasonToQuit);
+                    if (ScheduledPriorityBlocker(_lifecycle.ReadOrchestration()) is { } beforeCountdown) {
+                        result = new(ScheduledRunDisposition.Busy, Reason: beforeCountdown);
                     } else if (CurrentScheduleMinute() != dueMinute) {
                         result = new(ScheduledRunDisposition.Busy, Reason: "当前时间已离开本次定时的分钟");
                     } else if (!ScheduledStartClosing(exitGeneration)) {
@@ -98,9 +107,13 @@ public partial class MainWindow
                 }
             } catch (OperationCanceledException) when (ScheduledStartClosing(exitGeneration)) {
                 result = new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
+            } finally {
+                // A cancelled countdown leaves the previous successful Run responsible for its own cleanup.
+                if (--_forcedStartsInProgress == 0) _ = _lifecycle.DeliverScheduledCleanupAsync();
             }
         } else if (!force) {
-            await _environment.TryRunExclusiveAsync(() => StartInGateAsync(false));
+            if (_forcedStartsInProgress == 0)
+                await _environment.TryRunExclusiveAsync(() => StartInGateAsync(false));
         }
         result ??= new(ScheduledRunDisposition.Busy, Reason: ScheduledStartClosing(exitGeneration)
             ? "应用正在退出" : "正在运行其他任务");
@@ -179,8 +192,8 @@ public partial class MainWindow
     private async Task<ScheduledRunResult> StartScheduledRunInGateAsync(Guid configurationId, string name,
         string? policyTime, bool force, bool countdownElapsed, ScheduledSettlement? previous, int exitGeneration)
     {
-        if (_lifecycle.ReadOrchestration().PendingQuitReason is { } pendingQuit)
-            return new(ScheduledRunDisposition.Busy, Reason: pendingQuit);
+        if (ScheduledPriorityBlocker(_lifecycle.ReadOrchestration()) is { } priorityReason)
+            return new(ScheduledRunDisposition.Busy, Reason: priorityReason);
         if (ScheduledStartClosing(exitGeneration)) {
             return new(ScheduledRunDisposition.Busy, Reason: "应用正在退出");
         }
@@ -197,12 +210,12 @@ public partial class MainWindow
         {
             if (settlement is { NeedsCleanup: true }) {
                 await _lifecycle.IssuePendingPresentationsAsync();
-                await _lifecycle.DeliverScheduledCleanupAsync(gateHeld: true);
+                await EndScheduledRunInGateAsync(settlement);
             }
             await _lifecycle.IssuePendingPresentationsAsync();
             if (!force && _lifecycle.Orchestration.ManualErrorPending)
                 return new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
-            if (ScheduledStartClosing(exitGeneration) || !force && _environment.EndUnconfirmed)
+            if (ScheduledStartClosing(exitGeneration))
                 return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
             if (force && _environment.EndUnconfirmed && _lifecycle.Orchestration.Scheduled is { Failure: { } error } failed
                 && failed != previous) {
@@ -210,6 +223,8 @@ public partial class MainWindow
                 ReportScheduledStartFailure(name, reason, error);
                 return new(ScheduledRunDisposition.Admitted, Reason: reason);
             }
+            if (_environment.EndUnconfirmed)
+                return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
             return null;
         }
         if (await SettlePreviousAsync(own) is { } settled) return settled;
@@ -247,15 +262,8 @@ public partial class MainWindow
                 return new(ScheduledRunDisposition.Busy, Reason: "尚未确认当前任务状态");
             }
         }
-        RunKey? replacing = countdownElapsed && current.WorkerSnapshot is { } currentWorker && atRisk is Guid id
-            && _lifecycle.Orchestration.WaitingForQuit(new(currentWorker.WorkerInstanceId, id))
-            ? new(currentWorker.WorkerInstanceId, id) : null;
-        if (_lifecycle.ReadOrchestration().PendingQuitReason is { } quitReason)
-            return new(ScheduledRunDisposition.Busy, Reason: quitReason);
-        if (replacing.HasValue && _manuallyStoppedRun == atRisk
-            && current.WorkerSnapshot?.WorkerState != WorkerState.Faulted) {
-            return new(ScheduledRunDisposition.Busy, Reason: "正在等待开机任务停止并退出");
-        }
+        if (ScheduledPriorityBlocker(_lifecycle.ReadOrchestration()) is { } beforeReplacement)
+            return new(ScheduledRunDisposition.Busy, Reason: beforeReplacement);
         Guid? submitted = null;
         var endingOldSession = false;
         SetPendingOperation(PendingOperation.PreparingEnvironment, scheduled: true);
@@ -264,14 +272,12 @@ public partial class MainWindow
             RenderScheduledActivation(configurationId);
             AddScheduleActivity(policyTime is null ? $"启动「{name}」" : $"启动「{name}」（{policyTime}）");
             endingOldSession = true;
-            if (replacing is { } boot) _lifecycle.Apply(new LifecycleEvent.DeferQuit(boot, true));
             var ended = await _environment.EndWhileExclusiveAsync();
             if (ended.Outcome != EnvironmentEndOutcome.Ended) {
                 throw ended.Error ?? new InvalidOperationException("旧桌面分身未确认结束。");
             }
-            if (replacing is { } endedBoot) _lifecycle.Apply(new LifecycleEvent.AbandonQuit(endedBoot));
             await _lifecycle.IssuePendingPresentationsAsync();
-            if (_lifecycle.ReadOrchestration().PendingQuitReason is { } afterEnd)
+            if (ScheduledPriorityBlocker(_lifecycle.ReadOrchestration()) is { } afterEnd)
                 return new(ScheduledRunDisposition.Busy, Reason: afterEnd);
             endingOldSession = false;
             if (hadSession) {
@@ -281,7 +287,7 @@ public partial class MainWindow
                 await PrepareProjectEnvironmentAsync(project, showDesktop: false);
                 if (!ScheduledStartClosing(exitGeneration) && await WaitForRunStartAsync(scheduled: true)
                     && !ScheduledStartClosing(exitGeneration)) {
-                    if (_lifecycle.ReadOrchestration().PendingQuitReason is { } beforeSend)
+                    if (ScheduledPriorityBlocker(_lifecycle.ReadOrchestration()) is { } beforeSend)
                         return new(ScheduledRunDisposition.Busy, Reason: beforeSend);
                     var worker = _workerCoordinator.Snapshot.WorkerSnapshot
                         ?? throw new InvalidOperationException("Worker 快照已失效。");
@@ -305,44 +311,40 @@ public partial class MainWindow
             ReportScheduledStartFailure(name, reason, exception);
             return new(ScheduledRunDisposition.Admitted, submitted, exception.Message);
         } finally {
-            if (endingOldSession && replacing is { } original) _lifecycle.Apply(new LifecycleEvent.DeferQuit(original, false));
             SetPendingOperation(PendingOperation.None, scheduled: true);
         }
     }
 
-    private async Task EndScheduledRunAsync(ScheduledSettlement own, bool gateHeld)
+    private async Task EndScheduledRunInGateAsync(ScheduledSettlement own)
     {
-        if (_exitInProgress || _environment.Closing) return;
-        async Task EndInGateAsync()
-        {
-            // A tick can service the request while its queued consumer is waiting on this same gate.
-            if (_lifecycle.ReadOrchestration().Scheduled is not { NeedsCleanup: true } current
-                || current.Key != own.Key || _exitInProgress || _environment.Closing) return;
-            uint? OwnedSession() => _environment.SuccessfulRunSession(own.Key.WorkerInstanceId, own.Key.RunId);
-            EnvironmentEndResult ended;
-            try {
-                ended = await _environment.EndVerifiedWhileExclusiveAsync(OwnedSession);
-            } catch (Exception error) {
-                ended = EnvironmentEndResult.Unconfirmed(error);
-            }
-            if (ended.Outcome == EnvironmentEndOutcome.Declined) return;
-            if (ended.Error is { } failure) {
-                _lifecycle.SetCleanup(own.Key, CleanupStage.Finished, failure);
-                _logger.Error($"定时执行「{own.Name}」未能关闭桌面分身。", failure);
-                const string reason = "任务已完成，桌面分身未能关闭";
-                AddScheduleActivity(reason, LogLevel.Error);
-                _lifecycle.Apply(new LifecycleEvent.CleanupFailed(own.Key, own.Name, reason));
-            }
+        var view = _lifecycle.ReadOrchestration();
+        if (_lifecycle.PendingScheduledCleanup?.Key != own.Key || ScheduledPriorityBlocker(view) != null
+            || _exitInProgress || _environment.Closing || _environment.EndUnconfirmed) return;
+        uint? OwnedSession() => _environment.SuccessfulRunSession(own.Key.WorkerInstanceId, own.Key.RunId);
+        EnvironmentEndResult ended;
+        try {
+            ended = await _environment.EndVerifiedWhileExclusiveAsync(OwnedSession);
+        } catch (Exception error) {
+            ended = EnvironmentEndResult.Unconfirmed(error);
         }
+        if (ended.Error is { } failure) {
+            _lifecycle.SetCleanup(own.Key, CleanupStage.Finished, failure);
+            _logger.Error($"定时执行「{own.Name}」未能关闭桌面分身。", failure);
+            const string reason = "任务已完成，桌面分身未能关闭";
+            AddScheduleActivity(reason, LogLevel.Error);
+            _lifecycle.Apply(new LifecycleEvent.CleanupFailed(own.Key, own.Name, reason));
+        }
+    }
 
-        if (gateHeld) {
-            await EndInGateAsync();
-            return;
-        }
+    private async Task EndScheduledRunAsync(ScheduledSettlement own)
+    {
+        if (_forcedStartsInProgress != 0 || _exitInProgress || _environment.Closing || _environment.EndUnconfirmed
+            || ScheduledPriorityBlocker(_lifecycle.Orchestration) != null) return;
         var exitGeneration = _exitGeneration;
         _lifecycle.SetCleanup(own.Key, CleanupStage.WaitingForGate);
         try {
-            await _environment.RunExclusiveAsync(EndInGateAsync);
+            await _environment.RunExclusiveAsync(() => _forcedStartsInProgress == 0
+                ? EndScheduledRunInGateAsync(own) : Task.CompletedTask);
         } catch (OperationCanceledException) when (_environment.Closing || exitGeneration != _exitGeneration) {
             // ClosingCancelled resumes this request if the original environment still exists.
         } finally {

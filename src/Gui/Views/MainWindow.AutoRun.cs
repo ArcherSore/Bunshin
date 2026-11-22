@@ -89,7 +89,7 @@ public partial class MainWindow
         var canStart = AutoRunPlanner.RuntimeAllows(CurrentControls);
         var decision = AutoRunPlanner.Decide(
             _launchCommand, _settings.AutoRunConfigurationId, _settings.AutoRunOnManualLaunch.Value,
-            AutoRunTarget.Of(project), canStart);
+            AutoRunTarget.Of(project), canStart, _environment.EndUnconfirmed);
         if (decision.ConfigurationId is not { } id) {
             if (decision.SkipReason is { } reason) {
                 _logger.Info($"自动执行已跳过：{reason}。");
@@ -99,7 +99,8 @@ public partial class MainWindow
             }
             return false;
         }
-        var entered = await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
+        var entered = _forcedStartsInProgress == 0
+            && await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
         if (!entered) {
             _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
         }

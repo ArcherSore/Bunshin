@@ -27,7 +27,7 @@ internal static partial class SelfTestRunner
         };
     }
 
-    private static void VerifyRunDelivery(AppLogger logger, string directory)
+    private static void VerifyRunDeliveryScenarios(AppLogger logger, string directory)
     {
         foreach (var scenario in new[] { "hello", "rejected", "unknown", "unconfirmed", "late", "quit", "update-failed" }) {
             VerifyRunDeliveryScenario(logger, Path.Combine(directory, scenario), scenario);
@@ -42,12 +42,17 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(root, Path.Combine(root, "config", "configurations.json"));
         var clock = new ScheduleTestClock();
         var listed = true;
+        var nextWorker = new TaskCompletionSource<WorkerAdmissionRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
         WithFakeWorker(logger, Path.Combine(root, "worker"), (worker, record, name) => {
             var check = Dispatcher.CurrentDispatcher.InvokeAsync(() => ExerciseRunDeliveryAsync(logger, root,
-                project.ActiveConfigurationId, worker, record, name, clock, scenario, () => Volatile.Write(ref listed, false))).Task.Unwrap();
+                project.ActiveConfigurationId, worker, record, name, clock, scenario,
+                () => Volatile.Write(ref listed, false), nextWorker.Task)).Task.Unwrap();
             PumpUntil(() => check.IsCompleted, $"接线场景 {scenario} 未完成。");
             check.GetAwaiter().GetResult();
-        }, () => Volatile.Read(ref listed), project.RuntimeProfileDigest, clock);
+        }, () => Volatile.Read(ref listed), project.RuntimeProfileDigest, clock, launchPeer: (next, _) => {
+            Volatile.Write(ref listed, true);
+            nextWorker.SetResult(next);
+        });
     }
 
     private enum ManualSettlement { ForegroundFault, HiddenFailure, ForcedQuery, NotRegistered, DialogGate, OrdinaryDialog }
@@ -105,7 +110,8 @@ internal static partial class SelfTestRunner
                         };
                         // The button still shows Ready, but the sender has already lost the Worker.
                         Volatile.Write(ref listed, false);
-                        Task.Run(() => worker.ChildSessionEnded(record)).GetAwaiter().GetResult();
+                        pipe.Close();
+                        Task.Run(() => worker.ChildSessionEndedAsync(record)).GetAwaiter().GetResult();
                         Click(window, "StartTaskHeaderButton");
                         PumpUntil(() => duringDialog != null, "正文前失败应打开手动启动错误框。");
                         var result = await duringDialog!.WaitAsync(token);
@@ -139,7 +145,8 @@ internal static partial class SelfTestRunner
                         await Dispatcher.Yield(DispatcherPriority.Background);
                         PumpUntil(() => HeaderShows(window, "RecoverEnvironmentButton", enabled: true), "Faulted 后应显示恢复按钮。");
                         Require(probe.Balloons.Count == 0 && probe.Dialogs.Count == 0, "前台恢复按钮出现时应抑制气泡。");
-                        worker.ChildSessionEnded(record);
+                        pipe.Close();
+                        await worker.ChildSessionEndedAsync(record);
                         await Dispatcher.Yield(DispatcherPriority.Background);
                         Require(probe.Dialogs is [var dialog] && dialog.Message.Contains("运行结果未确认") && probe.Balloons.Count == 0,
                             "抑制 Faulted 气泡后，结束分身应在前台呈现一次最终结论。");
@@ -157,7 +164,8 @@ internal static partial class SelfTestRunner
                     }
                     if (scenario == ManualSettlement.HiddenFailure) {
                         window.Hide();
-                        worker.ChildSessionEnded(record);
+                        pipe.Close();
+                        await worker.ChildSessionEndedAsync(record);
                         await Dispatcher.Yield(DispatcherPriority.Background);
                         Require(probe.Balloons is [{ Operation: "开始任务失败" } balloon] && balloon.Message.Contains("启动结果未知")
                             && probe.Dialogs.Count == 0, "手动启动后隐藏窗口，迟到的失败应只走托盘。");
@@ -215,7 +223,8 @@ internal static partial class SelfTestRunner
         && message.IndexOf("超时", StringComparison.Ordinal) > message.IndexOf("未登记", StringComparison.Ordinal);
 
     private static async Task ExerciseRunDeliveryAsync(AppLogger logger, string root, Guid configurationId,
-        WorkerCoordinator worker, WorkerAdmissionRecord record, string name, ScheduleTestClock clock, string scenario, Action workerExited)
+        WorkerCoordinator worker, WorkerAdmissionRecord record, string name, ScheduleTestClock clock, string scenario,
+        Action workerExited, Task<WorkerAdmissionRecord> nextWorker)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var token = timeout.Token;
@@ -223,26 +232,41 @@ internal static partial class SelfTestRunner
         AwaitWorker(worker, view => view.Fresh, "模拟 Worker 应就绪。");
         var probe = new PresentationProbe();
         var loginError = new InvalidOperationException("登录操作失败", new ChildSessionConnectionException("原始登录错误"));
-        var wts = new SimulatedWts();
+        var logoffClock = new ScheduleTestClock();
+        var wts = new SimulatedWts { SessionSurvivesLogoff = scenario == "quit-recovery" };
         if (scenario == "quit-recovery") {
             wts.ReportedId = record.ChildSessionId;
             wts.Sessions.Add(record.ChildSessionId);
-            wts.DuringLogoff = _ => throw new IOException("模拟旧环境注销失败");
         }
-        using var session = wts.CreateManager(logger);
+        using var session = wts.CreateManager(logger, clock: logoffClock);
         if (scenario != "hello") ConnectTestDesktop(session, record.ChildSessionId);
         var environment = CreateEnvironment(logger, session, worker, (_, _) => Task.CompletedTask);
         var exits = 0;
         var balloonsAtQuit = 0;
+        Task? exit = null;
+        var closed = false;
+        var shutdowns = 0;
+        var exitErrors = new List<Exception>();
         MainWindow? window = null;
         window = new MainWindow(logger, session, worker, environment, () => Task.CompletedTask,
-            () => Task.CompletedTask, _ => Task.CompletedTask, root, prepareEnvironment: (_, _, _) => throw loginError,
+            () => Task.CompletedTask, _ => Task.CompletedTask, root, prepareEnvironment: (plan, options, _) => {
+                if (scenario != "quit-recovery") throw loginError;
+                wts.ReportedId = record.ChildSessionId;
+                wts.Sessions.Add(record.ChildSessionId);
+                return worker.PrepareWorkerAsync(record.ChildSessionId, plan, token, options());
+            },
             launchCommand: new(AutoStart: true, Instance: configurationId.ToString(), QuitAfterRun: true),
             autostart: InertAutostart(), presentation: probe.Presentation, quitAfterRun: () => {
                 exits++;
                 balloonsAtQuit = probe.Balloons.Count;
-                window!.SetExitInProgress(true);
+                if (scenario == "quit-recovery") {
+                    var app = (App)System.Windows.Application.Current;
+                    exit = app.ExitAsync(null, environment, window, exitErrors.Add, () => shutdowns++);
+                } else {
+                    window!.SetExitInProgress(true);
+                }
             });
+        window.Closed += (_, _) => closed = true;
         var rejected = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         var failed = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         var starts = 0;
@@ -289,16 +313,20 @@ internal static partial class SelfTestRunner
                 await pipe.WriteAsync(WireEnvelope.Response(boot.Operation, boot.RequestId!.Value, new RunStartResponse("accepted")), token);
                 await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 2, LastRun = SucceededRun(bootPlan) }), token);
                 await launch;
-                PumpUntil(() => exits == 1, "开机 Run 结束应请求退出。");
-                Require((await environment.EndAsync()).Outcome == EnvironmentEndOutcome.Unconfirmed, "首次退出应因旧环境注销失败而取消。");
-                window.SetExitInProgress(false);
-                wts.DuringLogoff = null;
+                PumpUntil(() => logoffClock.PendingTimers >= 2, "命令行 -q 任务结束应请求退出并等待注销。");
+                logoffClock.Advance(TimeSpan.FromSeconds(60));
+                await exit!.WaitAsync(token);
+                Require(exits == 1 && exitErrors.Count == 1 && !closed && shutdowns == 0 && !environment.Closing
+                    && environment.EndUnconfirmed && worker.TrackedAdmission == record,
+                    "首次 -q 退出应因注销超时而取消，窗口和 Admission 均应保留。");
+                wts.ReportedId = null;
+                wts.Sessions.Remove(record.ChildSessionId);
                 workerExited();
                 pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 AwaitWorker(worker, v => v.Observation == WorkerObservation.WorkerExited, "旧 Worker 应已确认退出。");
                 var due = await window.TryStartScheduledRunAsync(configurationId);
-                Require(exits == 1 && due.Disposition == ScheduledRunDisposition.Busy && due.Reason?.Contains("退出") == true
-                    && wts.LogoffAttempts.Count == 1, "旧退出请求待恢复时，定时必须跳过并说明原因。");
+                Require(exits == 1 && due.Disposition == ScheduledRunDisposition.Busy && due.Reason == "运行环境状态未知"
+                    && wts.LogoffAttempts.Count == 1, "Worker 已退出但环境结束仍未确认时，定时应因环境状态未知而跳过。");
                 string? skip = null;
                 void RecordSkip(object? _, Gui.Models.LogEntry entry)
                 {
@@ -306,13 +334,33 @@ internal static partial class SelfTestRunner
                 }
                 logger.EntryWritten += RecordSkip;
                 try {
-                    Require(!await window.AutoRunOnLaunchAsync() && skip?.Contains("退出") == true,
-                        "开机启动也应跳过并记录旧退出请求的原因。");
+                    Require(!await window.AutoRunOnLaunchAsync() && skip?.Contains("运行环境状态未知") == true && starts == 1,
+                        "开机启动应因环境状态未知而跳过，不能提交新的 Run。");
                 } finally {
                     logger.EntryWritten -= RecordSkip;
                 }
+                var ended = await environment.RequestEnd(() => true)!;
                 await Dispatcher.Yield(DispatcherPriority.Background);
-                Require(exits == 2 && starts == 1, "Worker 确认退出后，原退出请求应恰好重试一次。");
+                Require(ended == EnvironmentEndResult.Ended && exits == 1 && !closed && shutdowns == 0 && exitErrors.Count == 1
+                    && !environment.EndUnconfirmed && AdmissionDiscarded(worker),
+                    "手动确认结束后应清除旧 Admission，保留 GUI 和首次取消提示。");
+                var scheduled = window.TryStartScheduledRunAsync(configurationId);
+                await Task.WhenAny(nextWorker, scheduled).WaitAsync(token);
+                Require(nextWorker.IsCompletedSuccessfully, "确认结束后定时应准备新的 Worker。");
+                var next = await nextWorker;
+                await using var nextPipe = await WorkerCoordinatorSelfTest.OpenConnectionAsync(name, next, 0, token);
+                var scheduledStart = await WorkerCoordinatorSelfTest.ReadRequestAsync(nextPipe, ProtocolOperations.RunStart, token);
+                var run = ProtocolJson.Deserialize<RunStartRequest>(scheduledStart.Data);
+                var activeRun = WorkerCoordinatorSelfTest.CreateActiveRun(new(run.RunId, run.Plan, run.PlanDigest));
+                await nextPipe.WriteAsync(StateEvent(WorkerCoordinatorSelfTest.CreateSnapshot(next, 0, activeRun)
+                    with { StateRevision = 2 }), token);
+                await nextPipe.WriteAsync(WireEnvelope.Response(scheduledStart.Operation, scheduledStart.RequestId!.Value,
+                    new RunStartResponse("accepted")), token);
+                var result = await scheduled.WaitAsync(token);
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                Require(result.Disposition == ScheduledRunDisposition.Admitted && result.RunId == run.RunId && result.Reason == null
+                    && run.RunId != bootPlan.RunId && starts == 2 && exits == 1 && !closed && shutdowns == 0,
+                    "确认结束后，定时应向新 Worker 启动一次新的 Run，GUI 保持打开。");
                 return;
             }
             if (scenario == "update-failed") {
@@ -370,7 +418,8 @@ internal static partial class SelfTestRunner
             Require(start.Data.GetRawText() == boot.Data.GetRawText(), "手动重试应提交同一份冻结计划。");
             if (scenario == "hidden-retry") {
                 window.Hide();
-                worker.ChildSessionEnded(record);
+                pipe.Close();
+                await worker.ChildSessionEndedAsync(record);
                 await Dispatcher.Yield(DispatcherPriority.Background);
                 Require(probe.Dialogs.Count == 0 && probe.Balloons.Count == 1,
                     "同 ID 手动重试后隐藏窗口，Worker 退出时不能再次发送托盘气泡。");
@@ -401,7 +450,8 @@ internal static partial class SelfTestRunner
                     Require(probe.Dialogs.Count == 0, "迟到接纳不应报告启动失败。");
                 } else {
                     window.SetExitInProgress(true);
-                    worker.ChildSessionEnded(record);
+                    pipe.Close();
+                    await worker.ChildSessionEndedAsync(record);
                     await Dispatcher.Yield(DispatcherPriority.Background);
                     Require(probe.Dialogs.Count == 0, "确认退出期间不应提前弹框。");
                     window.SetExitInProgress(false);

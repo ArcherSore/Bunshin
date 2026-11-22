@@ -68,12 +68,25 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview), RequiresFocus: true),
         new(Group.Project, "VerifyScheduledTraySettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Tray)),
+        new(Group.Project, "VerifyQueuedScheduledCleanup", c => {
+            foreach (var owner in new[] { SettlementOrder.UserExit, SettlementOrder.UserEnd })
+                VerifyScheduledTerminal(c.Logger, Path.Combine(c.Directory, owner.ToString()), RunState.Succeeded, order: owner);
+        }),
+        new(Group.Project, "VerifyCleanupAfterForcedCountdown", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.ForcedCountdown)),
         new(Group.Project, "VerifyScheduledGapSettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, tickBeforeDispatch: true, order: SettlementOrder.Gap)),
         new(Group.Project, "VerifyScheduledUpdateSettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Update)),
         new(Group.Project, "VerifyScheduledManualEndAfterUpdate", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.ManualEndAfterUpdate)),
+        .. Enum.GetValues<WorkerCoordinatorSelfTest.ExitFrame>().Select(frame => new Check(
+            Group.Project, $"VerifyWorkerExit{frame}", c => {
+                var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
+                    WorkerCoordinatorSelfTest.VerifyWorkerExitDrain(c.Logger, c.Directory, c.Project, frame)).Task.Unwrap();
+                PumpUntil(() => check.IsCompleted, "Worker 退出后应完成末帧交付。");
+                check.GetAwaiter().GetResult();
+            })),
         new(Group.Project, nameof(WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite), c => {
             var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
                 WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite(c.Logger, c.Directory, c.Project)).Task.Unwrap();
@@ -98,11 +111,11 @@ internal static partial class SelfTestRunner
             VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "force"), "quit-recovery", forceScheduledStart: true);
             VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "ordinary"), "quit-recovery");
         }),
-        new(Group.Project, nameof(VerifyRunDelivery), c => VerifyRunDelivery(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyRunDeliveryScenarios), c => VerifyRunDeliveryScenarios(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
             c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),
-        new(Group.Project, nameof(VerifyScheduledBootReplacement),
-            c => VerifyScheduledBootReplacement(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduledCommandLineRun),
+            c => VerifyScheduledCommandLineRun(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyStartupSettings), c => VerifyStartupSettings(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledEdits), c => VerifyScheduledEdits(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Project, nameof(VerifyScheduledActivationSaveFailure),
@@ -112,6 +125,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyScheduledRun), c => VerifyScheduledRun(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyForcedScheduledStart), c => VerifyForcedScheduledStart(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledRunRecovery), c => VerifyScheduledRunRecovery(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduleAfterUnconfirmedEnd), c => VerifyScheduleAfterUnconfirmedEnd(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledRunBeforeWorkerReconnect),
             c => VerifyScheduledRunBeforeWorkerReconnect(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduleClock), c => VerifyScheduleClock(c.Logger, c.Directory), RequiresFocus: true),
@@ -231,6 +245,8 @@ internal static partial class SelfTestRunner
             c => VerifyVerifiedEndSkipsReplacedSession(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyRepeatedEndRequests),
             c => VerifyRepeatedEndRequests(c.Logger, c.Directory)),
+        new(Group.RuntimeControls, nameof(VerifyExitDuringEndConfirmation),
+            c => VerifyExitDuringEndConfirmation(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEnvironmentClosing),
             c => VerifyEnvironmentClosing(c.Logger, c.Directory)),
 

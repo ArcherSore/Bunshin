@@ -146,7 +146,8 @@ internal static partial class SelfTestRunner
 
     private static void VerifyPrepareAndRunScenarios(AppLogger logger, string directory)
     {
-        foreach (var scenario in new[] { "run", "delayed-ready", "exit-waiting", "prepare-only", "cancel" }) {
+        foreach (var scenario in new[] { "run", "delayed-ready", "exit-waiting", "manual-end-waiting",
+            "launch-end-waiting", "prepare-only", "cancel" }) {
             var windowDirectory = Path.Combine(directory, $"prepare-run-{scenario}");
             var projectDirectory = CreateProjectFixture(windowDirectory);
             var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(projectDirectory, "plan.json"));
@@ -156,7 +157,8 @@ internal static partial class SelfTestRunner
                 var begin = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                var starting = scenario is "delayed-ready" or "exit-waiting";
+                var endWhileWaiting = scenario is "manual-end-waiting" or "launch-end-waiting";
+                var starting = endWhileWaiting || scenario is "delayed-ready" or "exit-waiting";
                 var runs = scenario is "run" or "delayed-ready";
                 var received = new TaskCompletionSource<RunStartRequest>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
@@ -188,8 +190,9 @@ internal static partial class SelfTestRunner
                     } catch (OperationCanceledException) when (timeout.IsCancellationRequested) {
                     }
                 });
-                using var session = new SimulatedWts().CreateManager(logger);
-                var environment = new RuntimeEnvironment(logger, session, coordinator);
+                var wts = new SimulatedWts();
+                using var session = wts.CreateManager(logger);
+                var environment = CreateEnvironment(logger, session, coordinator);
                 var prepareCount = 0;
                 try {
                     WithRuntimeControlWindow(logger, windowDirectory, window => {
@@ -223,9 +226,25 @@ internal static partial class SelfTestRunner
                         Require(typeof(MainWindow).GetField("_lastStartKey", flags)!.GetValue(window) is null,
                             "修改勾选必须清除旧的启动重试请求。");
                         var button = scenario == "prepare-only" ? "StartSessionMenuItem" : "PrepareEnvironmentButton";
+                        Task<bool>? launch = null;
                         if (scenario == "prepare-only") {
-                            Named<System.Windows.Controls.MenuItem>(window, button).RaiseEvent(
-                                new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+                            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                            var holder = environment.RunExclusiveAsync(() => release.Task);
+                            try {
+                                Named<System.Windows.Controls.MenuItem>(window, button).RaiseEvent(
+                                    new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+                                window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                                Require(prepareCount == 0, "闸门仍被占用时，仅启动分身不得提前准备。");
+                            } finally {
+                                release.SetResult();
+                            }
+                            PumpUntil(() => holder.IsCompleted && prepareCount == 1,
+                                "仅启动分身应等待当前环境操作完成，然后准备一次。");
+                        } else if (scenario == "launch-end-waiting") {
+                            var choice = SettingsPageFor(window).Sections.SelectMany(section => section.Items)
+                                .Single(item => item.Definition.ChoiceKey == "autorun.configuration").Choice!;
+                            choice.Selected = choice.Options.Single(option => option.Id == CurrentProject().ActiveConfigurationId.ToString());
+                            launch = window.AutoRunOnLaunchAsync();
                         } else {
                             Click(window, button);
                         }
@@ -247,19 +266,29 @@ internal static partial class SelfTestRunner
                                 "Worker 已连接但仍在检查依赖时必须继续等待，不得提交任务。");
                             if (scenario == "exit-waiting") {
                                 // Exit queues cleanup behind the same gate; cancellation must release it without Ready.
-                                environment.Closing = true;
-                                window.SetExitInProgress(true);
-                                var cleanupEntered = false;
-                                var ending = environment.EndAsync(() => {
-                                    cleanupEntered = true;
-                                    return false;
+                                var ending = environment.EndAsync(() => true, onAccepted: () => {
+                                    environment.Closing = true;
+                                    window.SetExitInProgress(true);
                                 });
                                 PumpUntil(() => ending.IsCompleted, "退出必须取消就绪等待并释放操作锁。");
-                                Require(cleanupEntered && ending.GetAwaiter().GetResult().Outcome
-                                    == EnvironmentEndOutcome.Declined && requests == 0,
+                                Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended
+                                    && AdmissionDiscarded(coordinator) && requests == 0,
                                     "Worker 仍在 Starting 时应进入原有清理入口，且不得启动任务。");
                                 environment.Closing = false;
                                 window.SetExitInProgress(false);
+                            } else if (endWhileWaiting) {
+                                var ending = environment.RequestEnd(() => true)!;
+                                Require(environment.ManualEndPending && !ending.IsCompleted, "确认结束应排在等待就绪的开始操作之后。");
+                                ready.SetResult();
+                                PumpUntil(() => ending.IsCompleted, "Worker 就绪后应让已确认的结束操作完成。");
+                                Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended
+                                    && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([record.ChildSessionId])
+                                    && requests == 0, "等待就绪期间确认结束后，应只注销一次，且不得发送 run.start。");
+                                if (scenario == "manual-end-waiting") {
+                                    Require(window.LogLines.OfType<LogEntry>().Count(entry =>
+                                        entry.Message.Contains("用户正在结束桌面分身")) == 1,
+                                        "手动开始让位时，运行动态应说明一次用户正在结束分身。");
+                                }
                             } else {
                                 ready.TrySetResult();
                             }
@@ -279,9 +308,14 @@ internal static partial class SelfTestRunner
                                 "自动运行必须提交当前任务计划及其参数。");
                         }
                         PumpUntil(() => window.CurrentOperation is PendingOperation.None, "准备/启动操作完成后未释放操作锁。");
+                        if (launch != null) {
+                            PumpUntil(() => launch.IsCompleted, "命令行自动执行应已返回。");
+                            Require(launch.GetAwaiter().GetResult(), "命令行自动执行应已进入准备。");
+                        }
                         Require(requests == (runs ? 1 : 0),
                             "仅启动或取消准备不得提交任务，一键启动只能提交一次。");
                     }, session: session, coordinator: coordinator, environment: environment,
+                        launchCommand: scenario == "launch-end-waiting" ? new(AutoStart: true) : null,
                         prepareEnvironment: async (_, _, showDesktop) => {
                             prepareCount++;
                             Require(showDesktop == (scenario == "prepare-only"),
@@ -290,6 +324,11 @@ internal static partial class SelfTestRunner
                             await prepared.Task;
                             if (scenario == "cancel") {
                                 throw new OperationCanceledException("scripted preparation cancellation");
+                            }
+                            if (endWhileWaiting) {
+                                wts.ReportedId = record.ChildSessionId;
+                                wts.Sessions.Add(record.ChildSessionId);
+                                wts.DuringLogoff = _ => timeout.Cancel();
                             }
                             typeof(ChildSessionManager).GetProperty("Snapshot",
                                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
@@ -307,23 +346,34 @@ internal static partial class SelfTestRunner
     private static void VerifyWorkerStopWiring(AppLogger logger, string directory)
     {
         var operations = new HeldOperations { RunOperations = true };
+        var replaceRun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementId = Guid.NewGuid();
+        var stops = new System.Collections.Concurrent.ConcurrentQueue<Guid>();
         var stoppingSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sendCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         WithRunningFakeWorker(logger, Path.Combine(directory, "stop"), async (worker, cancellationToken) => {
+            await replaceRun.Task.WaitAsync(cancellationToken);
+            var replacement = worker.ActiveRun with { RunId = replacementId };
+            var running = worker.Coordinator.Snapshot.WorkerSnapshot! with {
+                StateRevision = 2, ActiveRun = replacement,
+                LastRun = worker.ActiveRun with { State = RunState.Succeeded, EndedAtUtc = DateTime.UtcNow }
+            };
+            await worker.Pipe.WriteAsync(StateEvent(running), cancellationToken);
             var stop = await WorkerCoordinatorSelfTest.ReadRequestAsync(
                 worker.Pipe, ProtocolOperations.RunStop, cancellationToken);
+            stops.Enqueue(ProtocolJson.Deserialize<RunStopRequest>(stop.Data).RunId);
             await worker.Pipe.WriteAsync(WireEnvelope.Response(ProtocolOperations.RunStop, stop.RequestId!.Value,
                 new RunStopResponse("stop_requested")), cancellationToken);
-            var stopping = worker.Coordinator.Snapshot.WorkerSnapshot! with {
-                StateRevision = 2, RunState = RunState.Stopping,
-                ActiveRun = worker.ActiveRun with { State = RunState.Stopping }
+            var stopping = running with {
+                StateRevision = 3, RunState = RunState.Stopping,
+                ActiveRun = replacement with { State = RunState.Stopping }
             };
             await worker.Pipe.WriteAsync(StateEvent(stopping), cancellationToken);
             stoppingSent.TrySetResult();
             await sendCancelled.Task.WaitAsync(cancellationToken);
             var cancelled = stopping with {
-                StateRevision = 3, RunState = RunState.Idle, ActiveRun = null,
-                LastRun = worker.ActiveRun with { State = RunState.Cancelled }
+                StateRevision = 4, RunState = RunState.Idle, ActiveRun = null,
+                LastRun = replacement with { State = RunState.Cancelled }
             };
             await worker.Pipe.WriteAsync(StateEvent(cancelled), cancellationToken);
         }, coordinator => WithRuntimeControlWindow(logger, Path.Combine(directory, "stop-window"), window => {
@@ -333,8 +383,18 @@ internal static partial class SelfTestRunner
             Click(window, "StopTaskHeaderButton");
             PumpUntil(() => operations.Entered == 1, "点击停止任务应开始停止操作。");
             Require(ProgressShows(window, "正在停止任务"), "停止操作进行中应显示停止进度。");
+            replaceRun.SetResult();
+            PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == replacementId,
+                "排队期间旧 Run 应已结束，后继 Run 应已开始。");
+            operations.Release();
+            PumpUntil(() => window.CurrentOperation == PendingOperation.None, "旧停止请求应返回。");
+            Require(stops.IsEmpty && HeaderShows(window, "StopTaskHeaderButton", enabled: true),
+                "旧的停止点击不得停止后继 Run。");
+            Click(window, "StopTaskHeaderButton");
+            PumpUntil(() => operations.Entered == 2, "用户可以单独停止后继 Run。");
             operations.Release();
             PumpUntil(() => stoppingSent.Task.IsCompleted, "Worker 未收到停止请求。");
+            Require(stops.SequenceEqual([replacementId]), "只有第二次点击应向后继 Run 发送一次停止请求。");
             PumpOnboarding();
             Require(ProgressShows(window, "正在停止任务"), "Run 停止中应保持停止进度。");
             sendCancelled.TrySetResult();

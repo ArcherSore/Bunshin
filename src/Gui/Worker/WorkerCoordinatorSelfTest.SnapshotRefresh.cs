@@ -19,7 +19,7 @@ internal static partial class WorkerCoordinatorSelfTest
         using var host = new RunLifecycleHost(f.Coordinator, dispatcher, () => "A",
             notice => { notices.Add(notice); return true; }, () => { }, logger);
         host.ScheduledCompleted += run => completed.Add(run.RunId);
-        host.CleanupPending += (own, _) => {
+        host.CleanupPending += own => {
             cleaned.Add(own.Key);
             host.SetCleanup(own.Key, CleanupStage.Finished);
             cleanupDelivered.TrySetResult();

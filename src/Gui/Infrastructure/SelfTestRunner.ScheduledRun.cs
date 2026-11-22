@@ -86,7 +86,7 @@ internal static partial class SelfTestRunner
         VerifyScheduledTerminal(logger, Path.Combine(directory, "not-accepted"), RunState.Idle);
     }
 
-    private enum SettlementOrder { Normal, Reconnect, Preview, Tray, Gap, Update, ManualEndAfterUpdate }
+    private enum SettlementOrder { Normal, Reconnect, Preview, Tray, Gap, Update, ManualEndAfterUpdate, UserExit, UserEnd, ForcedCountdown }
 
     private static void VerifyScheduledTerminal(AppLogger logger, string directory, RunState terminal,
         bool lostReply = false, bool tickBeforeDispatch = false, bool bufferExit = false, bool terminalDuringEnumeration = false,
@@ -109,7 +109,7 @@ internal static partial class SelfTestRunner
         var cleanupCollision = tickBeforeDispatch && terminal == RunState.Succeeded;
         var clock = new ScheduleTestClock();
         var requestClock = new ScheduleTestClock();
-        if (cleanupCollision && forceCollision) {
+        if ((cleanupCollision && forceCollision) || order == SettlementOrder.ForcedCountdown) {
             CreateIdleSettings(CreateProjectFixture(directory), logger).ForceScheduledStart.Value = true;
         }
         var failPreparation = terminal == RunState.Cancelled;
@@ -121,7 +121,13 @@ internal static partial class SelfTestRunner
                 connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(pipeName, record, 0, token));
                 return Task.FromResult(new VerifiedChildSessionProcessLaunch((uint)process.Id, id, null, null));
             }, requestClock: bufferExit || terminal == RunState.Idle ? requestClock : null);
-        var environment = CreateEnvironment(logger, session, coordinator);
+        var gateEntries = 0;
+        var environment = order is SettlementOrder.UserExit or SettlementOrder.UserEnd
+            ? WindowEnvironment(logger, session, coordinator, operation => {
+                gateEntries++;
+                return operation();
+            })
+            : CreateEnvironment(logger, session, coordinator);
         try {
             WithRuntimeControlWindow(logger, directory, window => {
                 var project = ProjectOf(window);
@@ -172,7 +178,7 @@ internal static partial class SelfTestRunner
                         logger.EntryWritten -= Record;
                     }
                 }
-                if (!cleanupCollision) {
+                if (!cleanupCollision && order != SettlementOrder.ForcedCountdown) {
                     ExpectBusy("正在运行其他任务");
                 }
                 void Publish(RunSnapshot last, long revision)
@@ -425,14 +431,78 @@ internal static partial class SelfTestRunner
                         PumpUntil(() => balloonsAtClose.HasValue, "成功收尾应关闭预览。");
                         Require(balloonsAtClose == 1, "定时成功提醒必须在收尾关闭预览之前发出一次。");
                     } else if (order == SettlementOrder.Tray) {
-                        var tray = environment.EndAsync(() => {
+                        using var loggingOff = new ManualResetEventSlim();
+                        using var release = new ManualResetEventSlim();
+                        wts.DuringLogoff = _ => {
+                            loggingOff.Set();
+                            release.Wait(token);
+                        };
+                        Task<EnvironmentEndResult> tray;
+                        try {
+                            tray = environment.RequestEnd(() => {
+                                Publish(done, 4);
+                                PumpUntil(() => loggingOff.IsSet, "托盘确认框打开期间，定时收尾应进入注销。");
+                                return true;
+                            })!;
+                            Require(!tray.IsCompleted && session.HasChildSession && !AdmissionDiscarded(coordinator),
+                                "用户确认后，托盘请求应排在仍持有环境的定时收尾之后。");
+                        } finally {
+                            release.Set();
+                        }
+                        PumpUntil(() => tray.IsCompleted, "确认后托盘应重新核验已结束的环境。");
+                        Require(tray.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && AdmissionDiscarded(coordinator)
+                            && wts.LogoffTargets.SequenceEqual([(uint?)77, sessionId]),
+                            "旧分身和本次定时分身各注销一次，排队的托盘请求不应再对空环境调用注销。");
+                    } else if (order == SettlementOrder.ForcedCountdown) {
+                        ForcedScheduledStartCountdown? countdown = null;
+                        window.ForcedScheduledStartPending += (_, value) => countdown = value;
+                        var replacement = window.TryStartScheduledRunAsync(target);
+                        PumpUntil(() => countdown != null, "强制顶替应先开始倒计时。");
+                        try {
                             Publish(done, 4);
-                            Require(completions.SequenceEqual([own.RunId]) && session.HasChildSession,
-                                "托盘确认框内成功时，定时收尾应等待托盘释放闸门。");
-                            return true;
-                        });
-                        PumpUntil(() => tray.IsCompleted, "确认后托盘应先结束分身。");
-                        Require(tray.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Ended, "托盘结束分身应成功。");
+                            var drained = environment.RunExclusiveAsync(() => Task.CompletedTask);
+                            PumpUntil(() => drained.IsCompleted, "倒计时期间闸门应可用。");
+                            Require(completions.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([77u]),
+                                "原定时 Run 在倒计时内成功时应立即交付，收尾应让位给强制顶替。");
+                        } finally {
+                            countdown!.Cancel();
+                        }
+                        PumpUntil(() => replacement.IsCompleted, "取消后本次顶替应返回。");
+                        replacement.GetAwaiter().GetResult();
+                        Require(preparations == 1, "取消顶替不应准备新分身。");
+                    } else if (order is SettlementOrder.UserExit or SettlementOrder.UserEnd) {
+                        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        var holder = environment.RunExclusiveAsync(() => release.Task);
+                        var entriesWhileHeld = gateEntries;
+                        var errors = new List<Exception>();
+                        var shutdowns = 0;
+                        async Task EndManuallyAsync()
+                        {
+                            var ended = await environment.RequestEnd(() => true)!;
+                            if (ended.Error is { } error) errors.Add(error);
+                        }
+                        Task higherPriority;
+                        try {
+                            Publish(done, 4);
+                            Require(completions.SequenceEqual([own.RunId]) && wts.LogoffAttempts.SequenceEqual([77u]),
+                                "定时任务已完成，收尾仍在等待闸门。");
+                            wts.DuringLogoff = _ => throw new IOException("模拟用户注销失败");
+                            higherPriority = order == SettlementOrder.UserExit
+                                ? ((App)System.Windows.Application.Current).ExitAsync(() => true, environment, window,
+                                    errors.Add, () => shutdowns++)
+                                : EndManuallyAsync();
+                        } finally {
+                            release.SetResult();
+                        }
+                        PumpUntil(() => higherPriority.IsCompleted && holder.IsCompleted, "用户操作应已结束。");
+                        higherPriority.GetAwaiter().GetResult();
+                        window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                        Require(gateEntries - entriesWhileHeld == 2, "放行后，排队的定时收尾和用户操作应各进入闸门一次。");
+                        Require(errors.Count == 1 && shutdowns == 0 && !AdmissionDiscarded(coordinator)
+                            && session.HasChildSession && wts.LogoffAttempts.SequenceEqual([77u, sessionId])
+                            && completions.SequenceEqual([own.RunId]) && !probe.Balloons.Any(n => n.Failed),
+                            "排队的定时收尾应让位，仅用户操作尝试注销并报告失败，保留窗口及 Admission。");
+                        return;
                     } else if (order is SettlementOrder.Update or SettlementOrder.ManualEndAfterUpdate) {
                         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         var gate = environment.RunExclusiveAsync(() => release.Task);

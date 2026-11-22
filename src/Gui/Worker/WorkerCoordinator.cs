@@ -84,6 +84,10 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     private readonly TaskCompletionSource<bool> _serverReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _serverTask;
     private ProtocolConnection? _connection;
+    private Task? _eofDrain;
+    private bool _exitConfirmed;
+    private readonly TimeProvider _exitClock;
+    private readonly Func<int, CancellationToken, Task> _waitForExit;
     private bool _refreshingSnapshot;
     // A full reply below a revision this connection already saw cannot restore Fresh.
     private long _observedRevision;
@@ -106,7 +110,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         Func<IReadOnlyList<WorkerProcessEntry>>? captureProcesses = null,
         Func<IReadOnlyCollection<uint>>? enumerateSessions = null,
         Func<uint, Guid, string, string, CancellationToken, Task<VerifiedChildSessionProcessLaunch>>?
-            launchWorker = null, TimeProvider? requestClock = null, Func<Stream, Stream>? wrapPipe = null)
+            launchWorker = null, TimeProvider? requestClock = null, Func<Stream, Stream>? wrapPipe = null,
+            TimeProvider? exitClock = null, Func<int, CancellationToken, Task>? waitForExit = null)
     {
         _logger = logger;
         _runResults = new RunResultLog(logger);
@@ -122,6 +127,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         _pipeName = pipeName;
         _usePipeAcl = usePipeAcl;
         _requestClock = requestClock ?? TimeProvider.System;
+        _exitClock = exitClock ?? TimeProvider.System;
+        _waitForExit = waitForExit ?? WorkerAdmissionInspection.WaitForProcessExitAsync;
         _wrapPipe = wrapPipe;
         _captureProcesses = captureProcesses ?? WorkerAdmissionInspection.CaptureProcesses;
         _enumerateSessions = enumerateSessions ?? WorkerAdmissionInspection.EnumerateSessionIds;
@@ -476,15 +483,49 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    internal void ChildSessionEnded(WorkerAdmissionRecord? confirmedExit = null)
+    internal async Task ChildSessionEndedAsync(WorkerAdmissionRecord? confirmedExit)
+    {
+        if (confirmedExit is not null) {
+            await DrainExitedWorkerAsync(confirmedExit).ConfigureAwait(false);
+        }
+        FinishChildSessionEnd(confirmedExit);
+    }
+
+    internal void ChildSessionEnded() => FinishChildSessionEnd(null);
+
+    private Task DrainExitedWorkerAsync(WorkerAdmissionRecord admission)
+    {
+        lock (_gate) {
+            if (_admission != admission || _connection is not { } connection) return Task.CompletedTask;
+            if (_exitConfirmed && _eofDrain is not null) return _eofDrain;
+            _exitConfirmed = true;
+            return _eofDrain = WaitForEofAsync(connection);
+        }
+    }
+
+    private async Task WaitForEofAsync(ProtocolConnection connection, Exception? writeFailure = null)
+    {
+        try {
+            await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5), _exitClock).ConfigureAwait(false);
+        } catch (TimeoutException error) {
+            lock (_gate) {
+                if (_connection != connection || (writeFailure is not null && _exitConfirmed)) return;
+                connection.Close(writeFailure ?? error);
+            }
+            _logger.Warn("等待 Worker 管道 EOF 超时。");
+        }
+    }
+
+    private void FinishChildSessionEnd(WorkerAdmissionRecord? confirmedExit)
     {
         WorkerAdmissionRecord? record;
         lock (_logRecovery.DispatchGate) {
             lock (_gate) {
                 record = _admission;
+                if (confirmedExit is not null && record != confirmedExit) return;
                 CancelExitWatchLocked();
                 if (_connection is { } connection) {
-                    connection.Close(new IOException("Worker Admission 已摘除。"));
+                    if (!connection.IsClosed) connection.Close(new IOException("Worker Admission 已摘除。"));
                     FinishEvidenceLocked(connection);
                 }
                 if (record is not null) {
@@ -492,6 +533,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 }
                 _admissionUnreadable = false;
                 _connection = null;
+                _eofDrain = null;
+                _exitConfirmed = false;
                 _awaitedFreshSnapshot = null;
                 _logRecovery.InvalidateConnectionLocked();
                 Snapshot = new WorkerCoordinatorSnapshot(
@@ -573,6 +616,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
 
         using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = connectionLifetime.Token;
+        var processWatch = ObserveConnectedProcessExitAsync();
         ConnectionReader = ReadWorkerAsync();
         var initialSync = SynchroniseWorkerAsync();
         try {
@@ -582,14 +626,19 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         } finally {
             connection.Close(cancellationToken.IsCancellationRequested ? new OperationCanceledException(cancellationToken) : null);
             connectionLifetime.Cancel();
+            await processWatch;
             // A complete first-sync log page can still be publishing after EOF.
             // Cancel further requests, then let that page finish before invalidating its generation.
             await initialSync;
             WorkerAdmissionRecord? detached = null;
+            bool confirmedExit = false;
             lock (_logRecovery.DispatchGate) {
                 lock (_gate) {
                     if (ReferenceEquals(_connection, connection)) {
                         FinishEvidenceLocked(connection);
+                        confirmedExit = _exitConfirmed;
+                        _exitConfirmed = false;
+                        _eofDrain = null;
                         _connection = null;
                         _logRecovery.InvalidateConnectionLocked();
                         detached = _admission;
@@ -600,7 +649,19 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             // A killed Worker ends the pipe with a plain EOF, so every end of an admitted connection is observed here.
             // It runs after detaching so ClassifyAdmission inspects the recorded PID instead of trusting the pipe.
             if (detached is not null && !cancellationToken.IsCancellationRequested) {
-                MarkDisconnected(detached);
+                MarkDisconnected(detached, confirmedExit);
+            }
+        }
+
+        async Task ObserveConnectedProcessExitAsync()
+        {
+            try {
+                await _waitForExit(admission.WorkerPid!.Value, token).ConfigureAwait(false);
+                await DrainExitedWorkerAsync(admission).ConfigureAwait(false);
+            } catch (OperationCanceledException) when (token.IsCancellationRequested) {
+            } catch (Exception error) when (error is Win32Exception or InvalidOperationException or UnauthorizedAccessException) {
+                // EOF still triggers the usual admission inspection if a process handle cannot be opened.
+                _logger.Warn($"无法监视已接纳 Worker 的退出：{error.Message}");
             }
         }
 
@@ -629,12 +690,15 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 await _logRecovery.EnsureLogRecoveryAsync(admission.WorkerInstanceId, logRecoveryGeneration,
                     response.Snapshot.LastLogSequence, token);
             } catch (Exception error) {
-                connection.Close(error);
+                HandleConnectionFailure(connection, error);
             }
         }
     }
 
     internal Task ConnectionReader { get; private set; } = Task.CompletedTask;
+    internal Task SnapshotRefresh { get; private set; } = Task.CompletedTask;
+    // Self-test barrier between decoding a state event and publishing it under the admission lock.
+    internal Action<StateChangedEvent>? StateFrameDecoded { private get; set; }
 
     // A Worker that outlived the GUI still holds the options of its launch. This runs beside log recovery, and its
     // failure ends nothing: debug records are not worth a connection, and SendRequestAsync has logged it.
@@ -751,6 +815,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 case ProtocolOperations.WorkerStateChanged:
                 case ProtocolOperations.RunStateChanged: {
                         var state = ProtocolJson.Deserialize<StateChangedEvent>(envelope.Data);
+                        StateFrameDecoded?.Invoke(state);
                         if (state.WorkerInstanceId != workerInstanceId) {
                             throw new ProtocolException("stateChanged workerInstanceId 不匹配。 ");
                         }
@@ -892,7 +957,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 };
                 if (!_refreshingSnapshot) {
                     _refreshingSnapshot = true;
-                    _ = Task.Run(() => RefreshSnapshotAsync(connection, connectionToken));
+                    SnapshotRefresh = Task.Run(() => RefreshSnapshotAsync(connection, connectionToken));
                 }
                 revisionGapFrom = currentRevision;
             } else {
@@ -933,7 +998,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             }
         } catch (OperationCanceledException) when (connectionToken.IsCancellationRequested) {
         } catch (Exception exception) {
-            connection.Close(exception);
+            HandleConnectionFailure(connection, exception);
         }
     }
 
@@ -1001,15 +1066,31 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
     }
 
-    private static async Task<bool> WriteRequestAsync(ProtocolConnection connection, WireEnvelope request,
+    private async Task<bool> WriteRequestAsync(ProtocolConnection connection, WireEnvelope request,
         CancellationToken cancellationToken, Action? onSending, Func<bool>? canWrite = null,
         CancellationToken? frameCancellationToken = null)
     {
         try {
             return await connection.WriteAsync(request, cancellationToken, onSending, canWrite, frameCancellationToken ?? cancellationToken);
         } catch (Exception error) when ((connection.WriteFailure ?? error as IOException) is { } failure) {
-            connection.Close(failure);
+            HandleConnectionFailure(connection, failure, writeFailed: true);
             throw;
+        }
+    }
+
+    private void HandleConnectionFailure(ProtocolConnection connection, Exception error, bool writeFailed = false)
+    {
+        lock (_gate) {
+            if (_connection == connection) {
+                if (_eofDrain is not null) return;
+                // A peer can close after sending its last frame, before the process watcher runs.
+                // A locally cancelled partial frame still requires disconnecting the live peer.
+                if (writeFailed && error.GetBaseException() is not OperationCanceledException) {
+                    _eofDrain = WaitForEofAsync(connection, error);
+                    return;
+                }
+            }
+            connection.Close(error);
         }
     }
 
@@ -1060,13 +1141,13 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     }
 
     // Presentation only: a disconnect never deletes the Admission, and it is dropped once the record is replaced.
-    private void MarkDisconnected(WorkerAdmissionRecord admission)
+    private void MarkDisconnected(WorkerAdmissionRecord admission, bool confirmedExit)
     {
         if (admission.WorkerPid is null) {
             SetDisconnectedObservation(admission, WorkerObservation.WorkerStarting, "等待 Worker 连接");
             return;
         }
-        var liveness = ClassifyAdmission(admission);
+        var liveness = confirmedExit ? AdmissionLiveness.Stale : ClassifyAdmission(admission);
         SetDisconnectedObservation(admission,
             liveness == AdmissionLiveness.Stale ? WorkerObservation.WorkerExited : WorkerObservation.IpcDisconnected,
             liveness switch {

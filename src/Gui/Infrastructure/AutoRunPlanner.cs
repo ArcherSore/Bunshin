@@ -28,7 +28,7 @@ internal static class AutoRunPlanner
     // --instance only applies to --autostart, and a selector that does not resolve to exactly one configuration
     // never falls back to the configured one: a script must not run the wrong configuration.
     internal static AutoRunDecision Decide(LaunchCommand command, Guid? configured, bool onManualLaunch,
-        IReadOnlyList<AutoRunTarget> configurations, bool canStart)
+        IReadOnlyList<AutoRunTarget> configurations, bool canStart, bool endUnconfirmed = false)
     {
         if (!command.AutoStart && !onManualLaunch) {
             return Skip(null);
@@ -38,8 +38,9 @@ internal static class AutoRunPlanner
             ? Resolve(command.Instance!, configurations)
             : configurations.FirstOrDefault(item => item.Id == configured);
         if (target is not null) {
+            var reason = endUnconfirmed ? "运行环境状态未知" : "运行环境未就绪或正被占用";
             return canStart ? new AutoRunDecision(target.Id)
-                : Skip($"配置“{target.Name}”当前不能准备或开始任务，运行环境未就绪或正被占用",
+                : Skip($"配置“{target.Name}”当前不能准备或开始任务，{reason}",
                     command.AutoStart ? $"运行环境暂时无法开始任务，未执行“{target.Name}”。" : null);
         }
         return byInstance

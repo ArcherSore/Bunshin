@@ -81,8 +81,8 @@ internal static partial class SelfTestRunner
         using (var manager = wts.CreateManager(logger)) {
             Require(manager.HasChildSession && manager.DetectExistingSession() == 7,
                 "无法枚举会话时应按 Child Session 仍存在处理。");
-            Require(Terminate(manager) is null && wts.LogoffAttempts.SequenceEqual([7u]),
-                "无法枚举会话时仍应按原流程注销 Child Session。");
+            Require(Terminate(manager) is Win32Exception { NativeErrorCode: 5 } && wts.LogoffAttempts.SequenceEqual([7u]),
+                "应向捕获的分身发起注销，但枚举失败时不能确认它已消失。");
         }
         wts = new SimulatedWts { ReportedId = 10, Sessions = [0, 1], EnumerationFails = true };
         using (var manager = wts.CreateManager(logger)) {
@@ -312,6 +312,7 @@ internal static partial class SelfTestRunner
     private sealed class SimulatedWts
     {
         internal uint? ReportedId { get; set; }
+        internal bool QueryFails { get; set; }
         internal HashSet<uint> Sessions { get; init; } = [0, 1];
         internal bool EnumerationFails { get; init; }
         internal Action? DuringEnumeration { get; set; }
@@ -323,9 +324,10 @@ internal static partial class SelfTestRunner
         internal List<uint?> LogoffTargets { get; } = [];
 
         // Never the real WTS or Windows Credential Manager: what is on this machine must not affect a check.
-        internal ChildSessionManager CreateManager(AppLogger logger, ChildSessionCredentialStore? credentials = null) =>
-            new(logger, () => ReportedId, Enumerate, Logoff,
-                credentials ?? new ChildSessionCredentialStore(logger, new MemoryCredentialVault()));
+        internal ChildSessionManager CreateManager(AppLogger logger, ChildSessionCredentialStore? credentials = null,
+            TimeProvider? clock = null) =>
+            new(logger, () => QueryFails ? throw new Win32Exception(5, "self-test WTS query failure") : ReportedId, Enumerate, Logoff,
+                credentials ?? new ChildSessionCredentialStore(logger, new MemoryCredentialVault()), clock);
 
         private IReadOnlyCollection<uint> Enumerate()
         {

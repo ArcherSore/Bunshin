@@ -32,7 +32,7 @@ internal sealed class RunLifecycleHost : IDisposable
     private RunLifecycleState State => Orchestration.Lifecycle;
     internal event Action<RunSnapshot>? ScheduledCompleted;
     internal event Action? ScheduledCleanupCompleted;
-    internal event Func<ScheduledSettlement, bool, Task>? CleanupPending;
+    internal event Func<ScheduledSettlement, Task>? CleanupPending;
     internal event Action? Changed;
 
     internal RunLifecycleHost(WorkerCoordinator worker, Dispatcher dispatcher, Func<string> configurationName,
@@ -85,14 +85,16 @@ internal sealed class RunLifecycleHost : IDisposable
             Orchestration = Orchestration with { Scheduled = own with { Cleanup = stage, Failure = failure } };
     }
 
-    internal Task DeliverScheduledCleanupAsync(bool gateHeld = false)
+    internal ScheduledSettlement? PendingScheduledCleanup =>
+        !_disposed && State.Closing == null && Orchestration.Scheduled is { NeedsCleanup: true } own
+        && !Orchestration.PendingConclusions.Any(d => d.Item.Key == own.Key) ? own : null;
+
+    internal Task DeliverScheduledCleanupAsync()
     {
-        if (_disposed || State.Closing != null || Orchestration.Scheduled is not { NeedsCleanup: true } own
-            || Orchestration.PendingConclusions.Any(d => d.Item.Key == own.Key)) return Task.CompletedTask;
-        if (!gateHeld && (own.Cleanup != CleanupStage.Pending
+        if (PendingScheduledCleanup is not { Cleanup: CleanupStage.Pending } own
             || State.Current is not { Fresh: true, WorkerSnapshot: { } worker }
-            || worker.WorkerInstanceId != own.Key.WorkerInstanceId)) return Task.CompletedTask;
-        return CleanupPending?.Invoke(own, gateHeld) ?? Task.CompletedTask;
+            || worker.WorkerInstanceId != own.Key.WorkerInstanceId) return Task.CompletedTask;
+        return CleanupPending?.Invoke(own) ?? Task.CompletedTask;
     }
 
     // A modal presenter pumps the Dispatcher. Signal entry, so a replacement can proceed

@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using MaaFramework.Binding;
 using MaaFramework.Binding.Notification;
 using Gui.Infrastructure;
@@ -11,7 +12,26 @@ internal static class WorkerSelfTestRunner
     {
         // Nothing a self-test drives may reach a real telemetry service; telemetry checks supply their transport.
         RunTelemetry.SelfTestProcess = true;
+        if (args is ["--self-test", "--write-before-exit", var pipeName]) {
+            WriteBeforeExitAsync(pipeName).GetAwaiter().GetResult();
+            return 0;
+        }
         return SelfTestSuite.Run("WORKER SELF-TEST", Checks, args);
+    }
+
+    private static async Task WriteBeforeExitAsync(string pipeName)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await pipe.ConnectAsync(timeout.Token);
+        await using var connection = new ProtocolConnection(pipe);
+        var instance = Guid.NewGuid();
+        var log = new WorkerLogBuffer();
+        for (var i = 0; i < 8; i++) {
+            var entry = log.Add("INFO", ProtocolConstants.RunLogSource, "退出前日志");
+            await connection.WriteAsync(WireEnvelope.Event(ProtocolOperations.LogEntry, new LogEntryEvent(instance, entry)), timeout.Token);
+        }
+        Environment.Exit(0); // Let process exit close the client handle immediately after the last write.
     }
 
     private static IEnumerable<(string Name, Action Body)> Checks => [

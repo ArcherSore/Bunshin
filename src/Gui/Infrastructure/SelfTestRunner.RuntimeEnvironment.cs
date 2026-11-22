@@ -17,7 +17,7 @@ internal static partial class SelfTestRunner
     private static readonly TimeSpan OnPoolLimit = TimeSpan.FromSeconds(30);
 
     // U1, U9: the Active Run is stopped and has ended before logoff, and the Admission is discarded only after the
-    // Worker has exited. The end is in progress from asking the user to the last step.
+    // Worker has exited. The end is in progress from the stop request through the last step.
     private static void VerifyEndStopsRunFirst(AppLogger logger, string directory)
     {
         RuntimeEnvironment? environment = null;
@@ -53,7 +53,7 @@ internal static partial class SelfTestRunner
             Require(ended == EnvironmentEndResult.Ended && atLogoff == (true, true, false)
                 && waitedPid == Environment.ProcessId && AdmissionDiscarded(coordinator),
                 "结束应先停止 Run 并等待其结束，再注销、等待 Worker 退出，最后丢弃 Admission。");
-            Require(endingAtConfirm == true && endingAtStop == true && !environment.Ending && changes == 2
+            Require(endingAtConfirm == false && endingAtStop == true && !environment.Ending && changes == 2
                 && !environment.EndUnconfirmed, "结束期间应一直处于正在结束，结束后清除并各通知一次。");
         });
     }
@@ -210,9 +210,6 @@ internal static partial class SelfTestRunner
         foreach (var (name, createSession, message, asks) in new (string, Func<ChildSessionManager>, string, bool)[] {
             ("logoff-failure", () => new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], LogoffError = 5 }
                 .CreateManager(logger), "注销桌面分身失败。", true),
-            ("session-survives", () => new SimulatedWts {
-                ReportedId = 7, Sessions = [0, 1, 7], SessionSurvivesLogoff = true
-            }.CreateManager(logger), "无法确认桌面分身已结束。", true),
             ("query-failure", () => new ChildSessionManager(logger,
                 () => throw new Win32Exception(5, "self-test WTS failure"), () => [0u, 1u], _ => null,
                 new ChildSessionCredentialStore(logger, new MemoryCredentialVault())), "无法确认桌面分身状态。", false)
@@ -227,9 +224,77 @@ internal static partial class SelfTestRunner
                     && !environment.Ending, $"{name}：结束应未确认、说明原因并保留 Admission。");
             });
         }
+
+        var clock = new ScheduleTestClock();
+        var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], SessionSurvivesLogoff = true };
+        using var surviving = wts.CreateManager(logger, clock: clock);
+        WithFakeWorker(logger, Path.Combine(directory, "session-survives"), (coordinator, record, _) => {
+            var environment = CreateEnvironment(logger, surviving, coordinator);
+            var end = environment.EndAsync();
+            PumpUntil(() => clock.PendingTimers >= 2 || end.IsCompleted, "应开始等待注销确认。");
+            clock.Advance(TimeSpan.FromSeconds(59));
+            // Let the poll re-arm or an early timeout finish on the dispatcher before reading the result.
+            PumpUntil(() => clock.PendingTimers >= 2 || end.IsCompleted, "59 秒的注销轮询应已处理。");
+            Require(!end.IsCompleted && coordinator.TrackedAdmission == record, "注销 59 秒时仍应等待并保留 Admission。");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            PumpUntil(() => end.IsCompleted, "注销满 60 秒应交回闸门。");
+            Require(end.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Unconfirmed
+                && environment.EndUnconfirmed && !environment.Ending && coordinator.TrackedAdmission == record,
+                "注销超时应报告结束未确认，并保留原 Admission。");
+
+            var retry = environment.RequestEnd(() => true)!;
+            PumpUntil(() => clock.PendingTimers >= 2 || retry.IsCompleted, "应能再次结束桌面分身。");
+            wts.Sessions.Remove(7);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            PumpUntil(() => retry.IsCompleted, "Windows 已不再列出原 Session 时应确认结束。");
+            Require(retry.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && !environment.EndUnconfirmed
+                && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([7u, 7u]),
+                "再次结束应只注销原分身，确认消失后丢弃 Admission。");
+        });
+
+        VerifyBlockedLogoffWithoutWorker(logger, directory);
     }
 
-    // U7, U8: the user is asked only when a Runtime Environment may remain, and only after any in-flight operation;
+    private static void VerifyBlockedLogoffWithoutWorker(AppLogger logger, string directory)
+    {
+        var clock = new ScheduleTestClock();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loggedOff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        using var session = new ChildSessionManager(logger, () => 7u,
+            () => loggedOff.Task.IsCompleted ? [0u, 1u] : [0u, 1u, 7u], id => {
+                Interlocked.Increment(ref attempts);
+                entered.TrySetResult();
+                loggedOff.Task.GetAwaiter().GetResult();
+                return id;
+            }, new ChildSessionCredentialStore(logger, new MemoryCredentialVault()), clock);
+        var coordinator = new WorkerCoordinator(logger, Path.Combine(directory, "blocked-logoff"), "unused.exe",
+            $"Gui.RuntimeEnvironment.SelfTest.{Guid.NewGuid():N}", usePipeAcl: false);
+        try {
+            Require(session.DetectExistingSession() == 7, "应检测到已有桌面分身。");
+            var environment = CreateEnvironment(logger, session, coordinator);
+            var end = environment.RequestEnd(() => true)!;
+            PumpUntil(() => entered.Task.IsCompleted, "应已进入阻塞的 WTS 注销调用。");
+            clock.Advance(TimeSpan.FromSeconds(60));
+            PumpUntil(() => end.IsCompleted, "WTS 注销仍阻塞时，满 60 秒也应交回闸门。");
+            Require(end.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Unconfirmed
+                && environment.EndUnconfirmed && session.Snapshot.State == ChildSessionState.Faulted
+                && environment.TryRunExclusiveAsync(() => Task.CompletedTask).GetAwaiter().GetResult(),
+                "注销仍阻塞时应报告结束未确认，并允许下一项操作取得闸门。");
+
+            loggedOff.SetResult();
+            var retry = environment.RequestEnd(() => true)!;
+            PumpUntil(() => retry.IsCompleted, "Windows 延迟完成注销后应能再次结束。");
+            Require(retry.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && !environment.EndUnconfirmed
+                && session.Snapshot is { State: ChildSessionState.NotRunning, ChildSessionId: null } && attempts == 1,
+                "只恢复分身时，再次结束应显示未运行，且不重复注销已经消失的分身。");
+        } finally {
+            loggedOff.TrySetResult();
+            Task.Run(async () => await coordinator.DisposeAsync()).GetAwaiter().GetResult();
+        }
+    }
+
+    // U7, U8: the user is asked before queueing when a Runtime Environment may remain;
     // declining changes nothing. An Admission without a Child Session still needs ending.
     private static void VerifyEndConfirmation(AppLogger logger, string directory)
     {
@@ -253,15 +318,16 @@ internal static partial class SelfTestRunner
                 var environment = CreateEnvironment(logger, existing, coordinator);
                 var declined = OnPool(async () => {
                     var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var asked = false;
                     var held = environment.RunExclusiveAsync(() => release.Task);
                     var ending = environment.EndAsync(() => {
-                        asked.TrySetResult();
+                        asked = true;
                         return false;
                     });
-                    Require(!asked.Task.Wait(200), "确认应等待进行中的操作完成后再询问。");
+                    var declinedBeforeRelease = asked && ending.IsCompletedSuccessfully;
                     release.SetResult();
                     await held;
+                    Require(declinedBeforeRelease, "其他操作持有闸门时也应立即询问，取消退出无需等待闸门。");
                     return await ending;
                 });
                 Require(declined == EnvironmentEndResult.Declined && wts.LogoffAttempts.Count == 0
@@ -342,8 +408,7 @@ internal static partial class SelfTestRunner
         });
     }
 
-    // #140: clicks made while the end confirmation is open join it, so one decline answers them all. An exit clicked
-    // meanwhile asks once after that answer; an end still queued when the exit started is refused without asking.
+    // Repeated end clicks share one answer. An accepted exit supersedes an already confirmed, queued end.
     private static void VerifyRepeatedEndRequests(AppLogger logger, string directory)
     {
         var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7] };
@@ -360,13 +425,11 @@ internal static partial class SelfTestRunner
                     // The tray stays clickable while the box is modal: two more ends, then an exit.
                     joined += (environment.RequestEnd(() => ++endAsked > 0) is null ? 1 : 0)
                         + (environment.RequestEnd(() => ++endAsked > 0) is null ? 1 : 0);
-                    environment.Closing = true;
                     exit = environment.EndAsync(() => ++exitAsked < 0);
                     return false;
                 })!;
                 var declined = await first;
                 var exitDeclined = await exit!;
-                environment.Closing = false;
                 var again = await environment.RequestEnd(() => ++endAsked < 0)!;
                 return (declined, joined, exitDeclined, again);
             });
@@ -379,8 +442,8 @@ internal static partial class SelfTestRunner
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var held = environment.RunExclusiveAsync(() => release.Task);
                 var queued = environment.RequestEnd(() => ++endAsked > 0)!;
-                environment.Closing = true;
-                var exit = environment.EndAsync(() => ++exitAsked < 0);
+                var joined = environment.RequestEnd(() => ++endAsked > 0) is null;
+                var exit = environment.EndAsync(() => ++exitAsked > 0, onAccepted: () => environment.Closing = true);
                 release.SetResult();
                 await held;
                 var refused = false;
@@ -389,14 +452,68 @@ internal static partial class SelfTestRunner
                 } catch (OperationCanceledException) {
                     refused = true;
                 }
-                Require(await exit == EnvironmentEndResult.Declined, "退出应在排队的结束之后询问。");
-                environment.Closing = false;
-                return refused;
+                Require(await exit == EnvironmentEndResult.Ended, "退出应取得闸门并完成结束。");
+                return refused && joined;
             });
-            Require(refused && endAsked == 2 && exitAsked == 2 && !environment.Ending && !environment.EndUnconfirmed
-                && coordinator.TrackedWorkerPid is not null && wts.LogoffAttempts.Count == 0,
-                "退出开始前已排队的结束请求应被拒绝且不询问，由退出确认决定。");
+            Require(refused && endAsked == 3 && exitAsked == 2 && !environment.Ending && !environment.EndUnconfirmed
+                && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([7u]),
+                "已确认的结束请求应合并排队期间的点击；退出开始后，只有退出可以注销分身。");
         });
+    }
+
+    private static void VerifyExitDuringEndConfirmation(AppLogger logger, string directory)
+    {
+        foreach (var failLogoff in new[] { false, true }) {
+            var wts = new SimulatedWts { Sessions = [0, 1, 7], LogoffError = failLogoff ? 5 : null };
+            using var session = wts.CreateManager(logger);
+            WithFakeWorker(logger, Path.Combine(directory, $"exit-{failLogoff}"), (coordinator, _, _) => {
+                var environment = CreateEnvironment(logger, session, coordinator);
+                WithRuntimeControlWindow(logger, Path.Combine(directory, $"window-{failLogoff}"), window => {
+                    wts.ReportedId = 7;
+                    var app = (App)System.Windows.Application.Current;
+                    var closed = false;
+                    var shutdowns = 0;
+                    window.Closed += (_, _) => closed = true;
+                    var errors = 0;
+                    var questions = 0;
+                    bool Decline() { questions++; return false; }
+                    void Exit(Func<bool>? confirm)
+                    {
+                        var exit = app.ExitAsync(confirm, environment, window, reportError: _ => {
+                            errors++;
+                            if (wts.QueryFails && errors == 1) Exit(Decline);
+                        }, shutdown: () => shutdowns++);
+                        PumpUntil(() => exit.IsCompleted, "退出请求应在当前确认框返回前完成。");
+                        exit.GetAwaiter().GetResult();
+                    }
+
+                    wts.QueryFails = true;
+                    Exit(Decline);
+                    Require(errors == 1 && questions == 0 && !closed && !environment.Closing,
+                        "WTS 查询失败的错误框打开期间再次请求退出，应只显示一个错误框。");
+                    wts.QueryFails = false;
+
+                    var end = environment.RequestEnd(() => {
+                        Exit(() => {
+                            questions++;
+                            Exit(Decline);
+                            Exit(null); // -q goes through the same application exit guard as the tray.
+                            Require(closed == !failLogoff && shutdowns == (failLogoff ? 0 : 1) && errors == (failLogoff ? 2 : 1),
+                                "用户尚未回答时，自动退出应已关闭主窗口或已报告注销失败。");
+                            return true;
+                        });
+                        return true;
+                    })!;
+                    PumpUntil(() => end.IsCompleted, "两个确认框都应能返回。");
+                    Require(end.GetAwaiter().GetResult() == EnvironmentEndResult.Declined && questions == 1
+                        && closed == !failLogoff && shutdowns == (failLogoff ? 0 : 1) && errors == (failLogoff ? 2 : 1)
+                        && wts.LogoffTargets.SequenceEqual([(uint?)7]) && wts.LogoffAttempts.SequenceEqual([7u])
+                        && environment.Closing == !failLogoff && environment.EndUnconfirmed == failLogoff
+                        && AdmissionDiscarded(coordinator) == !failLogoff,
+                        "两个旧回答都不能再次结束环境，注销失败时应保留窗口和 Admission。");
+                }, session: session, coordinator: coordinator, environment: environment);
+            });
+        }
     }
 
     // While the application is closing, operations are refused; the end that closes it still runs.
