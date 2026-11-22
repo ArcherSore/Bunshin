@@ -556,12 +556,12 @@ internal static partial class SelfTestRunner
         PumpOnboarding(20);
     }
 
-    private static void PumpUntil(Func<bool> condition, string failure)
+    private static void PumpUntil(Func<bool> condition, string failure, Func<string, Exception>? timeout = null)
     {
         var deadline = Environment.TickCount64 + WaitLimitMilliseconds;
         while (!condition()) {
             if (Environment.TickCount64 > deadline) {
-                throw new InvalidOperationException(failure);
+                throw timeout?.Invoke(failure) ?? new InvalidOperationException(failure);
             }
             PumpOnboarding(20);
         }
