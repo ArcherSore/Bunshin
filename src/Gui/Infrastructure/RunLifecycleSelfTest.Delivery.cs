@@ -116,38 +116,28 @@ internal static partial class RunLifecycleSelfTest
         f.Finish(typeof(Present), typeof(Present));
     }
 
-    private static void VerifyRunLifecycleAbandonQuit()
+    private static void VerifyRunLifecycleTrackedQuit()
     {
-        var queued = new Scenario();
-        queued.Begin(Intent(RunSource.Launch));
-        queued.Body();
-        queued.Terminal(RunState.Succeeded);
-        var present = queued.History.OfType<Deliver>().Single();
-        Check(present.Item is Present { Kind: NoticeKind.Succeeded } && present.Item.Key == queued.Key
-            && queued.State.Deliveries.Single().Item == new RequestQuit(queued.Key), "成功通知等待回执时，原 Run 的退出请求应已入队");
-        queued.Step(new AbandonQuit(queued.Key));
-        queued.Ack(present.Id);
-        queued.Finish(typeof(Present));
-
-        foreach (var status in new[] { RunState.Cancelled, RunState.Failed }) {
+        foreach (var status in new RunState?[] { RunState.Succeeded, RunState.Failed, RunState.Cancelled, null }) {
             var f = new Scenario();
+            bool Tracked() => new RunOrchestration(f.State).HasTrackedQuitRun;
             f.Begin(Intent(RunSource.Launch));
-            var first = f.Start;
-            var wire = f.Body();
-            f.Step(new AbandonQuit(first.Key));
-            f.Terminal(status);
-            f.Reply(wire, StartReplyKind.Accepted, "accepted");
-            f.Begin(Intent(RunSource.Launch, 2));
+            Check(!Tracked(), "写出请求体前尚未绑定退出资格");
             f.Body();
-            f.Step(new AbandonQuit(first.Key));
-            f.Terminal(RunState.Succeeded);
-            f.Finish(status == RunState.Failed ? [typeof(Present), typeof(Present), typeof(RequestQuit)]
-                : [typeof(Present), typeof(RequestQuit)]);
-            f.Conclusions(StartConclusion.Accepted, StartConclusion.Accepted);
-            Check(f.Items<RequestQuit>().Single().Key == f.Key
-                && f.Items<Present>().Select(p => p.Key).SequenceEqual(status == RunState.Failed ? [first.Key, f.Key] : [f.Key])
-                && f.History.OfType<SubmissionConclusion>().Select(c => c.Submission).SequenceEqual([first.Submission, f.Start.Submission]),
-                "只撤销指定开机 Run 的退出资格，保留原提交结论与终态提醒");
+            Check(Tracked(), "已绑定的命令行 -q 任务应阻止定时");
+            f.Active();
+            if (status is { } terminal) {
+                f.Terminal(terminal);
+                Check(Tracked(), "退出排队或已派发时仍应阻止定时");
+                f.Finish(terminal == RunState.Cancelled ? [typeof(RequestQuit)] : [typeof(Present), typeof(RequestQuit)]);
+                Check(Tracked() && f.Items<RequestQuit>().Single().Run == f.Key, "退出请求已交付，仍需等待退出完成");
+                f.Step(new ClosingStarted(Id(71)));
+                f.Step(new ClosingCommitted(Id(71)));
+            } else {
+                f.ExitWorker();
+                f.Finish(typeof(Present));
+            }
+            Check(!Tracked(), "退出完成或运行结果未确认后应释放退出资格");
         }
     }
 
@@ -441,7 +431,7 @@ internal static partial class RunLifecycleSelfTest
             var paused = h.History.Count;
             h.Step(commit ? new ClosingCommitted(Id(8)) : new ClosingCancelled(Id(8)));
             h.Finish(commit ? [] : [typeof(RequestQuit)]);
-            Check(!h.History.Take(paused).OfType<Deliver>().Any(), "取消的开机 Run 也应缓冲 -q");
+            Check(!h.History.Take(paused).OfType<Deliver>().Any(), "命令行 -q 任务取消后也应缓冲退出请求");
         }
     }
 }

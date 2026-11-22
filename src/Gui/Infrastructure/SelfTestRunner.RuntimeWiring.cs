@@ -189,7 +189,7 @@ internal static partial class SelfTestRunner
                     }
                 });
                 using var session = new SimulatedWts().CreateManager(logger);
-                var environment = new RuntimeEnvironment(logger, session, coordinator);
+                var environment = CreateEnvironment(logger, session, coordinator);
                 var prepareCount = 0;
                 try {
                     WithRuntimeControlWindow(logger, windowDirectory, window => {
@@ -247,16 +247,13 @@ internal static partial class SelfTestRunner
                                 "Worker 已连接但仍在检查依赖时必须继续等待，不得提交任务。");
                             if (scenario == "exit-waiting") {
                                 // Exit queues cleanup behind the same gate; cancellation must release it without Ready.
-                                environment.Closing = true;
-                                window.SetExitInProgress(true);
-                                var cleanupEntered = false;
-                                var ending = environment.EndAsync(() => {
-                                    cleanupEntered = true;
-                                    return false;
+                                var ending = environment.EndAsync(() => true, onAccepted: () => {
+                                    environment.Closing = true;
+                                    window.SetExitInProgress(true);
                                 });
                                 PumpUntil(() => ending.IsCompleted, "退出必须取消就绪等待并释放操作锁。");
-                                Require(cleanupEntered && ending.GetAwaiter().GetResult().Outcome
-                                    == EnvironmentEndOutcome.Declined && requests == 0,
+                                Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended
+                                    && AdmissionDiscarded(coordinator) && requests == 0,
                                     "Worker 仍在 Starting 时应进入原有清理入口，且不得启动任务。");
                                 environment.Closing = false;
                                 window.SetExitInProgress(false);

@@ -72,7 +72,6 @@ internal sealed record RunLifecycleState
     internal long LastGeneration { get; init; }
     internal long Sequence { get; init; }
     internal TimeSpan Now { get; init; }
-    internal RunKey? DeferredQuit { get; init; }
     internal Guid? Closing { get; init; }
     internal bool ExitCommitted { get; init; }
 
@@ -88,7 +87,7 @@ internal sealed record RunLifecycleState
         var available = Deliveries.Where(d => !InFlight.ContainsKey(d.Item.Key));
         var notices = available.Where(d => d.Item is not RequestQuit).DistinctBy(d => d.Item.Key)
             .Where(d => !holdManualErrors || !IsManualError(d)).ToArray();
-        return notices.Length != 0 ? notices : available.Where(d => d.Item is RequestQuit && d.Item.Key != DeferredQuit
+        return notices.Length != 0 ? notices : available.Where(d => d.Item is RequestQuit
             && !Deliveries.Any(other => other.Item.Key == d.Item.Key && other.Item is not RequestQuit));
     }
 

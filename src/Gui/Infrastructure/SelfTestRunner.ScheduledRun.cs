@@ -425,14 +425,28 @@ internal static partial class SelfTestRunner
                         PumpUntil(() => balloonsAtClose.HasValue, "成功收尾应关闭预览。");
                         Require(balloonsAtClose == 1, "定时成功提醒必须在收尾关闭预览之前发出一次。");
                     } else if (order == SettlementOrder.Tray) {
-                        var tray = environment.EndAsync(() => {
-                            Publish(done, 4);
-                            Require(completions.SequenceEqual([own.RunId]) && session.HasChildSession,
-                                "托盘确认框内成功时，定时收尾应等待托盘释放闸门。");
-                            return true;
-                        });
-                        PumpUntil(() => tray.IsCompleted, "确认后托盘应先结束分身。");
-                        Require(tray.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Ended, "托盘结束分身应成功。");
+                        using var loggingOff = new ManualResetEventSlim();
+                        using var release = new ManualResetEventSlim();
+                        wts.DuringLogoff = _ => {
+                            loggingOff.Set();
+                            release.Wait(token);
+                        };
+                        Task<EnvironmentEndResult> tray;
+                        try {
+                            tray = environment.RequestEnd(() => {
+                                Publish(done, 4);
+                                PumpUntil(() => loggingOff.IsSet, "托盘确认框打开期间，定时收尾应进入注销。");
+                                return true;
+                            })!;
+                            Require(!tray.IsCompleted && session.HasChildSession && !AdmissionDiscarded(coordinator),
+                                "用户确认后，托盘请求应排在仍持有环境的定时收尾之后。");
+                        } finally {
+                            release.Set();
+                        }
+                        PumpUntil(() => tray.IsCompleted, "确认后托盘应重新核验已结束的环境。");
+                        Require(tray.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && AdmissionDiscarded(coordinator)
+                            && wts.LogoffTargets.SequenceEqual([null, sessionId]),
+                            "旧分身和本次定时分身各注销一次，排队的托盘请求不应再对空环境调用注销。");
                     } else if (order is SettlementOrder.Update or SettlementOrder.ManualEndAfterUpdate) {
                         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         var gate = environment.RunExclusiveAsync(() => release.Task);

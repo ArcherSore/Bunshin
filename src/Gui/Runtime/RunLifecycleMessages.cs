@@ -14,8 +14,6 @@ internal abstract record LifecycleEvent
     internal sealed record Delivered(long Id, bool Presented = true) : LifecycleEvent;
     internal sealed record DispatchPending(RunKey Key) : LifecycleEvent;
     internal sealed record CleanupFailed(RunKey Key, string Name, string Detail) : LifecycleEvent;
-    internal sealed record DeferQuit(RunKey Key, bool Deferred) : LifecycleEvent;
-    internal sealed record AbandonQuit(RunKey Key) : LifecycleEvent;
     // A later recovery (or successful environment end) makes a previously failed quit eligible again.
     internal sealed record EnvironmentRecovered : LifecycleEvent;
     internal sealed record ClosingStarted(Guid Id) : LifecycleEvent;
