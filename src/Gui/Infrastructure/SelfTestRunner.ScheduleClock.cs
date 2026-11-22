@@ -14,6 +14,10 @@ internal static partial class SelfTestRunner
         {
             get { lock (_deadlines) { return _deadlines.Count; } }
         }
+        internal TimeSpan? NextTimerDelay
+        {
+            get { lock (_deadlines) { return _deadlines.Count == 0 ? null : _deadlines.Values.Min() - _now; } }
+        }
         public override TimeZoneInfo LocalTimeZone { get; } =
             TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
         public override DateTimeOffset GetUtcNow() { lock (_deadlines) return _now; }
