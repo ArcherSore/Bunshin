@@ -223,17 +223,21 @@ internal static partial class SelfTestRunner
         AwaitWorker(worker, view => view.Fresh, "模拟 Worker 应就绪。");
         var probe = new PresentationProbe();
         var loginError = new InvalidOperationException("登录操作失败", new ChildSessionConnectionException("原始登录错误"));
-        var wts = new SimulatedWts();
+        var logoffClock = new ScheduleTestClock();
+        var wts = new SimulatedWts { SessionSurvivesLogoff = scenario == "quit-recovery" };
         if (scenario == "quit-recovery") {
             wts.ReportedId = record.ChildSessionId;
             wts.Sessions.Add(record.ChildSessionId);
-            wts.DuringLogoff = _ => throw new IOException("模拟旧环境注销失败");
         }
-        using var session = wts.CreateManager(logger);
+        using var session = wts.CreateManager(logger, clock: logoffClock);
         if (scenario != "hello") ConnectTestDesktop(session, record.ChildSessionId);
         var environment = CreateEnvironment(logger, session, worker, (_, _) => Task.CompletedTask);
         var exits = 0;
         var balloonsAtQuit = 0;
+        Task? exit = null;
+        var closed = false;
+        var shutdowns = 0;
+        var exitErrors = new List<Exception>();
         MainWindow? window = null;
         window = new MainWindow(logger, session, worker, environment, () => Task.CompletedTask,
             () => Task.CompletedTask, _ => Task.CompletedTask, root, prepareEnvironment: (_, _, _) => throw loginError,
@@ -241,8 +245,14 @@ internal static partial class SelfTestRunner
             autostart: InertAutostart(), presentation: probe.Presentation, quitAfterRun: () => {
                 exits++;
                 balloonsAtQuit = probe.Balloons.Count;
-                window!.SetExitInProgress(true);
+                if (scenario == "quit-recovery") {
+                    var app = (App)System.Windows.Application.Current;
+                    exit = app.ExitAsync(null, environment, window, exitErrors.Add, () => shutdowns++);
+                } else {
+                    window!.SetExitInProgress(true);
+                }
             });
+        window.Closed += (_, _) => closed = true;
         var rejected = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         var failed = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         var starts = 0;
@@ -289,10 +299,14 @@ internal static partial class SelfTestRunner
                 await pipe.WriteAsync(WireEnvelope.Response(boot.Operation, boot.RequestId!.Value, new RunStartResponse("accepted")), token);
                 await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 2, LastRun = SucceededRun(bootPlan) }), token);
                 await launch;
-                PumpUntil(() => exits == 1, "命令行 -q 任务结束应请求退出。");
-                Require((await environment.EndAsync()).Outcome == EnvironmentEndOutcome.Unconfirmed, "首次退出应因旧环境注销失败而取消。");
-                window.SetExitInProgress(false);
-                wts.DuringLogoff = null;
+                PumpUntil(() => logoffClock.PendingTimers >= 2, "命令行 -q 任务结束应请求退出并等待注销。");
+                logoffClock.Advance(TimeSpan.FromSeconds(60));
+                await exit!.WaitAsync(token);
+                Require(exits == 1 && exitErrors.Count == 1 && !closed && shutdowns == 0 && !environment.Closing
+                    && environment.EndUnconfirmed && worker.TrackedAdmission == record,
+                    "首次 -q 退出应因注销超时而取消，窗口和 Admission 均应保留。");
+                wts.ReportedId = null;
+                wts.Sessions.Remove(record.ChildSessionId);
                 workerExited();
                 pipe.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 AwaitWorker(worker, v => v.Observation == WorkerObservation.WorkerExited, "旧 Worker 应已确认退出。");
@@ -312,7 +326,10 @@ internal static partial class SelfTestRunner
                     logger.EntryWritten -= RecordSkip;
                 }
                 await Dispatcher.Yield(DispatcherPriority.Background);
-                Require(exits == 2 && starts == 1, "Worker 确认退出后，原退出请求应恰好重试一次。");
+                await exit!.WaitAsync(token);
+                Require(exits == 2 && starts == 1 && closed && shutdowns == 1 && exitErrors.Count == 1
+                    && !environment.EndUnconfirmed && AdmissionDiscarded(worker),
+                    "原退出请求应在恢复后恰好重试一次，确认结束并关闭 GUI。");
                 return;
             }
             if (scenario == "update-failed") {

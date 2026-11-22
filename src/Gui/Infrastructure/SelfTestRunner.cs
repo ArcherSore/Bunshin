@@ -112,6 +112,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyScheduledRun), c => VerifyScheduledRun(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyForcedScheduledStart), c => VerifyForcedScheduledStart(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledRunRecovery), c => VerifyScheduledRunRecovery(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyScheduleAfterUnconfirmedEnd), c => VerifyScheduleAfterUnconfirmedEnd(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledRunBeforeWorkerReconnect),
             c => VerifyScheduledRunBeforeWorkerReconnect(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduleClock), c => VerifyScheduleClock(c.Logger, c.Directory), RequiresFocus: true),

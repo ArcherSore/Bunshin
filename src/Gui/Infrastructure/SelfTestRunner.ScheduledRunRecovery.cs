@@ -5,6 +5,48 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static void VerifyScheduleAfterUnconfirmedEnd(AppLogger logger, string directory)
+    {
+        foreach (var force in new[] { false, true }) {
+            var root = Path.Combine(directory, $"force-{force}");
+            CreateIdleSettings(CreateProjectFixture(root), logger).ForceScheduledStart.Value = force;
+            var clock = new ScheduleTestClock();
+            var wts = new SimulatedWts { Sessions = [7], SessionSurvivesLogoff = true };
+            using var session = wts.CreateManager(logger, clock: clock);
+            var coordinator = new WorkerCoordinator(logger, Path.Combine(root, "state"), "unused.exe",
+                $"Gui.Schedule.SelfTest.{Guid.NewGuid():N}", usePipeAcl: false);
+            var environment = WindowEnvironment(logger, session, coordinator);
+            var preparations = 0;
+            try {
+                WithRuntimeControlWindow(logger, root, VerifyOpportunity, session: session, coordinator: coordinator,
+                    environment: environment, prepareEnvironment: (_, _, _) => {
+                        preparations++;
+                        throw new InvalidOperationException("自检拦截了定时准备。");
+                    });
+            } finally {
+                Task.Run(async () => await coordinator.DisposeAsync()).GetAwaiter().GetResult();
+            }
+
+            void VerifyOpportunity(MainWindow window)
+            {
+                wts.ReportedId = 7;
+                var end = environment.EndAsync();
+                PumpUntil(() => clock.PendingTimers >= 2, "应开始等待旧分身消失。");
+                clock.Advance(TimeSpan.FromSeconds(60));
+                PumpUntil(() => end.IsCompleted, "注销超时应结束本次等待。");
+                Require(end.Result.Outcome == EnvironmentEndOutcome.Unconfirmed, "旧分身应处于结束未确认状态。");
+
+                // Windows completes the request late. Only another confirmed end may unblock scheduling.
+                wts.Sessions.Remove(7);
+                var due = window.TryStartScheduledRunAsync(ProjectOf(window).ActiveConfigurationId);
+                PumpUntil(() => due.IsCompleted, "结束未确认时定时应跳过。");
+                Require(due.Result.Disposition == ScheduledRunDisposition.Busy && preparations == 0
+                    && environment.EndUnconfirmed && wts.LogoffAttempts.SequenceEqual([7u]),
+                    $"结束未确认时定时必须跳过，不能自行清除未确认状态或准备分身（force={force}）。");
+            }
+        }
+    }
+
     private static void VerifyScheduledRunBeforeWorkerReconnect(AppLogger logger, string directory)
     {
         CreateIdleSettings(CreateProjectFixture(directory), logger).ForceScheduledStart.Value = true;
@@ -70,7 +112,7 @@ internal static partial class SelfTestRunner
             var prepared = new List<Guid>();
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var environment = CreateEnvironment(logger, session, coordinator, (_, _) =>
-                ++attempts < 4 ? Task.FromException(new IOException("无法确认旧进程退出")) : exited.Task,
+                ++attempts == 1 ? Task.FromException(new IOException("无法确认旧进程退出")) : exited.Task,
                 TimeSpan.FromSeconds(10));
             WithRuntimeControlWindow(logger, directory, window => {
                 var project = ProjectOf(window);
@@ -83,24 +125,26 @@ internal static partial class SelfTestRunner
                 PumpUntil(() => end.IsCompleted, "先注销旧分身，模拟旧 Worker 尚未确认退出。");
                 Require(end.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Unconfirmed
                     && wts.LogoffAttempts.SequenceEqual([record.ChildSessionId]),
-                    "已注销分身的 Worker 尚未确认退出时，应保留 Admission 供下次定时恢复。");
+                    "已注销分身的 Worker 尚未确认退出时，应保留 Admission 供再次结束。");
                 var notices = new List<RunTerminalNotification>();
                 window.NotificationRequested += (_, n) => notices.Add(n);
                 for (var minute = 1; minute <= 2; minute++) {
                     clock.Advance(TimeSpan.FromMinutes(1));
                     var due = window.CheckScheduledRunsAsync();
-                    PumpUntil(() => due.IsCompleted, "旧 Worker 未确认退出时，本次机会应以失败结束。");
+                    PumpUntil(() => due.IsCompleted, "旧 Worker 未确认退出时，应跳过本次机会。");
                     due.GetAwaiter().GetResult();
                     window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
-                    Require(attempts == minute + 1 && prepared.Count == 0 && notices.Count == minute
-                        && notices.All(n => n.Failed && n.Title == "定时任务未能启动" && n.Message.Contains("旧的桌面分身未能关闭")),
-                        "旧分身未确认结束只能报告一次失败，重复检查不能重试或准备新的环境。");
+                    Require(attempts == 1 && prepared.Count == 0 && notices.Count == 0 && environment.EndUnconfirmed,
+                        "结束未确认期间，定时应跳过，不能重试结束或准备新的环境。");
                 }
+                var retry = environment.RequestEnd(() => true)!;
+                PumpUntil(() => attempts == 2, "用户再次结束时应等待原 Worker 退出。");
+                Require(!retry.IsCompleted && prepared.Count == 0, "旧 Worker 的退出尚未确认时不能开始准备。");
+                exited.SetResult();
+                PumpUntil(() => retry.IsCompleted, "确认旧 Worker 退出后应允许新的定时机会。");
+                Require(retry.Result == EnvironmentEndResult.Ended, "再次结束应成功。");
                 clock.Advance(TimeSpan.FromMinutes(1));
                 var recovery = window.CheckScheduledRunsAsync();
-                PumpUntil(() => attempts == 4, "下次定时应能再次确认旧 Worker 退出。");
-                Require(!recovery.IsCompleted && prepared.Count == 0, "旧 Worker 的退出尚未确认时不能开始准备。");
-                exited.SetResult();
                 PumpUntil(() => recovery.IsCompleted, "确认旧 Worker 退出后应能恢复定时启动。");
                 recovery.GetAwaiter().GetResult();
                 Require(prepared.SequenceEqual([target]) && wts.LogoffAttempts.SequenceEqual([record.ChildSessionId]),

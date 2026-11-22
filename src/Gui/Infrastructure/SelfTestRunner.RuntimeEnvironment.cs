@@ -210,9 +210,6 @@ internal static partial class SelfTestRunner
         foreach (var (name, createSession, message, asks) in new (string, Func<ChildSessionManager>, string, bool)[] {
             ("logoff-failure", () => new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], LogoffError = 5 }
                 .CreateManager(logger), "注销桌面分身失败。", true),
-            ("session-survives", () => new SimulatedWts {
-                ReportedId = 7, Sessions = [0, 1, 7], SessionSurvivesLogoff = true
-            }.CreateManager(logger), "无法确认桌面分身已结束。", true),
             ("query-failure", () => new ChildSessionManager(logger,
                 () => throw new Win32Exception(5, "self-test WTS failure"), () => [0u, 1u], _ => null,
                 new ChildSessionCredentialStore(logger, new MemoryCredentialVault())), "无法确认桌面分身状态。", false)
@@ -227,6 +224,31 @@ internal static partial class SelfTestRunner
                     && !environment.Ending, $"{name}：结束应未确认、说明原因并保留 Admission。");
             });
         }
+
+        var clock = new ScheduleTestClock();
+        var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7], SessionSurvivesLogoff = true };
+        using var surviving = wts.CreateManager(logger, clock: clock);
+        WithFakeWorker(logger, Path.Combine(directory, "session-survives"), (coordinator, record, _) => {
+            var environment = CreateEnvironment(logger, surviving, coordinator);
+            var end = environment.EndAsync();
+            PumpUntil(() => clock.PendingTimers >= 2 || end.IsCompleted, "应开始等待注销确认。");
+            clock.Advance(TimeSpan.FromSeconds(59));
+            Require(!end.IsCompleted && coordinator.TrackedAdmission == record, "注销 59 秒时仍应等待并保留 Admission。");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            PumpUntil(() => end.IsCompleted, "注销满 60 秒应交回闸门。");
+            Require(end.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Unconfirmed
+                && environment.EndUnconfirmed && !environment.Ending && coordinator.TrackedAdmission == record,
+                "注销超时应报告结束未确认，并保留原 Admission。");
+
+            var retry = environment.RequestEnd(() => true)!;
+            PumpUntil(() => clock.PendingTimers >= 2 || retry.IsCompleted, "应能再次结束桌面分身。");
+            wts.Sessions.Remove(7);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            PumpUntil(() => retry.IsCompleted, "Windows 已不再列出原 Session 时应确认结束。");
+            Require(retry.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && !environment.EndUnconfirmed
+                && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([7u, 7u]),
+                "再次结束应只注销原分身，确认消失后丢弃 Admission。");
+        });
     }
 
     // U7, U8: the user is asked before queueing when a Runtime Environment may remain;
@@ -442,7 +464,7 @@ internal static partial class SelfTestRunner
                     PumpUntil(() => end.IsCompleted, "两个确认框都应能返回。");
                     Require(end.GetAwaiter().GetResult() == EnvironmentEndResult.Declined && questions == 1
                         && closed == !failLogoff && shutdowns == (failLogoff ? 0 : 1) && errors == (failLogoff ? 2 : 1)
-                        && wts.LogoffTargets.SequenceEqual([(uint?)null]) && wts.LogoffAttempts.SequenceEqual([7u])
+                        && wts.LogoffTargets.SequenceEqual([(uint?)7]) && wts.LogoffAttempts.SequenceEqual([7u])
                         && environment.Closing == !failLogoff && environment.EndUnconfirmed == failLogoff
                         && AdmissionDiscarded(coordinator) == !failLogoff,
                         "两个旧回答都不能再次结束环境，注销失败时应保留窗口和 Admission。");

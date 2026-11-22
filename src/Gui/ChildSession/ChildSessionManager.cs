@@ -14,6 +14,7 @@ internal sealed class ChildSessionManager : IDisposable
     private readonly Func<uint?> _getChildSessionId;
     private readonly Func<IReadOnlyCollection<uint>> _enumerateSessions;
     private readonly Func<uint?, uint?> _terminateChildSession;
+    private readonly TimeProvider _clock;
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private RdpPreviewWindow? _previewWindow;
     private ChildSessionService? _service;
@@ -23,13 +24,14 @@ internal sealed class ChildSessionManager : IDisposable
     internal ChildSessionManager(
         AppLogger logger, Func<uint?>? getChildSessionId = null,
         Func<IReadOnlyCollection<uint>>? enumerateSessions = null, Func<uint?, uint?>? terminateChildSession = null,
-        ChildSessionCredentialStore? credentials = null)
+        ChildSessionCredentialStore? credentials = null, TimeProvider? clock = null)
     {
         _logger = logger;
         _getChildSessionId = getChildSessionId ?? ChildSessionService.TryGetChildSessionId;
         _enumerateSessions = enumerateSessions ?? ChildSessionService.EnumerateSessionIds;
         _terminateChildSession = terminateChildSession
-            ?? (sessionId => ChildSessionService.TerminateChildSession(wait: true, sessionId));
+            ?? (sessionId => ChildSessionService.TerminateChildSession(wait: false, sessionId));
+        _clock = clock ?? TimeProvider.System;
         Credentials = credentials ?? new ChildSessionCredentialStore(logger);
     }
 
@@ -213,19 +215,19 @@ internal sealed class ChildSessionManager : IDisposable
             DisposePreview(disconnect: true);
             _logger.Debug($"结束桌面分身：RDP 宿主已释放（{timer.ElapsedMilliseconds}ms），开始等待 WTS 注销。");
             timer.Restart();
-            // WTS waits for logoff to finish. Keep the operation lock held without blocking the UI;
-            // RDP disposal above and state notifications below stay on their owning thread.
-            var terminatedId = await Task.Run(() => TerminateChildSession(verifiedSessionId));
+            if (sessionId is uint target) {
+                await LogoffAndConfirmAsync(target);
+            }
             _logger.Debug($"结束桌面分身：WTS 注销等待已完成（{timer.ElapsedMilliseconds}ms）。");
-            _logger.Info(terminatedId is null
+            _logger.Info(sessionId is null
                 ? "当前无 Child Session 需要注销。"
-                : $"已注销 Child Session {terminatedId.Value}。");
+                : $"已注销 Child Session {sessionId.Value}。");
             UpdateState(ChildSessionState.NotRunning, null, 0, "未运行");
             return true;
         } catch (Exception exception) {
             _logger.Error("结束 Child Session 失败。", exception);
             UpdateState(
-                ChildSessionState.Faulted, SafeChildSessionId(sessionId),
+                ChildSessionState.Faulted, exception is TimeoutException ? sessionId : SafeChildSessionId(sessionId),
                 SafeConnectedState(), exception.GetBaseException().Message);
             throw;
         } finally {
@@ -405,19 +407,24 @@ internal sealed class ChildSessionManager : IDisposable
         return null;
     }
 
-    // Logoff targets the verified session, or else whatever WTS reports. Its failure is accepted only once Windows proves no Child Session
-    // remains, e.g. a failed RDP logon already ended the reported session and logoff returns "not found".
-    private uint? TerminateChildSession(uint? verifiedSessionId)
+    private async Task LogoffAndConfirmAsync(uint sessionId)
     {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60), _clock);
+        var token = deadline.Token;
         try {
-            return _terminateChildSession(verifiedSessionId);
-        } catch (Exception exception) {
-            if (!IsChildSessionProvenAbsent()) {
-                throw;
-            }
-
-            _logger.Warn("注销 Child Session 失败，但 Windows 已确认没有 Child Session，按已结束处理。", exception);
-            return null;
+            await Task.Run(async () => {
+                try {
+                    _terminateChildSession(sessionId);
+                } catch (Exception exception) when (IsChildSessionProvenAbsent()) {
+                    _logger.Warn("注销 Child Session 时 Windows 已报告没有分身。", exception);
+                }
+                while (!token.IsCancellationRequested && _enumerateSessions().Contains(sessionId)) {
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), _clock, token);
+                }
+                token.ThrowIfCancellationRequested();
+            }, token).WaitAsync(token);
+        } catch (OperationCanceledException) when (token.IsCancellationRequested) {
+            throw new TimeoutException($"等待 Child Session {sessionId} 注销超过 60 秒。");
         }
     }
 

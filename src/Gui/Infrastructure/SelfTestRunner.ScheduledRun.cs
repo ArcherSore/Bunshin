@@ -445,7 +445,7 @@ internal static partial class SelfTestRunner
                         }
                         PumpUntil(() => tray.IsCompleted, "确认后托盘应重新核验已结束的环境。");
                         Require(tray.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && AdmissionDiscarded(coordinator)
-                            && wts.LogoffTargets.SequenceEqual([null, sessionId]),
+                            && wts.LogoffTargets.SequenceEqual([(uint?)77, sessionId]),
                             "旧分身和本次定时分身各注销一次，排队的托盘请求不应再对空环境调用注销。");
                     } else if (order is SettlementOrder.Update or SettlementOrder.ManualEndAfterUpdate) {
                         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

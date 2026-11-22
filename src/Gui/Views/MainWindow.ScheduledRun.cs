@@ -62,6 +62,11 @@ public partial class MainWindow
             ReportScheduledSkip(name, TrackedQuitReason);
             return new(ScheduledRunDisposition.Busy, Reason: TrackedQuitReason);
         }
+        if (_environment.EndUnconfirmed) {
+            const string reason = "运行环境状态未知";
+            ReportScheduledSkip(name, reason);
+            return new(ScheduledRunDisposition.Busy, Reason: reason);
+        }
         var exitGeneration = _exitGeneration;
         var dueMinute = CurrentScheduleMinute();
         async Task StartInGateAsync(bool countdownElapsed)
@@ -202,7 +207,7 @@ public partial class MainWindow
             await _lifecycle.IssuePendingPresentationsAsync();
             if (!force && _lifecycle.Orchestration.ManualErrorPending)
                 return new(ScheduledRunDisposition.Busy, Reason: "正在运行其他任务");
-            if (ScheduledStartClosing(exitGeneration) || !force && _environment.EndUnconfirmed)
+            if (ScheduledStartClosing(exitGeneration))
                 return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
             if (force && _environment.EndUnconfirmed && _lifecycle.Orchestration.Scheduled is { Failure: { } error } failed
                 && failed != previous) {
@@ -210,6 +215,8 @@ public partial class MainWindow
                 ReportScheduledStartFailure(name, reason, error);
                 return new(ScheduledRunDisposition.Admitted, Reason: reason);
             }
+            if (_environment.EndUnconfirmed)
+                return new(ScheduledRunDisposition.Busy, Reason: "运行环境状态未知");
             return null;
         }
         if (await SettlePreviousAsync(own) is { } settled) return settled;
