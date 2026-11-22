@@ -9,8 +9,9 @@ internal sealed record AutoRunTarget(Guid Id, string Name)
         project.Configurations.Select(item => new AutoRunTarget(item.Id, item.Name)).ToArray();
 }
 
-// SkipReason is set when the launch asked for an auto-run that cannot happen; it is for the log.
-internal sealed record AutoRunDecision(Guid? ConfigurationId, string? SkipReason = null);
+// SkipReason is set when the launch asked for an auto-run that cannot happen; it is for the log. Notice is set when
+// the command line asked for it, so nobody is watching and the user is told too; the other skips are normal.
+internal sealed record AutoRunDecision(Guid? ConfigurationId, string? SkipReason = null, string? Notice = null);
 
 // Decides, for one launch, whether to start a Task Configuration by itself and which one.
 internal static class AutoRunPlanner
@@ -38,14 +39,16 @@ internal static class AutoRunPlanner
             : configurations.FirstOrDefault(item => item.Id == configured);
         if (target is not null) {
             return canStart ? new AutoRunDecision(target.Id)
-                : Skip($"配置“{target.Name}”当前不能准备或开始任务，运行环境未就绪或正被占用");
+                : Skip($"配置“{target.Name}”当前不能准备或开始任务，运行环境未就绪或正被占用",
+                    command.AutoStart ? $"运行环境暂时无法开始任务，未执行“{target.Name}”。" : null);
         }
-        return Skip(byInstance
-            ? $"--instance \"{command.Instance}\" 没有匹配到唯一的配置"
-            : "没有选择要自动执行的配置，或所选配置已不存在");
+        return byInstance
+            ? Skip($"--instance \"{command.Instance}\" 没有匹配到唯一的配置",
+                $"没有找到唯一的配置“{command.Instance}”，未执行任务。")
+            : Skip("没有选择要自动执行的配置，或所选配置已不存在");
     }
 
-    private static AutoRunDecision Skip(string? reason) => new(null, reason);
+    private static AutoRunDecision Skip(string? reason, string? notice = null) => new(null, reason, notice);
 
     private static AutoRunTarget? Resolve(string selector, IReadOnlyList<AutoRunTarget> configurations)
     {

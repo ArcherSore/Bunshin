@@ -170,11 +170,26 @@ internal static partial class SelfTestRunner
         Launch("instance", boot with { Instance = "周常" }, "日常", false, (_, ran) =>
             Require(ran && prepared.SequenceEqual(["周常"]), "--instance 必须优先于设置里的配置。"));
         Launch("unknown-instance", boot with { Instance = "不存在" }, "日常", false, (_, ran) =>
-            Require(!ran && prepared.Count == 0 && failures.Count == 0,
-                "--instance 找不到时必须跳过，不回退到其他配置。"));
+            Require(!ran && prepared.Count == 0 && failures is [{ } failure]
+                && failure.StartsWith("自动执行未能完成 / ") && failure.Contains("不存在"),
+                "--instance 找不到时必须跳过并提示一次，不回退到其他配置。"));
+        Launch("duplicate-instance", boot with { Instance = "日常" }, null, false, (_, ran) =>
+            Require(!ran && prepared.Count == 0 && failures.Count == 1,
+                "--instance 名称重复时必须跳过并提示一次。"),
+            fixture: directory => {
+                TwoConfigurations()(directory);
+                var project = ProjectPlanModule.Open(
+                    directory, Path.Combine(directory, "config", "configurations.json"));
+                project.RenameConfiguration(project.Configurations.Single(item => item.Name == "周常").Id, "日常");
+            });
         Launch("not-startable", boot, "周常", false, (_, ran) =>
-            Require(!ran && prepared.Count == 0, "运行控制栏不允许开始时必须跳过。"),
+            Require(!ran && prepared.Count == 0 && failures.Count == 1, "运行控制栏不允许开始时必须跳过并提示一次。"),
             (window, _) => window.SetExitInProgress(true));
+        Launch("not-startable-manual-flag", new LaunchCommand(), "周常", true, (_, ran) =>
+            Require(!ran && prepared.Count == 0 && failures.Count == 0, "设置触发的自动执行被跳过时不提示。"),
+            (window, _) => window.SetExitInProgress(true));
+        Launch("autostart-without-configuration", boot, null, false, (_, ran) =>
+            Require(!ran && prepared.Count == 0 && failures.Count == 0, "没有选择自动执行的配置时不提示。"));
         Launch("empty-active-configuration", boot, "周常", false, (_, ran) =>
             Require(ran && prepared.SequenceEqual(["周常"]), "目标配置有效时，原来激活的配置没有任务不能挡住它。"),
             fixture: TwoConfigurations(dailyHasTask: false));
