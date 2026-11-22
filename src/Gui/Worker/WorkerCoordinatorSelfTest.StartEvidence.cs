@@ -696,8 +696,14 @@ internal static partial class WorkerCoordinatorSelfTest
             if (writeFailed) {
                 allowWrite.SetResult();
                 await f.Coordinator.SnapshotRefresh.WaitAsync(f.Token);
+                f.Clock.Advance(TimeSpan.FromSeconds(4));
             }
             end = f.Coordinator.ChildSessionEndedAsync(f.Admission);
+            if (writeFailed) {
+                f.Clock.Advance(TimeSpan.FromSeconds(2));
+                Require(f.Clock.NextTimerDelay == TimeSpan.FromSeconds(3),
+                    "确认退出两秒后，读循环应还有三秒处理缓冲终态。");
+            }
         } finally {
             allowWrite.TrySetResult();
             resume.TrySetResult();

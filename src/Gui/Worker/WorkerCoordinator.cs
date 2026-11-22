@@ -497,8 +497,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     {
         lock (_gate) {
             if (_admission != admission || _connection is not { } connection) return Task.CompletedTask;
+            if (_exitConfirmed && _eofDrain is not null) return _eofDrain;
             _exitConfirmed = true;
-            return _eofDrain ??= WaitForEofAsync(connection);
+            return _eofDrain = WaitForEofAsync(connection);
         }
     }
 
@@ -507,8 +508,11 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         try {
             await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5), _exitClock).ConfigureAwait(false);
         } catch (TimeoutException error) {
+            lock (_gate) {
+                if (_connection != connection || (writeFailure is not null && _exitConfirmed)) return;
+                connection.Close(writeFailure ?? error);
+            }
             _logger.Warn("等待 Worker 管道 EOF 超时。");
-            connection.Close(writeFailure ?? error);
         }
     }
 
