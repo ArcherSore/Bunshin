@@ -406,9 +406,12 @@ internal static partial class SelfTestRunner
                     Require(probe.Dialogs.Count == 0, "确认退出期间不应提前弹框。");
                     window.SetExitInProgress(false);
                     await Dispatcher.Yield(DispatcherPriority.Background);
-                    var detail = scenario == "unknown" ? "启动结果未知" : "运行结果未确认";
-                    Require(probe.Dialogs is [{ Operation: "开始任务失败" } dialog] && dialog.Error == error
-                        && dialog.Message.Contains(detail), "取消退出应补发一次对应结论，并保留原异常。");
+                    var (title, detail) = scenario == "unknown"
+                        ? ("启动结果未知", "启动结果未知：任务可能已经开始执行。") : ("运行结果未确认", "任务已被接纳，运行结果未确认。");
+                    Require(probe.Dialogs is [var dialog] && dialog.Operation == title && dialog.Error == error
+                        && dialog.Message.StartsWith($"{detail}\n\n请检查", StringComparison.Ordinal)
+                        && !dialog.Message.Contains(error.GetBaseException().Message, StringComparison.Ordinal),
+                        $"取消退出应补发一次对应结论，标题不称失败、正文同托盘且不夹带原始异常：{string.Join("；", probe.Dialogs)}");
                 }
             }
             Require(exits == 0 && starts == 2 && probe.Balloons.Count == 1,

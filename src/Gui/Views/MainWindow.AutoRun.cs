@@ -43,9 +43,13 @@ public partial class MainWindow
         var error = notice.Error ?? new InvalidOperationException(detail ?? "任务未能启动。");
         if (notice.Intent?.Source == RunSource.Manual) {
             if (IsVisible && WindowState != WindowState.Minimized) {
-                var message = detail != null && notice.ConfirmedStartDetail == null
-                    ? $"{detail}\n\n{error.GetBaseException().Message}" : detail;
-                PresentOperationError(notice.Operation, error, message);
+                // An unknown or unconfirmed result is not a failure; the dialog says only what the tray says.
+                var title = notice.Kind switch {
+                    NoticeKind.StartUnknown => "启动结果未知",
+                    NoticeKind.EndUnconfirmed => "运行结果未确认",
+                    _ => notice.Operation
+                };
+                PresentOperationError(title, error, detail);
                 return true;
             }
             _logger.Error($"{notice.Operation}。", error);
