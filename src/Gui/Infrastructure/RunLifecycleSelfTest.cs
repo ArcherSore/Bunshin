@@ -18,7 +18,7 @@ internal static partial class RunLifecycleSelfTest
         VerifyRunLifecycleBootAttribution, VerifyRunLifecycleStaleActiveBackoff, VerifyRunLifecycleRegisteredQuery,
         VerifyRunLifecycleScheduledTerminals, VerifyRunLifecycleObservedRuns, VerifyRunLifecycleFaultedSlot,
         VerifyRunLifecycleReconnectFault, VerifyRunLifecycleBufferedFaultExit, VerifyRunLifecycleExitBuffer,
-        VerifyRunLifecycleAbandonQuit, VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleCompletedPlans,
+        VerifyRunLifecycleTrackedQuit, VerifyRunLifecycleQuitRecovery, VerifyRunLifecycleCompletedPlans,
         VerifyRunLifecycleRejectedPlans, VerifyRunLifecycleIndependentPresentations
     ];
 

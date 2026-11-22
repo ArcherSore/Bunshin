@@ -25,11 +25,10 @@ internal sealed record RunOrchestration(RunLifecycleState Lifecycle)
         .Where(d => d.Item is Present or PresentCleanupFailure);
     internal bool ManualErrorPending => PendingConclusions.Any(Lifecycle.IsManualError);
 
-    internal bool WaitingForQuit(RunKey key) => Lifecycle.Quits.ContainsKey(key)
-        || Lifecycle.Deliveries.Any(d => d.Item is RequestQuit quit && quit.Key == key);
+    internal bool HasTrackedQuitRun => Lifecycle.Quits.ContainsValue(QuitStage.Bound) || PendingQuitReason != null;
     internal string? PendingQuitReason => Lifecycle.Deliveries.Any(d => d.Item is RequestQuit)
         || Lifecycle.Quits.Values.Any(stage => stage is QuitStage.Requested or QuitStage.AwaitingRecovery or QuitStage.RecoveredWhileClosing)
-        ? "开机任务已结束，正在等待退出" : null;
+        ? "命令行任务已结束，正在等待退出" : null;
 
     internal RunKey? PendingStart(WorkerCoordinatorSnapshot view) =>
         Lifecycle.Runs.Values.FirstOrDefault(r => r.Owner != null && !r.Settled

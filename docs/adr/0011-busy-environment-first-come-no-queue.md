@@ -11,3 +11,7 @@
 ## 依据
 
 2026-11-20 对照 MXU 的[定时遍历与去重](https://github.com/MaaXYZ/MXU/blob/8d2c857d449535af399c13af99176329c8f77020/src/services/scheduleService.ts#L190-L252)和 MFAAvalonia 的[定时冲突分支](https://github.com/MaaXYZ/MFAAvalonia/blob/61b3b84bd999013e2c8a29b4fec3ed1e08f191d8/MFAAvalonia/ViewModels/Other/TimerModel.cs#L228-L301)做了调研，用户据此定案（[#95](https://github.com/ArcherSore/Bunshin/issues/95)）。
+
+## 2026-11-22 更新
+
+命令行 `-q` 任务已绑定退出资格或正在等待退出时，强制定时也跳过且不补跑。决定倒计时前检查一次，取得闸门后在换场前复核一次，避免在等待期间顶替刚启动的命令行任务。（[#156](https://github.com/ArcherSore/Bunshin/issues/156)）

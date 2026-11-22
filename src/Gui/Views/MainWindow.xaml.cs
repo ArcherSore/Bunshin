@@ -711,7 +711,6 @@ public partial class MainWindow : FluentWindow
                     throw new InvalidDataException(
                         $"首次 run.stop 未返回 stop_requested：{response.Disposition}。 ");
                 }
-                _manuallyStoppedRun = activeRun.RunId;
                 _logger.Info($"run.stop 已确认 stop_requested：runId={activeRun.RunId:D}。 ");
             });
     }
