@@ -27,7 +27,7 @@ internal static partial class SelfTestRunner
         };
     }
 
-    private static void VerifyRunDelivery(AppLogger logger, string directory)
+    private static void VerifyRunDeliveryScenarios(AppLogger logger, string directory)
     {
         foreach (var scenario in new[] { "hello", "rejected", "unknown", "unconfirmed", "late", "quit", "update-failed" }) {
             VerifyRunDeliveryScenario(logger, Path.Combine(directory, scenario), scenario);
@@ -105,7 +105,8 @@ internal static partial class SelfTestRunner
                         };
                         // The button still shows Ready, but the sender has already lost the Worker.
                         Volatile.Write(ref listed, false);
-                        Task.Run(() => worker.ChildSessionEnded(record)).GetAwaiter().GetResult();
+                        pipe.Close();
+                        Task.Run(() => worker.ChildSessionEndedAsync(record)).GetAwaiter().GetResult();
                         Click(window, "StartTaskHeaderButton");
                         PumpUntil(() => duringDialog != null, "正文前失败应打开手动启动错误框。");
                         var result = await duringDialog!.WaitAsync(token);
@@ -139,7 +140,8 @@ internal static partial class SelfTestRunner
                         await Dispatcher.Yield(DispatcherPriority.Background);
                         PumpUntil(() => HeaderShows(window, "RecoverEnvironmentButton", enabled: true), "Faulted 后应显示恢复按钮。");
                         Require(probe.Balloons.Count == 0 && probe.Dialogs.Count == 0, "前台恢复按钮出现时应抑制气泡。");
-                        worker.ChildSessionEnded(record);
+                        pipe.Close();
+                        await worker.ChildSessionEndedAsync(record);
                         await Dispatcher.Yield(DispatcherPriority.Background);
                         Require(probe.Dialogs is [var dialog] && dialog.Message.Contains("运行结果未确认") && probe.Balloons.Count == 0,
                             "抑制 Faulted 气泡后，结束分身应在前台呈现一次最终结论。");
@@ -157,7 +159,8 @@ internal static partial class SelfTestRunner
                     }
                     if (scenario == ManualSettlement.HiddenFailure) {
                         window.Hide();
-                        worker.ChildSessionEnded(record);
+                        pipe.Close();
+                        await worker.ChildSessionEndedAsync(record);
                         await Dispatcher.Yield(DispatcherPriority.Background);
                         Require(probe.Balloons is [{ Operation: "开始任务失败" } balloon] && balloon.Message.Contains("启动结果未知")
                             && probe.Dialogs.Count == 0, "手动启动后隐藏窗口，迟到的失败应只走托盘。");
@@ -370,7 +373,8 @@ internal static partial class SelfTestRunner
             Require(start.Data.GetRawText() == boot.Data.GetRawText(), "手动重试应提交同一份冻结计划。");
             if (scenario == "hidden-retry") {
                 window.Hide();
-                worker.ChildSessionEnded(record);
+                pipe.Close();
+                await worker.ChildSessionEndedAsync(record);
                 await Dispatcher.Yield(DispatcherPriority.Background);
                 Require(probe.Dialogs.Count == 0 && probe.Balloons.Count == 1,
                     "同 ID 手动重试后隐藏窗口，Worker 退出时不能再次发送托盘气泡。");
@@ -401,7 +405,8 @@ internal static partial class SelfTestRunner
                     Require(probe.Dialogs.Count == 0, "迟到接纳不应报告启动失败。");
                 } else {
                     window.SetExitInProgress(true);
-                    worker.ChildSessionEnded(record);
+                    pipe.Close();
+                    await worker.ChildSessionEndedAsync(record);
                     await Dispatcher.Yield(DispatcherPriority.Background);
                     Require(probe.Dialogs.Count == 0, "确认退出期间不应提前弹框。");
                     window.SetExitInProgress(false);

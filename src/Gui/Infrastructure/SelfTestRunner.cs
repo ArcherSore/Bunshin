@@ -74,6 +74,13 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Update)),
         new(Group.Project, "VerifyScheduledManualEndAfterUpdate", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.ManualEndAfterUpdate)),
+        .. Enum.GetValues<WorkerCoordinatorSelfTest.ExitFrame>().Select(frame => new Check(
+            Group.Project, $"VerifyWorkerExit{frame}", c => {
+                var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
+                    WorkerCoordinatorSelfTest.VerifyWorkerExitDrain(c.Logger, c.Directory, c.Project, frame)).Task.Unwrap();
+                PumpUntil(() => check.IsCompleted, "Worker 退出后应完成末帧交付。");
+                check.GetAwaiter().GetResult();
+            })),
         new(Group.Project, nameof(WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite), c => {
             var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
                 WorkerCoordinatorSelfTest.VerifyTerminalDuringQueryWrite(c.Logger, c.Directory, c.Project)).Task.Unwrap();
@@ -98,7 +105,7 @@ internal static partial class SelfTestRunner
             VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "force"), "quit-recovery", forceScheduledStart: true);
             VerifyRunDeliveryScenario(c.Logger, Path.Combine(c.Directory, "ordinary"), "quit-recovery");
         }),
-        new(Group.Project, nameof(VerifyRunDelivery), c => VerifyRunDelivery(c.Logger, c.Directory)),
+        new(Group.Project, nameof(VerifyRunDeliveryScenarios), c => VerifyRunDeliveryScenarios(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyQuitAfterRunSubmission),
             c => VerifyQuitAfterRunSubmission(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyScheduledBootReplacement),
