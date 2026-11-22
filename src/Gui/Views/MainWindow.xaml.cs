@@ -905,6 +905,11 @@ public partial class MainWindow : FluentWindow
             return "请确认程序以管理员权限运行，并检查桌面分身状态后重试。";
         }
 
+        // The task may already be running, so these two results must not invite a second start.
+        if (operation is "启动结果未知" or "运行结果未确认") {
+            return "请稍后查看任务状态，确认没有在运行后再开始。";
+        }
+
         return "请检查当前配置和系统状态后重试。";
     }
 

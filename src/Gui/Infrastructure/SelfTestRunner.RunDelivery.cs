@@ -409,7 +409,7 @@ internal static partial class SelfTestRunner
                     var (title, detail) = scenario == "unknown"
                         ? ("启动结果未知", "启动结果未知：任务可能已经开始执行。") : ("运行结果未确认", "任务已被接纳，运行结果未确认。");
                     Require(probe.Dialogs is [var dialog] && dialog.Operation == title && dialog.Error == error
-                        && dialog.Message.StartsWith($"{detail}\n\n请检查", StringComparison.Ordinal)
+                        && dialog.Message.StartsWith($"{detail}\n\n请稍后查看任务状态，确认没有在运行后再开始。", StringComparison.Ordinal)
                         && !dialog.Message.Contains(error.GetBaseException().Message, StringComparison.Ordinal),
                         $"取消退出应补发一次对应结论，标题不称失败、正文同托盘且不夹带原始异常：{string.Join("；", probe.Dialogs)}");
                 }
