@@ -233,6 +233,8 @@ internal static partial class SelfTestRunner
             var end = environment.EndAsync();
             PumpUntil(() => clock.PendingTimers >= 2 || end.IsCompleted, "应开始等待注销确认。");
             clock.Advance(TimeSpan.FromSeconds(59));
+            // Let the poll re-arm or an early timeout finish on the dispatcher before reading the result.
+            PumpUntil(() => clock.PendingTimers >= 2 || end.IsCompleted, "59 秒的注销轮询应已处理。");
             Require(!end.IsCompleted && coordinator.TrackedAdmission == record, "注销 59 秒时仍应等待并保留 Admission。");
             clock.Advance(TimeSpan.FromSeconds(1));
             PumpUntil(() => end.IsCompleted, "注销满 60 秒应交回闸门。");
@@ -249,6 +251,47 @@ internal static partial class SelfTestRunner
                 && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([7u, 7u]),
                 "再次结束应只注销原分身，确认消失后丢弃 Admission。");
         });
+
+        VerifyBlockedLogoffWithoutWorker(logger, directory);
+    }
+
+    private static void VerifyBlockedLogoffWithoutWorker(AppLogger logger, string directory)
+    {
+        var clock = new ScheduleTestClock();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loggedOff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        using var session = new ChildSessionManager(logger, () => 7u,
+            () => loggedOff.Task.IsCompleted ? [0u, 1u] : [0u, 1u, 7u], id => {
+                Interlocked.Increment(ref attempts);
+                entered.TrySetResult();
+                loggedOff.Task.GetAwaiter().GetResult();
+                return id;
+            }, new ChildSessionCredentialStore(logger, new MemoryCredentialVault()), clock);
+        var coordinator = new WorkerCoordinator(logger, Path.Combine(directory, "blocked-logoff"), "unused.exe",
+            $"Gui.RuntimeEnvironment.SelfTest.{Guid.NewGuid():N}", usePipeAcl: false);
+        try {
+            Require(session.DetectExistingSession() == 7, "应检测到已有桌面分身。");
+            var environment = CreateEnvironment(logger, session, coordinator);
+            var end = environment.RequestEnd(() => true)!;
+            PumpUntil(() => entered.Task.IsCompleted, "应已进入阻塞的 WTS 注销调用。");
+            clock.Advance(TimeSpan.FromSeconds(60));
+            PumpUntil(() => end.IsCompleted, "WTS 注销仍阻塞时，满 60 秒也应交回闸门。");
+            Require(end.GetAwaiter().GetResult().Outcome == EnvironmentEndOutcome.Unconfirmed
+                && environment.EndUnconfirmed && session.Snapshot.State == ChildSessionState.Faulted
+                && environment.TryRunExclusiveAsync(() => Task.CompletedTask).GetAwaiter().GetResult(),
+                "注销仍阻塞时应报告结束未确认，并允许下一项操作取得闸门。");
+
+            loggedOff.SetResult();
+            var retry = environment.RequestEnd(() => true)!;
+            PumpUntil(() => retry.IsCompleted, "Windows 延迟完成注销后应能再次结束。");
+            Require(retry.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && !environment.EndUnconfirmed
+                && session.Snapshot is { State: ChildSessionState.NotRunning, ChildSessionId: null } && attempts == 1,
+                "只恢复分身时，再次结束应显示未运行，且不重复注销已经消失的分身。");
+        } finally {
+            loggedOff.TrySetResult();
+            Task.Run(async () => await coordinator.DisposeAsync()).GetAwaiter().GetResult();
+        }
     }
 
     // U7, U8: the user is asked before queueing when a Runtime Environment may remain;

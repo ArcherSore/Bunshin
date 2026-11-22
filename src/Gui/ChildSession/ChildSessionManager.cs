@@ -222,7 +222,7 @@ internal sealed class ChildSessionManager : IDisposable
             _logger.Info(sessionId is null
                 ? "当前无 Child Session 需要注销。"
                 : $"已注销 Child Session {sessionId.Value}。");
-            UpdateState(ChildSessionState.NotRunning, null, 0, "未运行");
+            ConfirmNotRunning();
             return true;
         } catch (Exception exception) {
             _logger.Error("结束 Child Session 失败。", exception);
@@ -234,6 +234,8 @@ internal sealed class ChildSessionManager : IDisposable
             _operationLock.Release();
         }
     }
+
+    internal void ConfirmNotRunning() => UpdateState(ChildSessionState.NotRunning, null, 0, "未运行");
 
     public void Dispose()
     {

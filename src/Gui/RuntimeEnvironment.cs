@@ -239,6 +239,9 @@ internal sealed class RuntimeEnvironment
         }
         if (!hasEnvironment) {
             _logger.Debug("结束桌面分身：没有需要结束的运行环境。");
+            if (EndUnconfirmed && _session.Snapshot.State == ChildSessionState.Faulted) {
+                _session.ConfirmNotRunning();
+            }
             SetState(Ending, endUnconfirmed: false);
             return EnvironmentEndResult.Ended;
         }
