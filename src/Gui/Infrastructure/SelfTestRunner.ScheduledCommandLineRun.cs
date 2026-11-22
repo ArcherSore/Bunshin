@@ -121,13 +121,19 @@ internal static partial class SelfTestRunner
                     Require(warnings.Count == expectedWarnings && workers.Count == 1
                         && wts.LogoffAttempts.Count == 0 && !stopReply.Task.IsCompleted,
                         "跳过时不得追加倒计时、停止任务或更换分身。");
+                    var scheduleEntries = window.LogLines.OfType<LogEntry>().Count(e => e.TaskLabel == "定时");
                     PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "命令行任务仍应可停止。");
                     Click(window, "StopTaskHeaderButton");
-                    PumpUntil(() => stopReply.Task.IsCompleted, "手动停止应发送给当前命令行任务。");
+                    PumpUntil(() => stopReply.Task.IsCompleted && window.CurrentOperation == PendingOperation.None,
+                        "窗口应已处理本次停止应答。");
+                    Require(!exitRequested, "仅收到 stop_requested 时，命令行 -q 任务仍须等待终态。");
                     finishManualStop.SetResult();
                     PumpUntil(() => exitRequested, "命令行 -q 任务手动停止后应退出。");
-                    window.CheckScheduledRunsAsync().GetAwaiter().GetResult();
-                    Require(workers.Count == 1 && wts.LogoffAttempts.Count == 0, "已跳过的机会不得补跑。");
+                    var recheck = window.CheckScheduledRunsAsync();
+                    PumpUntil(() => recheck.IsCompleted, "同一分钟的复查应完成。");
+                    recheck.GetAwaiter().GetResult();
+                    Require(window.LogLines.OfType<LogEntry>().Count(e => e.TaskLabel == "定时") == scheduleEntries
+                        && workers.Count == 1 && wts.LogoffAttempts.Count == 0, "已跳过的机会不得再次处理。");
                     return;
                 }
                 if (scenario == ScheduleScenario.PendingStart) {
@@ -195,6 +201,13 @@ internal static partial class SelfTestRunner
             Task.Run(async () => await coordinator.DisposeAsync()).GetAwaiter().GetResult();
         }
         Task.WhenAll(workers).GetAwaiter().GetResult();
+
+        if (quitAfterRun) {
+            WithRuntimeControlWindow(logger, directory, reopened => {
+                Require(!reopened.LogLines.OfType<LogEntry>().Any(e => e.TaskLabel == "定时"),
+                    "同一分钟重新打开窗口后，不得补跑已跳过的机会。");
+            }, scheduleClock: clock, prepareEnvironment: (_, _, _) => throw new InvalidOperationException("意外补跑"));
+        }
 
         async Task RunWorker(WorkerAdmissionRecord record, bool boot)
         {
