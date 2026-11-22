@@ -84,7 +84,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     private readonly TaskCompletionSource<bool> _serverReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _serverTask;
     private ProtocolConnection? _connection;
-    private Task? _exitDrain;
+    private Task? _eofDrain;
+    private bool _exitConfirmed;
     private readonly TimeProvider _exitClock;
     private readonly Func<int, CancellationToken, Task> _waitForExit;
     private bool _refreshingSnapshot;
@@ -496,17 +497,18 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     {
         lock (_gate) {
             if (_admission != admission || _connection is not { } connection) return Task.CompletedTask;
-            return _exitDrain ??= WaitForEofAsync(connection);
+            _exitConfirmed = true;
+            return _eofDrain ??= WaitForEofAsync(connection);
         }
     }
 
-    private async Task WaitForEofAsync(ProtocolConnection connection)
+    private async Task WaitForEofAsync(ProtocolConnection connection, Exception? writeFailure = null)
     {
         try {
             await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5), _exitClock).ConfigureAwait(false);
         } catch (TimeoutException error) {
-            _logger.Warn("Worker 已退出，等待管道 EOF 超时。");
-            connection.Close(error);
+            _logger.Warn("等待 Worker 管道 EOF 超时。");
+            connection.Close(writeFailure ?? error);
         }
     }
 
@@ -527,7 +529,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 }
                 _admissionUnreadable = false;
                 _connection = null;
-                _exitDrain = null;
+                _eofDrain = null;
+                _exitConfirmed = false;
                 _awaitedFreshSnapshot = null;
                 _logRecovery.InvalidateConnectionLocked();
                 Snapshot = new WorkerCoordinatorSnapshot(
@@ -629,8 +632,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 lock (_gate) {
                     if (ReferenceEquals(_connection, connection)) {
                         FinishEvidenceLocked(connection);
-                        confirmedExit = _exitDrain is not null;
-                        _exitDrain = null;
+                        confirmedExit = _exitConfirmed;
+                        _exitConfirmed = false;
+                        _eofDrain = null;
                         _connection = null;
                         _logRecovery.InvalidateConnectionLocked();
                         detached = _admission;
@@ -688,6 +692,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     }
 
     internal Task ConnectionReader { get; private set; } = Task.CompletedTask;
+    internal Task SnapshotRefresh { get; private set; } = Task.CompletedTask;
     // Self-test barrier between decoding a state event and publishing it under the admission lock.
     internal Action<StateChangedEvent>? StateFrameDecoded { private get; set; }
 
@@ -948,7 +953,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 };
                 if (!_refreshingSnapshot) {
                     _refreshingSnapshot = true;
-                    _ = Task.Run(() => RefreshSnapshotAsync(connection, connectionToken));
+                    SnapshotRefresh = Task.Run(() => RefreshSnapshotAsync(connection, connectionToken));
                 }
                 revisionGapFrom = currentRevision;
             } else {
@@ -1064,15 +1069,24 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         try {
             return await connection.WriteAsync(request, cancellationToken, onSending, canWrite, frameCancellationToken ?? cancellationToken);
         } catch (Exception error) when ((connection.WriteFailure ?? error as IOException) is { } failure) {
-            CloseOnBackgroundFailure(connection, failure);
+            CloseOnBackgroundFailure(connection, failure, writeFailed: true);
             throw;
         }
     }
 
-    private void CloseOnBackgroundFailure(ProtocolConnection connection, Exception error)
+    private void CloseOnBackgroundFailure(ProtocolConnection connection, Exception error, bool writeFailed = false)
     {
         lock (_gate) {
-            if (_connection != connection || _exitDrain is null) connection.Close(error);
+            if (_connection == connection) {
+                if (_eofDrain is not null) return;
+                // A peer can close after sending its last frame, before the process watcher runs.
+                // A locally cancelled partial frame still requires disconnecting the live peer.
+                if (writeFailed && error.GetBaseException() is not OperationCanceledException) {
+                    _eofDrain = WaitForEofAsync(connection, error);
+                    return;
+                }
+            }
+            connection.Close(error);
         }
     }
 

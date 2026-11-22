@@ -628,7 +628,7 @@ internal static partial class WorkerCoordinatorSelfTest
             "摘除 Admission 应立即关闭管道，不能冒充进程退出。");
     }
 
-    internal enum ExitFrame { Buffered, Decoded, Timeout }
+    internal enum ExitFrame { Buffered, Decoded, Timeout, SnapshotWriteFailed }
 
     internal static async Task VerifyWorkerExitDrain(AppLogger logger, string directory, string project, ExitFrame frame)
     {
@@ -673,18 +673,33 @@ internal static partial class WorkerCoordinatorSelfTest
             paused.TrySetResult();
             resume.Task.Wait(f.Token);
         }
+        var writeFailed = frame == ExitFrame.SnapshotWriteFailed;
+        var terminalRevision = writeFailed ? 6 : 4;
         f.Coordinator.StateFrameDecoded = state => {
-            if (state.StateRevision == (frame == ExitFrame.Buffered ? 3 : 4)) PauseReader();
+            if (state.StateRevision == (frame == ExitFrame.Decoded ? terminalRevision : terminalRevision - 1)) PauseReader();
         };
-        await SendAsync(snapshot with { StateRevision = 3 });
+        var allowWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task end;
         try {
-            await SendAsync(CreateSnapshot(f.Admission, 0) with { StateRevision = 4,
+            if (writeFailed) {
+                // The gap starts a full snapshot request. Hold its first byte until the peer has closed.
+                f.Server.StopAfterBytes = 0;
+                f.Server.ResumeWrite = allowWrite.Task;
+                await SendAsync(snapshot with { StateRevision = 4 });
+                await f.Server.Blocked.Task.WaitAsync(f.Token);
+            }
+            await SendAsync(snapshot with { StateRevision = terminalRevision - 1 });
+            await SendAsync(CreateSnapshot(f.Admission, 0) with { StateRevision = terminalRevision,
                 LastRun = active with { State = RunState.Succeeded, EndedAtUtc = DateTime.UtcNow } });
             peer.Close();
             await paused.Task.WaitAsync(f.Token);
+            if (writeFailed) {
+                allowWrite.SetResult();
+                await f.Coordinator.SnapshotRefresh.WaitAsync(f.Token);
+            }
             end = f.Coordinator.ChildSessionEndedAsync(f.Admission);
         } finally {
+            allowWrite.TrySetResult();
             resume.TrySetResult();
         }
         await end.WaitAsync(f.Token);
