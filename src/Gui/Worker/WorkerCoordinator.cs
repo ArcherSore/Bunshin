@@ -931,7 +931,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             _logger.Debug($"Worker 请求已取消{Details()}");
             throw;
         } catch (Exception exception) {
-            _logger.Warn($"Worker 请求失败{Details()}{AppLogger.Field("error", exception.GetBaseException().Message)}");
+            // A timeout wraps the cancellation it came from; its own message is the reason.
+            var reason = exception is TimeoutException ? exception.Message : exception.GetBaseException().Message;
+            _logger.Warn($"Worker 请求失败{Details()}{AppLogger.Field("error", reason)}");
             throw;
         }
     }
