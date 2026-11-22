@@ -7,26 +7,33 @@ namespace Gui.Infrastructure;
 // Thrown by a check this machine cannot provide the conditions for, so "not tested" never reads as a pass.
 internal sealed class SelfTestSkip(string reason) : Exception(reason);
 
+// Thrown by an assertion that depends on real foreground or keyboard focus. Only a failure of this type may be
+// re-run in isolation (verify.ps1 --retry-focus); any other failure of the same check stays a failure.
+internal sealed class FocusAssertionException(string message) : Exception(message);
+
 // Runs every check even after a failure, so one broken check cannot hide the others. Shared with the Worker.
 internal static class SelfTestSuite
 {
     private static readonly TimeSpan CheckLimit = TimeSpan.FromMinutes(5);
 
     internal static int Run(string title, IEnumerable<(string Name, Action Body)> checks, string[] args,
-        string? environment = null)
+        string? environment = null, Predicate<string>? retryFailure = null)
     {
         UseUtf8WhenRedirected();
         if (environment is not null) {
             Console.WriteLine(environment);
         }
         var only = OnlyFilter(args);
+        var focusRerun = args.Contains("--focus-rerun");
         var selected = checks
-            .Where(check => only is null || check.Name.Contains(only, StringComparison.OrdinalIgnoreCase)).ToArray();
+            .Where(check => focusRerun ? check.Name == only
+                : only is null || check.Name.Contains(only, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (selected.Length == 0) {
             Console.Error.WriteLine($"{title} FAIL: 没有匹配 --only {only} 的自检。");
             return 1;
         }
         var failed = new List<string>();
+        var focusFailed = new HashSet<string>();
         var skipped = 0;
         var total = Stopwatch.StartNew();
         foreach (var (name, body) in selected) {
@@ -41,17 +48,29 @@ internal static class SelfTestSuite
                 Console.WriteLine($"SKIP {name}: {skip.Message}");
             } catch (Exception exception) {
                 failed.Add(name);
+                if (IsFocusFailure(exception)) focusFailed.Add(name);
                 Console.Error.WriteLine($"FAIL {name} ({Seconds(timer)}s): {exception}");
             }
         }
+        // Keep the first failure in the logs. Retry only after all checks and their watchdogs have finished.
+        if (retryFailure is not null) failed.RemoveAll(name => focusFailed.Contains(name) && retryFailure(name));
         var summary = $"{selected.Length} 项，{skipped} 项跳过，{Seconds(total)}s";
         if (failed.Count != 0) {
             Console.Error.WriteLine($"{title} FAIL: {failed.Count} 项失败（{summary}）：{string.Join("、", failed)}");
             return 1;
         }
+        if (focusRerun && skipped != 0) return 1;
         Console.WriteLine($"{title} PASS: {summary}");
         return 0;
     }
+
+    // A failure is rerun only when every underlying exception is a focus assertion.
+    private static bool IsFocusFailure(Exception exception) => exception switch {
+        FocusAssertionException => true,
+        AggregateException aggregate => aggregate.InnerExceptions.Count > 0 && aggregate.InnerExceptions.All(IsFocusFailure),
+        { InnerException: { } inner } => IsFocusFailure(inner),
+        _ => false
+    };
 
     private static string? OnlyFilter(string[] args)
     {

@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using Gui.ChildSession;
@@ -457,5 +457,20 @@ internal static partial class SelfTestRunner
         if (!condition) {
             throw new InvalidOperationException(failure);
         }
+    }
+
+    // For assertions that need real foreground or keyboard focus; only these failures are eligible for a focus re-run.
+    private static void RequireFocus(bool condition, string failure)
+    {
+        if (!condition) {
+            throw new FocusAssertionException(failure);
+        }
+    }
+
+    private static void PumpUntilFocus(Func<bool> condition, string failure)
+    {
+        // The condition must be a pure focus/activation check; business conditions are asserted separately.
+        // Only the timeout becomes a focus failure; exceptions raised while pumping propagate unchanged.
+        PumpUntil(condition, failure, message => new FocusAssertionException(message));
     }
 }

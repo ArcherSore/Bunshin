@@ -302,11 +302,12 @@ internal static partial class SelfTestRunner
             PumpUntil(() => list.SelectedIndex == 0, "滚动回顶部时目录应选中第一个分类。");
             var first = (ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(0);
             first.Focus();
+            PumpUntilFocus(() => first.IsKeyboardFocused, "测试前提：目录项应持有键盘焦点。");
             first.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
                 PresentationSource.FromVisual(first), 0, System.Windows.Input.Key.Down) {
                 RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent
             });
-            PumpUntil(() => list.SelectedIndex == 1 && HeadingTop(1) is >= 0 and <= 60, "方向键应能切换目录并滚动到该分类。");
+            PumpUntil(() => list.SelectedIndex == 1 && HeadingTop(1) is >= 0 and <= 60,"方向键应能切换目录并滚动到该分类。");
             if (Environment.GetEnvironmentVariable("BUNSHIN_SUPPORT_QA_DIR") is { Length: > 0 } output) {
                 window.Width = 1180;
                 window.Height = 760;

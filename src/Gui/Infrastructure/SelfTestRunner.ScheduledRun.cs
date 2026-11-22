@@ -418,7 +418,7 @@ internal static partial class SelfTestRunner
                             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(session, preview);
                         preview.Show();
                         preview.Activate();
-                        PumpUntil(() => preview.IsActive, "成功前用户应正在查看分身预览。");
+                        PumpUntilFocus(() => preview.IsActive, "成功前用户应正在查看分身预览。");
                         int? balloonsAtClose = null;
                         preview.Closed += (_, _) => balloonsAtClose = probe.Balloons.Count(n => n.Title == $"「{name}」已完成");
                         Publish(done, 4);

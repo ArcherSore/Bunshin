@@ -133,7 +133,7 @@ internal static partial class SelfTestRunner
                             new RunStartResponse("accepted")), token);
                         PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "应先显示运行中的手动 Run。");
                         window.Activate();
-                        PumpUntil(() => window.IsActive, "模拟前台窗口应已激活。");
+                        PumpUntilFocus(() => window.IsActive, "模拟前台窗口应已激活。");
                         await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 3, WorkerState = WorkerState.Faulted }), token);
                         AwaitWorker(worker, v => v.WorkerSnapshot?.WorkerState == WorkerState.Faulted, "应先观察到 Faulted。");
                         await Dispatcher.Yield(DispatcherPriority.Background);

@@ -142,6 +142,7 @@ internal static partial class SelfTestRunner
             PumpUntil(() => starts.Count == 3, "重新可见应立即检查当前分钟。");
             clock.Advance(TimeSpan.FromMinutes(1));
             window.Activate();
+            PumpUntilFocus(() => window.IsActive, "测试前提：窗口应获得前台激活。");
             PumpUntil(() => starts.Count == 4, "可见窗口获得焦点应立即检查当前分钟。");
             window.Hide();
             window.Show();
