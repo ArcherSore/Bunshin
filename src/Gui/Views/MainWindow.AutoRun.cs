@@ -99,7 +99,8 @@ public partial class MainWindow
             }
             return false;
         }
-        var entered = await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
+        var entered = _forcedStartsInProgress == 0
+            && await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
         if (!entered) {
             _logger.Info($"自动执行“{ConfigurationName(id)}”已跳过：运行环境已被其他操作占用。");
         }

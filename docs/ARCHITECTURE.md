@@ -74,7 +74,15 @@ GUI 启动时检查已有 Child Session，必要时恢复 RDP 预览宿主。创
 凭据读写仅在 Windows 返回 1312 时，以同用户、同会话且未提权的资源管理器令牌在当前进程内重试一次。
 身份模拟仅覆盖固定分身凭据的访问，结束或异常时恢复原身份；RDP、分身生命周期与 Worker 启动仍使用原权限。
 
-RuntimeEnvironment 是运行环境生命周期的唯一所有者：持有应用操作闸门，负责准备与结束运行环境。准备只创建或恢复 Child Session、连接 RDP 并接纳 Worker，不自动启动游戏。游戏可在分身中手动启动，也可由开始任务时执行的 Project Interface pretask 启动。退出、托盘、主窗口恢复操作与安装更新都以同一顺序结束运行环境：先在时限内正常停止 Active Run（失败时以注销恢复），再注销 Child Session 并等待 Windows 完成注销（这一步没有应用层时限），确认 Child Session 已结束后在时限内等待已跟踪的 Worker 退出，之后才丢弃 Admission。无法确认时如实报告"结束未确认"并保留 Admission，可再次结束。结束期间主窗口显示进度并暂停其他命令。
+RuntimeEnvironment 持有运行环境闸门，负责准备与结束运行环境。准备时创建或恢复 Child Session、连接 RDP 并接纳 Worker。游戏可在分身中手动启动，也可由开始任务时的 Project Interface pretask 启动。GUI 的准备、开始、停止、换场、收尾、退出与安装更新共用这把闸门。用户确认后才排队，取得闸门后按当前状态复核。[ADR 0018](adr/0018-runtime-environment-gate.md)
+
+托盘、主窗口、定时收尾、退出与安装更新共用以下结束顺序。
+
+1. 捕获已跟踪 Worker 的进程身份，向可停止的 Active Run 发送 `run.stop`，最多等 30 秒。停止失败或超时会记录日志并继续注销。
+2. 对捕获的 Child Session ID 发起非阻塞注销，轮询 Windows 会话列表，最多等 60 秒确认该 ID 消失。定时收尾还要核验成功 Run、Worker 和分身的归属。
+3. 确认分身已结束后，最多等 30 秒确认已跟踪的 Worker 进程退出。进程退出后的管道读完期限为 5 秒，随后发布退出证据、摘除 Admission。没有已跟踪 PID 时使用已确认的分身注销作为结束证据。
+
+无法确认分身或 Worker 已结束时，GUI 报告“结束未确认”，保留 Admission 并释放闸门，用户可以再次结束。退出和安装更新在此处取消，GUI 保持打开。
 
 GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的本机 Named Pipe 接纳连接。同一 Child Session 只接纳一个 Worker。GUI 只在能证明 Worker 已不存在或 Child Session 已确认注销时丢弃 Admission，无法确认时拒绝准备；每次启动 Worker 前还会确认目标 Child Session 中没有 Worker 进程。断线时，已接纳 Worker 可继续运行；GUI 重连后取得新的完整 Snapshot 才能重新作出执行决策。Worker 不具备跨进程退出恢复 Run 的能力。
 
@@ -94,10 +102,10 @@ GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的
 
 全局偏好 `schedule.forceStart` 默认关闭，到点遇到 Active Run 时跳过。开启后，首份获准的定时配置
 遇到未被 `-q` 跟踪的 Active Run 时发出提示和可取消的 10 秒倒计时。倒计时使用调度时钟，期间不占用运行环境闸门。
-取消会消耗本次机会。到期后等待闸门，按最新状态结束旧运行环境。退出或安装更新期间放弃启动。
+取消会消耗本次机会。到期后等待闸门，按最新状态决定是否换场。退出、安装更新或已确认的手动结束请求优先。手动结束分身后新到点的强制定时照常准备新分身。
 旧分身还在、Worker 状态未确认且无法判断是否需要倒计时时，跳过本次定时机会。
 命令行 `-q` 任务已绑定退出资格或正在等待退出时，各类定时都跳过本次机会，运行动态记录“命令行任务尚未结束”。强制定时在决定倒计时前和拿到闸门、开始换场前读取最新的运行编排状态。若该任务的 Worker 一直处于 Faulted，后续定时也会跳过，直到用户结束桌面分身。
-手动停止只发送 `run.stop`。手动停止或手动结束桌面分身后，Worker 确认的 Cancelled 终态照常触发 `-q` 退出。
+手动停止等待闸门，取得后用新鲜快照核对用户点击时的 Worker 和 Run，只对仍可停止的原任务发送 `run.stop`。手动停止或手动结束桌面分身后，Worker 确认的 Cancelled 终态照常触发 `-q` 退出。
 
 ## 启动确认与结算
 

@@ -573,7 +573,7 @@ public partial class MainWindow : FluentWindow
             return;
         }
         await RunOperationAsync(PendingOperation.PreparingEnvironment,
-            () => PrepareCurrentEnvironmentAsync(startRun, showDesktop), unattended);
+            () => PrepareCurrentEnvironmentAsync(startRun, showDesktop), unattended, startsRun: startRun);
     }
 
     private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool showDesktop = false,
@@ -645,7 +645,7 @@ public partial class MainWindow : FluentWindow
             LogIgnoredAction();
             return;
         }
-        await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync());
+        await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(), startsRun: true);
     }
 
     // Called only while the application operation gate is held, after preparation or a direct Start.
@@ -693,7 +693,8 @@ public partial class MainWindow : FluentWindow
 
     private async void StopRunButton_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentControls.Action is not RuntimeAction.Stop { Enabled: true }) {
+        if (CurrentControls.Action is not RuntimeAction.Stop { Enabled: true }
+            || _workerSnapshot.WorkerSnapshot is not { ActiveRun: { } selected } shown) {
             LogIgnoredAction();
             return;
         }
@@ -701,10 +702,12 @@ public partial class MainWindow : FluentWindow
             PendingOperation.StoppingRun,
             async () =>
             {
-                var activeRun = _workerSnapshot.WorkerSnapshot?.ActiveRun
-                                ?? throw new InvalidOperationException("Worker 当前没有 active Run。 ");
-                if (!RuntimeControls.IsStoppable(activeRun)) {
-                    throw new InvalidOperationException("当前执行计划尚未进入可停止状态。 ");
+                var current = _workerCoordinator.ReadPublishedSnapshot();
+                if (current is not { Fresh: true, WorkerSnapshot: { ActiveRun: { } activeRun, WorkerState: not WorkerState.Faulted } worker }
+                    || worker.WorkerInstanceId != shown.WorkerInstanceId || activeRun.RunId != selected.RunId
+                    || !RuntimeControls.IsStoppable(activeRun)) {
+                    LogIgnoredAction();
+                    return;
                 }
                 var response = await _workerCoordinator.StopRunAsync(activeRun.RunId);
                 if (response.Disposition != "stop_requested") {
@@ -823,7 +826,7 @@ public partial class MainWindow : FluentWindow
         + $"{AppLogger.Field("pending", CurrentOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
 
     // An unattended operation (started by the launch itself) reports its failure without a dialog nobody can answer.
-    private async Task RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false,
+    private async Task RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false, bool startsRun = false,
         [CallerMemberName] string caller = "")
     {
         if (OperationOrExitInProgress) {
@@ -831,16 +834,18 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        if (pending is PendingOperation.StartingRun or PendingOperation.PreparingEnvironment) {
-            await RunWindowOperationAsync(pending, async () => {
-                if (!await _environment.TryRunExclusiveAsync(async () => {
-                    var view = _lifecycle.ReadOrchestration();
-                    if (view.PendingQuitReason == null && !view.ManualErrorPending) await operation();
-                })) LogIgnoredAction(caller);
-            }, unattended);
-        } else {
-            await RunWindowOperationAsync(pending, () => _environment.RunExclusiveAsync(operation), unattended);
+        async Task RunInGateAsync()
+        {
+            if (startsRun || pending == PendingOperation.PreparingEnvironment) {
+                var view = _lifecycle.ReadOrchestration();
+                if (view.PendingQuitReason != null || view.ManualErrorPending || _environment.EndUnconfirmed) return;
+            }
+            await operation();
         }
+        await RunWindowOperationAsync(pending, async () => {
+            if (!startsRun) await _environment.RunExclusiveAsync(RunInGateAsync);
+            else if (_forcedStartsInProgress != 0 || !await _environment.TryRunExclusiveAsync(RunInGateAsync)) LogIgnoredAction(caller);
+        }, unattended);
     }
 
     private async Task RunWindowOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended)

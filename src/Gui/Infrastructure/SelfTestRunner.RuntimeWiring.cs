@@ -224,8 +224,13 @@ internal static partial class SelfTestRunner
                             "修改勾选必须清除旧的启动重试请求。");
                         var button = scenario == "prepare-only" ? "StartSessionMenuItem" : "PrepareEnvironmentButton";
                         if (scenario == "prepare-only") {
+                            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                            var holder = environment.RunExclusiveAsync(() => release.Task);
                             Named<System.Windows.Controls.MenuItem>(window, button).RaiseEvent(
                                 new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
+                            release.SetResult();
+                            PumpUntil(() => holder.IsCompleted && prepareCount == 1,
+                                "仅启动分身应等待当前环境操作完成，然后准备一次。");
                         } else {
                             Click(window, button);
                         }
@@ -304,23 +309,34 @@ internal static partial class SelfTestRunner
     private static void VerifyWorkerStopWiring(AppLogger logger, string directory)
     {
         var operations = new HeldOperations { RunOperations = true };
+        var replaceRun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementId = Guid.NewGuid();
+        var stops = new System.Collections.Concurrent.ConcurrentQueue<Guid>();
         var stoppingSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sendCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         WithRunningFakeWorker(logger, Path.Combine(directory, "stop"), async (worker, cancellationToken) => {
+            await replaceRun.Task.WaitAsync(cancellationToken);
+            var replacement = worker.ActiveRun with { RunId = replacementId };
+            var running = worker.Coordinator.Snapshot.WorkerSnapshot! with {
+                StateRevision = 2, ActiveRun = replacement,
+                LastRun = worker.ActiveRun with { State = RunState.Succeeded, EndedAtUtc = DateTime.UtcNow }
+            };
+            await worker.Pipe.WriteAsync(StateEvent(running), cancellationToken);
             var stop = await WorkerCoordinatorSelfTest.ReadRequestAsync(
                 worker.Pipe, ProtocolOperations.RunStop, cancellationToken);
+            stops.Enqueue(ProtocolJson.Deserialize<RunStopRequest>(stop.Data).RunId);
             await worker.Pipe.WriteAsync(WireEnvelope.Response(ProtocolOperations.RunStop, stop.RequestId!.Value,
                 new RunStopResponse("stop_requested")), cancellationToken);
-            var stopping = worker.Coordinator.Snapshot.WorkerSnapshot! with {
-                StateRevision = 2, RunState = RunState.Stopping,
-                ActiveRun = worker.ActiveRun with { State = RunState.Stopping }
+            var stopping = running with {
+                StateRevision = 3, RunState = RunState.Stopping,
+                ActiveRun = replacement with { State = RunState.Stopping }
             };
             await worker.Pipe.WriteAsync(StateEvent(stopping), cancellationToken);
             stoppingSent.TrySetResult();
             await sendCancelled.Task.WaitAsync(cancellationToken);
             var cancelled = stopping with {
-                StateRevision = 3, RunState = RunState.Idle, ActiveRun = null,
-                LastRun = worker.ActiveRun with { State = RunState.Cancelled }
+                StateRevision = 4, RunState = RunState.Idle, ActiveRun = null,
+                LastRun = replacement with { State = RunState.Cancelled }
             };
             await worker.Pipe.WriteAsync(StateEvent(cancelled), cancellationToken);
         }, coordinator => WithRuntimeControlWindow(logger, Path.Combine(directory, "stop-window"), window => {
@@ -330,8 +346,18 @@ internal static partial class SelfTestRunner
             Click(window, "StopTaskHeaderButton");
             PumpUntil(() => operations.Entered == 1, "点击停止任务应开始停止操作。");
             Require(ProgressShows(window, "正在停止任务"), "停止操作进行中应显示停止进度。");
+            replaceRun.SetResult();
+            PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.ActiveRun?.RunId == replacementId,
+                "排队期间旧 Run 应已结束，后继 Run 应已开始。");
+            operations.Release();
+            PumpUntil(() => window.CurrentOperation == PendingOperation.None, "旧停止请求应返回。");
+            Require(stops.IsEmpty && HeaderShows(window, "StopTaskHeaderButton", enabled: true),
+                "旧的停止点击不得停止后继 Run。");
+            Click(window, "StopTaskHeaderButton");
+            PumpUntil(() => operations.Entered == 2, "用户可以单独停止后继 Run。");
             operations.Release();
             PumpUntil(() => stoppingSent.Task.IsCompleted, "Worker 未收到停止请求。");
+            Require(stops.SequenceEqual([replacementId]), "只有第二次点击应向后继 Run 发送一次停止请求。");
             PumpOnboarding();
             Require(ProgressShows(window, "正在停止任务"), "Run 停止中应保持停止进度。");
             sendCancelled.TrySetResult();

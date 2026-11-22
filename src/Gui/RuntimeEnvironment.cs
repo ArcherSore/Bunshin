@@ -18,7 +18,8 @@ internal sealed class RuntimeEnvironment
     private readonly Func<int, CancellationToken, Task> _waitForWorkerExit;
     private readonly TimeSpan _waitLimit;
     private readonly Func<Func<Task>, Task>? _runExclusive;
-    private bool _endRequested;
+    private enum ManualEndStage { None, Confirming, Accepted }
+    private ManualEndStage _manualEnd;
     private int _closingGeneration;
 
     // The optional parameters are self-test seams. Production waits for the Worker process itself, allows 30 seconds
@@ -52,6 +53,8 @@ internal sealed class RuntimeEnvironment
 
     // True after an end that could not confirm the Child Session and the Worker were gone, until one does.
     internal bool EndUnconfirmed { get; private set; }
+
+    internal bool ManualEndPending => _manualEnd == ManualEndStage.Accepted;
 
     // Raised when Ending or EndUnconfirmed changes, on the thread running the end.
     internal event EventHandler? StateChanged;
@@ -165,11 +168,11 @@ internal sealed class RuntimeEnvironment
     // The tray and main window share one request through both the question and the wait for the gate.
     internal Task<EnvironmentEndResult>? RequestEnd(Func<bool> confirm)
     {
-        if (_endRequested) {
+        if (_manualEnd != ManualEndStage.None) {
             _logger.Info("结束桌面分身：已有结束请求，忽略重复请求。");
             return null;
         }
-        _endRequested = true;
+        _manualEnd = ManualEndStage.Confirming;
         return RequestedEndAsync(confirm);
     }
 
@@ -179,6 +182,7 @@ internal sealed class RuntimeEnvironment
             ThrowIfRefused(refuseWhileClosing: true);
             var generation = _closingGeneration;
             if (ConfirmEnd(confirm) is { } refused) return refused;
+            _manualEnd = ManualEndStage.Accepted;
             var result = EnvironmentEndResult.Ended;
             await RunExclusiveAsync(async () => {
                 if (generation != _closingGeneration) throw new OperationCanceledException("退出已取代排队的结束请求。");
@@ -186,7 +190,7 @@ internal sealed class RuntimeEnvironment
             });
             return result;
         } finally {
-            _endRequested = false;
+            _manualEnd = ManualEndStage.None;
         }
     }
 

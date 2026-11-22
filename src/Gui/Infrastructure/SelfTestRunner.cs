@@ -68,6 +68,12 @@ internal static partial class SelfTestRunner
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Preview), RequiresFocus: true),
         new(Group.Project, "VerifyScheduledTraySettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.Tray)),
+        new(Group.Project, "VerifyQueuedScheduledCleanup", c => {
+            foreach (var owner in new[] { SettlementOrder.UserExit, SettlementOrder.UserEnd })
+                VerifyScheduledTerminal(c.Logger, Path.Combine(c.Directory, owner.ToString()), RunState.Succeeded, order: owner);
+        }),
+        new(Group.Project, "VerifyCleanupAfterForcedCountdown", c =>
+            VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Succeeded, order: SettlementOrder.ForcedCountdown)),
         new(Group.Project, "VerifyScheduledGapSettlement", c =>
             VerifyScheduledTerminal(c.Logger, c.Directory, RunState.Failed, tickBeforeDispatch: true, order: SettlementOrder.Gap)),
         new(Group.Project, "VerifyScheduledUpdateSettlement", c =>

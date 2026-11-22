@@ -51,7 +51,7 @@ internal static partial class SelfTestRunner
         });
     }
 
-    private enum ContendedSchedule { Finished, Stopped, Stopping, Faulted, Exit, Update, Late }
+    private enum ContendedSchedule { Finished, Stopped, Stopping, Faulted, Exit, Update, Late, ManualEnd }
 
     private static void VerifyContendedForcedSchedule(AppLogger logger, string root, ContendedSchedule scenario)
     {
@@ -126,7 +126,11 @@ internal static partial class SelfTestRunner
                             Require(!check.IsCompleted && wts.LogoffAttempts.Count == 0,
                                 "倒计时跨分钟后仍须等待先前操作，不能提前注销。");
                         }
-                        if (scenario is ContendedSchedule.Finished or ContendedSchedule.Stopped) {
+                        Task<EnvironmentEndResult>? manualEnd = null;
+                        if (scenario == ContendedSchedule.ManualEnd) {
+                            manualEnd = environment.RequestEnd(() => true);
+                            Publish(null, worker.ActiveRun with { State = RunState.Cancelled });
+                        } else if (scenario is ContendedSchedule.Finished or ContendedSchedule.Stopped) {
                             var state = scenario == ContendedSchedule.Finished
                                 ? RunState.Succeeded : RunState.Cancelled;
                             Publish(null, worker.ActiveRun with { State = state });
@@ -141,7 +145,12 @@ internal static partial class SelfTestRunner
                         release.TrySetResult();
                         PumpUntil(() => check.IsCompleted && holder.IsCompleted, "释放环境后，本次机会应结束。");
                         check.GetAwaiter().GetResult();
-                        if (scenario is ContendedSchedule.Exit or ContendedSchedule.Update) {
+                        if (scenario == ContendedSchedule.ManualEnd) {
+                            PumpUntil(() => manualEnd!.IsCompleted, "用户确认的结束请求应完成。");
+                            Require(manualEnd!.GetAwaiter().GetResult() == EnvironmentEndResult.Ended
+                                && wts.LogoffAttempts.SequenceEqual([initial.ChildSessionId]) && preparations.Count == 0,
+                                "已排队的强制顶替应让位给用户确认的结束请求，不应准备新分身。");
+                        } else if (scenario is ContendedSchedule.Exit or ContendedSchedule.Update) {
                             Require(wts.LogoffAttempts.Count == 0 && preparations.Count == 0,
                                 "退出或交接更新后不能再启动已倒计时的配置。");
                         } else {
