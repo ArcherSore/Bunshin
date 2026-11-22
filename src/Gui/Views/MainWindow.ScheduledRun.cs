@@ -318,10 +318,10 @@ public partial class MainWindow
             // A tick can service the request while its queued consumer is waiting on this same gate.
             if (_lifecycle.ReadOrchestration().Scheduled is not { NeedsCleanup: true } current
                 || current.Key != own.Key || _exitInProgress || _environment.Closing) return;
-            bool CanClose() => _environment.CanEndSuccessfulRun(own.Key.WorkerInstanceId, own.Key.RunId);
+            uint? OwnedSession() => _environment.SuccessfulRunSession(own.Key.WorkerInstanceId, own.Key.RunId);
             EnvironmentEndResult ended;
             try {
-                ended = await _environment.EndWhileExclusiveAsync(CanClose);
+                ended = await _environment.EndVerifiedWhileExclusiveAsync(OwnedSession);
             } catch (Exception error) {
                 ended = EnvironmentEndResult.Unconfirmed(error);
             }

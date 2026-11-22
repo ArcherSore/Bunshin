@@ -106,15 +106,17 @@ internal sealed class RuntimeEnvironment
         }
     }
 
-    // Called inside the end confirmation so a queued cleanup cannot close a newer Run or Child Session.
-    internal bool CanEndSuccessfulRun(Guid workerId, Guid runId)
+    // Called inside the end so a queued cleanup cannot close a newer Run or Child Session. Returns the Child Session
+    // that still holds that idle Run, or null when it cannot be verified.
+    internal uint? SuccessfulRunSession(Guid workerId, Guid runId)
     {
         var sessionId = _session.QueryChildSessionId(requireEnumeration: true);
         var (current, awaitingStart) = ReadRunObservation();
         return !Closing && !EndUnconfirmed && awaitingStart is null
             && current is { FreshIdleForEnvironmentEnd: true,
                 WorkerSnapshot: { LastRun: { State: RunState.Succeeded } last } idle }
-            && idle.WorkerInstanceId == workerId && last.RunId == runId && sessionId == idle.ChildSessionId;
+            && idle.WorkerInstanceId == workerId && last.RunId == runId && sessionId == idle.ChildSessionId
+            ? sessionId : null;
     }
 
     // Runs inside an exclusive operation the caller has already entered. The framework options are read once the
@@ -180,11 +182,19 @@ internal sealed class RuntimeEnvironment
         }
     }
 
-    internal async Task<EnvironmentEndResult> EndWhileExclusiveAsync(Func<bool>? confirm = null)
+    internal Task<EnvironmentEndResult> EndWhileExclusiveAsync(Func<bool>? confirm = null) =>
+        EndExclusiveAsync(confirm, null);
+
+    // The automatic end after a Run. verifyOwner, asked inside the gate, returns the Child Session it verified, or null
+    // to decline; only that session is logged off, and one that has changed by the logoff is left running.
+    internal Task<EnvironmentEndResult> EndVerifiedWhileExclusiveAsync(Func<uint?> verifyOwner) =>
+        EndExclusiveAsync(null, verifyOwner);
+
+    private async Task<EnvironmentEndResult> EndExclusiveAsync(Func<bool>? confirm, Func<uint?>? verifyOwner)
     {
         SetState(ending: true, EndUnconfirmed);
         try {
-            var result = await EndInGateAsync(confirm);
+            var result = await EndInGateAsync(confirm, verifyOwner);
             if (result.Outcome == EnvironmentEndOutcome.Ended) Ended?.Invoke();
             return result;
         } finally {
@@ -192,7 +202,7 @@ internal sealed class RuntimeEnvironment
         }
     }
 
-    private async Task<EnvironmentEndResult> EndInGateAsync(Func<bool>? confirm)
+    private async Task<EnvironmentEndResult> EndInGateAsync(Func<bool>? confirm, Func<uint?>? verifyOwner)
     {
         bool hasChildSession;
         try {
@@ -208,7 +218,13 @@ internal sealed class RuntimeEnvironment
             SetState(Ending, endUnconfirmed: false);
             return EnvironmentEndResult.Ended;
         }
-        if (confirm?.Invoke() == false) {
+        uint? verifiedSessionId = null;
+        if (verifyOwner is not null) {
+            if ((verifiedSessionId = verifyOwner()) is null) {
+                _logger.Info("结束桌面分身：运行环境未通过核验，未结束。");
+                return EnvironmentEndResult.Declined;
+            }
+        } else if (confirm?.Invoke() == false) {
             _logger.Info("结束桌面分身：用户取消。");
             return EnvironmentEndResult.Declined;
         }
@@ -224,7 +240,9 @@ internal sealed class RuntimeEnvironment
                 await StopActiveRunAsync();
             }
             failure = "注销桌面分身失败。";
-            await _session.TerminateAsync();
+            if (!await _session.TerminateAsync(verifiedSessionId)) {
+                return EnvironmentEndResult.Declined;
+            }
             failure = "无法确认桌面分身已结束。";
             if (_session.HasChildSession) {
                 return Unconfirmed(failure);

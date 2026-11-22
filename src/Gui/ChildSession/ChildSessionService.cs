@@ -60,8 +60,8 @@ internal sealed class ChildSessionService
     public static bool IsRdpWrapPresent() =>
         ChildSessionNativeMethods.IsRdpWrapperEnabled();
 
-    public static uint? TerminateChildSession(bool wait) =>
-        ChildSessionNativeMethods.TerminateChildSession(wait);
+    public static uint? TerminateChildSession(bool wait, uint? sessionId = null) =>
+        ChildSessionNativeMethods.TerminateChildSession(wait, sessionId);
 
     public async Task ConnectAsync(CancellationToken cancellationToken, ChildSessionCredential? credential)
     {

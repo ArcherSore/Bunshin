@@ -122,8 +122,13 @@ internal static class ChildSessionNativeMethods
 
     internal static uint? TerminateChildSession() => TerminateChildSession(wait: true);
 
-    internal static uint? TerminateChildSession(bool wait)
+    // sessionId, when given, is a Child Session ID the caller has verified; it is logged off without asking WTS again.
+    internal static uint? TerminateChildSession(bool wait, uint? sessionId = null)
     {
+        if (sessionId is uint verified) {
+            return LogoffSession(verified, wait);
+        }
+
         if (!WTSGetChildSessionId(out var childSessionId)) {
             var error = Marshal.GetLastPInvokeError();
             if (error == ErrorNotFound) {
@@ -133,10 +138,11 @@ internal static class ChildSessionNativeMethods
             throw CreateLastWin32Exception("无法取得 RDP Child Session ID");
         }
 
-        if (childSessionId == NoChildSessionId) {
-            return null;
-        }
+        return childSessionId == NoChildSessionId ? null : LogoffSession(childSessionId, wait);
+    }
 
+    private static uint LogoffSession(uint childSessionId, bool wait)
+    {
         if (!WTSLogoffSession(CurrentServerHandle, childSessionId, wait)) {
             throw CreateLastWin32Exception($"无法注销 Child Session {childSessionId}");
         }

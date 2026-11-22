@@ -13,7 +13,7 @@ internal sealed class ChildSessionManager : IDisposable
     private readonly AppLogger _logger;
     private readonly Func<uint?> _getChildSessionId;
     private readonly Func<IReadOnlyCollection<uint>> _enumerateSessions;
-    private readonly Func<uint?> _terminateChildSession;
+    private readonly Func<uint?, uint?> _terminateChildSession;
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private RdpPreviewWindow? _previewWindow;
     private ChildSessionService? _service;
@@ -22,13 +22,14 @@ internal sealed class ChildSessionManager : IDisposable
     // The optional delegates are self-test seams; production always queries and logs off through WTS.
     internal ChildSessionManager(
         AppLogger logger, Func<uint?>? getChildSessionId = null,
-        Func<IReadOnlyCollection<uint>>? enumerateSessions = null, Func<uint?>? terminateChildSession = null,
+        Func<IReadOnlyCollection<uint>>? enumerateSessions = null, Func<uint?, uint?>? terminateChildSession = null,
         ChildSessionCredentialStore? credentials = null)
     {
         _logger = logger;
         _getChildSessionId = getChildSessionId ?? ChildSessionService.TryGetChildSessionId;
         _enumerateSessions = enumerateSessions ?? ChildSessionService.EnumerateSessionIds;
-        _terminateChildSession = terminateChildSession ?? (() => ChildSessionService.TerminateChildSession(wait: true));
+        _terminateChildSession = terminateChildSession
+            ?? (sessionId => ChildSessionService.TerminateChildSession(wait: true, sessionId));
         Credentials = credentials ?? new ChildSessionCredentialStore(logger);
     }
 
@@ -188,13 +189,21 @@ internal sealed class ChildSessionManager : IDisposable
         SetPreviewVisibility(show: false);
     }
 
-    internal async Task TerminateAsync(CancellationToken cancellationToken = default)
+    // verifiedSessionId, when given, is the Child Session the caller has already verified; only that one is logged
+    // off. If WTS reports another one inside the operation lock, nothing changes and this returns false.
+    internal async Task<bool> TerminateAsync(
+        uint? verifiedSessionId = null, CancellationToken cancellationToken = default)
     {
         await _operationLock.WaitAsync(cancellationToken);
         uint? sessionId = null;
         try {
             ThrowIfDisposed();
             sessionId = _getChildSessionId();
+            if (verifiedSessionId is uint verified && sessionId != verified) {
+                _logger.Warn($"结束请求：Child Session 已不是核验过的 {verified}"
+                    + $"{AppLogger.Field("current", sessionId)}，未注销。");
+                return false;
+            }
             UpdateState(ChildSessionState.Disconnecting, sessionId, SafeConnectedState(), "正在结束桌面分身");
             _logger.Info(sessionId is null
                 ? "结束请求：当前没有 Child Session。"
@@ -206,12 +215,13 @@ internal sealed class ChildSessionManager : IDisposable
             timer.Restart();
             // WTS waits for logoff to finish. Keep the operation lock held without blocking the UI;
             // RDP disposal above and state notifications below stay on their owning thread.
-            var terminatedId = await Task.Run(TerminateChildSession);
+            var terminatedId = await Task.Run(() => TerminateChildSession(verifiedSessionId));
             _logger.Debug($"结束桌面分身：WTS 注销等待已完成（{timer.ElapsedMilliseconds}ms）。");
             _logger.Info(terminatedId is null
                 ? "当前无 Child Session 需要注销。"
                 : $"已注销 Child Session {terminatedId.Value}。");
             UpdateState(ChildSessionState.NotRunning, null, 0, "未运行");
+            return true;
         } catch (Exception exception) {
             _logger.Error("结束 Child Session 失败。", exception);
             UpdateState(
@@ -395,12 +405,12 @@ internal sealed class ChildSessionManager : IDisposable
         return null;
     }
 
-    // Logoff targets whatever WTS reports. Its failure is accepted only once Windows proves no Child Session
+    // Logoff targets the verified session, or else whatever WTS reports. Its failure is accepted only once Windows proves no Child Session
     // remains, e.g. a failed RDP logon already ended the reported session and logoff returns "not found".
-    private uint? TerminateChildSession()
+    private uint? TerminateChildSession(uint? verifiedSessionId)
     {
         try {
-            return _terminateChildSession();
+            return _terminateChildSession(verifiedSessionId);
         } catch (Exception exception) {
             if (!IsChildSessionProvenAbsent()) {
                 throw;

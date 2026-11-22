@@ -112,7 +112,7 @@ internal static partial class SelfTestRunner
     private static void VerifyFaultedSessionRetryWiring(AppLogger logger, string directory)
     {
         using var session = new ChildSessionManager(logger, () => throw new Win32Exception(5, "self-test WTS failure"),
-            () => [0u, 1u], () => null, new ChildSessionCredentialStore(logger, new MemoryCredentialVault()));
+            () => [0u, 1u], _ => null, new ChildSessionCredentialStore(logger, new MemoryCredentialVault()));
         var operations = new HeldOperations();
         WithRuntimeControlWindow(logger, Path.Combine(directory, "faulted"), window => {
             Require(HeaderShows(window, "RetryEnvironmentButton", enabled: true), "分身故障时应显示可用的重试。");
