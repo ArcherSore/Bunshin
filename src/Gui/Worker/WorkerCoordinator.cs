@@ -690,7 +690,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 await _logRecovery.EnsureLogRecoveryAsync(admission.WorkerInstanceId, logRecoveryGeneration,
                     response.Snapshot.LastLogSequence, token);
             } catch (Exception error) {
-                CloseOnBackgroundFailure(connection, error);
+                HandleConnectionFailure(connection, error);
             }
         }
     }
@@ -998,7 +998,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
             }
         } catch (OperationCanceledException) when (connectionToken.IsCancellationRequested) {
         } catch (Exception exception) {
-            CloseOnBackgroundFailure(connection, exception);
+            HandleConnectionFailure(connection, exception);
         }
     }
 
@@ -1073,12 +1073,12 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         try {
             return await connection.WriteAsync(request, cancellationToken, onSending, canWrite, frameCancellationToken ?? cancellationToken);
         } catch (Exception error) when ((connection.WriteFailure ?? error as IOException) is { } failure) {
-            CloseOnBackgroundFailure(connection, failure, writeFailed: true);
+            HandleConnectionFailure(connection, failure, writeFailed: true);
             throw;
         }
     }
 
-    private void CloseOnBackgroundFailure(ProtocolConnection connection, Exception error, bool writeFailed = false)
+    private void HandleConnectionFailure(ProtocolConnection connection, Exception error, bool writeFailed = false)
     {
         lock (_gate) {
             if (_connection == connection) {

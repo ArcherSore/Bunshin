@@ -284,6 +284,11 @@ internal static partial class SelfTestRunner
                                 Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended
                                     && AdmissionDiscarded(coordinator) && wts.LogoffAttempts.SequenceEqual([record.ChildSessionId])
                                     && requests == 0, "等待就绪期间确认结束后，应只注销一次，且不得发送 run.start。");
+                                if (scenario == "manual-end-waiting") {
+                                    Require(window.LogLines.OfType<LogEntry>().Count(entry =>
+                                        entry.Message.Contains("用户正在结束桌面分身")) == 1,
+                                        "手动开始让位时，运行动态应说明一次用户正在结束分身。");
+                                }
                             } else {
                                 ready.TrySetResult();
                             }

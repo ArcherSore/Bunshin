@@ -20,7 +20,7 @@ public partial class MainWindow
     private int _exitGeneration;
     private const string TrackedQuitReason = "命令行任务尚未结束，须等待退出";
     private string? ScheduledPriorityBlocker(RunOrchestration view) =>
-        view.HasTrackedQuitRun ? TrackedQuitReason : _environment.ManualEndPending ? "用户正在结束桌面分身" : null;
+        view.HasTrackedQuitRun ? TrackedQuitReason : _environment.ManualEndPending ? ManualEndReason : null;
     internal event EventHandler<ForcedScheduledStartCountdown>? ForcedScheduledStartPending;
     internal event EventHandler? ForcedScheduledStartEnded;
 

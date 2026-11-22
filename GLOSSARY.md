@@ -73,6 +73,9 @@ _Avoid_: Application Settings、Project Interface
 Worker 接受的一次项目自动化执行。
 _Avoid_: IPC 连接、GUI 操作
 
+**命令行任务**:
+由本次启动的命令行自动执行所发起的 Run。带 `-q`（`--quit-after-run`）时称为“命令行 `-q` 任务”，程序在该 Run 成功、失败或取消后退出。
+
 **Active Run**:
 Worker 当前尚未终结的 Run。
 _Avoid_: Active Configuration、Last Run

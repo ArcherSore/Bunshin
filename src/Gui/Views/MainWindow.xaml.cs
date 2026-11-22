@@ -665,8 +665,11 @@ public partial class MainWindow : FluentWindow
         var orchestration = _lifecycle.ReadOrchestration();
         if (orchestration.PendingQuitReason != null || orchestration.ManualErrorPending) return;
         var worker = view.WorkerSnapshot ?? throw new InvalidOperationException("Worker 快照已失效。");
-        if (orchestration.PendingStart(view) != null
-            || _exitInProgress || _environment.Closing || _environment.ManualEndPending) return;
+        if (orchestration.PendingStart(view) != null || _exitInProgress || _environment.Closing) return;
+        if (_environment.ManualEndPending) {
+            if (source == RunSource.Manual) ReportSkippedOperation(PendingOperation.StartingRun, ManualEndReason);
+            return;
+        }
 
         var intent = CreateRunIntent(source, project.ActiveConfigurationId, ActiveConfigurationName, operation);
         var retry = intent with { RetryOf = _lastStartKey };
@@ -825,6 +828,11 @@ public partial class MainWindow : FluentWindow
         $"操作未执行{AppLogger.Field("action", action)}{AppLogger.Field("current", CurrentControls.Action)}"
         + $"{AppLogger.Field("pending", CurrentOperation)}{AppLogger.Field("exiting", _exitInProgress)}");
 
+    private const string ManualEndReason = "用户正在结束桌面分身";
+
+    private void ReportSkippedOperation(PendingOperation operation, string reason) =>
+        AddActivityEntry(new(_scheduleClock.GetLocalNow(), LogLevel.Info, $"跳过{OperationLabel(operation)}：{reason}"));
+
     // An unattended operation (started by the launch itself) reports its failure without a dialog nobody can answer.
     private async Task RunOperationAsync(PendingOperation pending, Func<Task> operation, bool unattended = false, bool startsRun = false,
         [CallerMemberName] string caller = "")
@@ -838,13 +846,21 @@ public partial class MainWindow : FluentWindow
         {
             if (startsRun || pending == PendingOperation.PreparingEnvironment) {
                 var view = _lifecycle.ReadOrchestration();
-                if (view.PendingQuitReason != null || view.ManualErrorPending || _environment.EndUnconfirmed) return;
+                if (view.PendingQuitReason != null || view.ManualErrorPending) return;
+                if (_environment.EndUnconfirmed) {
+                    ReportSkippedOperation(pending, "运行环境状态未知");
+                    return;
+                }
             }
             await operation();
         }
         await RunWindowOperationAsync(pending, async () => {
             if (!startsRun) await _environment.RunExclusiveAsync(RunInGateAsync);
-            else if (_forcedStartsInProgress != 0 || !await _environment.TryRunExclusiveAsync(RunInGateAsync)) LogIgnoredAction(caller);
+            else if (_forcedStartsInProgress != 0 || !await _environment.TryRunExclusiveAsync(RunInGateAsync)) {
+                if (_environment.ManualEndPending) ReportSkippedOperation(pending, ManualEndReason);
+                else if (_forcedStartsInProgress != 0) ReportSkippedOperation(pending, "正在运行其他任务");
+                else LogIgnoredAction(caller);
+            }
         }, unattended);
     }
 
