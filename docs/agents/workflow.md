@@ -16,7 +16,7 @@
 | UI 与前端 | Claude 子代理（Opus 或 Sonnet） |
 
 - xhigh 只用于设计，或跨模块的并发问题。
-- Codex 在 `.worktrees/<名称>` 工作树中运行。它的 workspace-write 沙箱写不了 `.git`，所以需要运行自检时，用 `--sandbox danger-full-access`，并在简报中写明边界：只在本工作树内修改，不提交、不推送，不注销会话、不结束其他进程、不改系统设置。提交由主控完成。提交说明和 PR 正文都不写任何 AI 署名。
+- Codex 在 `.worktrees/<名称>` 工作树中运行。只读和不需要跑自检的任务用 `--sandbox read-only` 或 `workspace-write`。Windows 上受限沙箱运行不了自检，需要 Codex 自己跑自检时，才用 `--sandbox danger-full-access`。这会让构建脚本和测试代码拥有当前用户的完整权限，所以只用于可信分支，并在简报中写明边界：只在本工作树内修改，不提交、不推送，不注销会话、不结束其他进程、不改系统设置。提交由主控完成。提交说明和 PR 正文都不写任何 AI 署名。
 - 简报只给当次任务需要的材料：问题清单、相关文件路径和 [CODING_STANDARDS.md](../../CODING_STANDARDS.md)。不要让执行者通读设计稿和历史审查记录。
 - 报告按固定的简短格式写，每个问题一行：级别、现象、位置。详细内容留在文件里。
 

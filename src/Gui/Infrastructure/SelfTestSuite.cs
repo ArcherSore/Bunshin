@@ -64,10 +64,13 @@ internal static class SelfTestSuite
         return 0;
     }
 
-    private static bool IsFocusFailure(Exception exception) =>
-        exception is FocusAssertionException
-        || exception is AggregateException aggregate && aggregate.InnerExceptions.Any(IsFocusFailure)
-        || exception.InnerException is { } inner && IsFocusFailure(inner);
+    // A failure is rerun only when every underlying exception is a focus assertion.
+    private static bool IsFocusFailure(Exception exception) => exception switch {
+        FocusAssertionException => true,
+        AggregateException aggregate => aggregate.InnerExceptions.Count > 0 && aggregate.InnerExceptions.All(IsFocusFailure),
+        { InnerException: { } inner } => IsFocusFailure(inner),
+        _ => false
+    };
 
     private static string? OnlyFilter(string[] args)
     {
