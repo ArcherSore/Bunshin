@@ -55,9 +55,9 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "SettingsNavigationItem");
             SettingsActionFor(window, "onboarding.replay").Execute(null);
             PumpOnboarding();
-            AssertOnboardingStep(window, 1, "配置自动化任务");
+            WaitForOnboardingStep(window, 1, "配置自动化任务");
             ClickOnboarding(window, "OnboardingNext");
-            AssertOnboardingStep(window, 2, "查看说明并设置参数");
+            WaitForOnboardingStep(window, 2, "查看说明并设置参数");
             var info = ConfigurationDescendants(Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel"))
                 .OfType<WpfButton>().Single(button =>
                     AutomationProperties.GetName(button) == "查看 Real task 的任务描述");
@@ -88,15 +88,15 @@ internal static partial class SelfTestRunner
             }
             window.Show();
             PumpOnboarding();
-            AssertOnboardingStep(window, 2, "查看说明并设置参数");
+            WaitForOnboardingStep(window, 2, "查看说明并设置参数");
             ClickOnboarding(window, "OnboardingNext");
-            AssertOnboardingStep(window, 3, "启动自动化");
+            WaitForOnboardingStep(window, 3, "启动自动化");
             Require(info.ReadLocalValue(UIElement.VisibilityProperty) == DependencyProperty.UnsetValue,
                 "离开说明步骤后必须恢复信息按钮的正常交互显示规则。");
             ClickOnboarding(window, "OnboardingNext");
-            AssertOnboardingStep(window, 4, "观看桌面分身");
+            WaitForOnboardingStep(window, 4, "观看桌面分身");
             ClickOnboarding(window, "OnboardingPrevious");
-            AssertOnboardingStep(window, 3, "启动自动化");
+            WaitForOnboardingStep(window, 3, "启动自动化");
             ClickOnboarding(window, "OnboardingNext");
             ClickOnboarding(window, "OnboardingNext");
             if (((UIElement)window.FindName("OnboardingOverlay")).Visibility != Visibility.Collapsed
@@ -113,7 +113,7 @@ internal static partial class SelfTestRunner
             SettingsActionFor(window, "onboarding.replay").Execute(null);
             PumpOnboarding();
             ClickOnboarding(window, "OnboardingNext");
-            AssertOnboardingStep(window, 2, "查看说明并设置参数");
+            WaitForOnboardingStep(window, 2, "查看说明并设置参数");
             if (!((TextBlock)window.FindName("OnboardingDescription")).Text.StartsWith("添加任务后")) {
                 throw new InvalidOperationException("空计划 replay 必须介绍添加后的卡片，不得插入任务。");
             }
@@ -159,11 +159,11 @@ internal static partial class SelfTestRunner
         RunOnboardingScenario(logger, interrupted, (window, directory) => {
             StartAutomaticOnboarding(window);
             ClickOnboarding(window, "OnboardingNext");
-            AssertOnboardingStep(window, 2, "查看说明并设置参数");
+            WaitForOnboardingStep(window, 2, "查看说明并设置参数");
         });
         RunOnboardingScenario(logger, interrupted, (window, directory) => {
             StartAutomaticOnboarding(window);
-            AssertOnboardingStep(window, 1, "配置自动化任务");
+            WaitForOnboardingStep(window, 1, "配置自动化任务");
             var source = PresentationSource.FromVisual(window)!;
             window.RaiseEvent(new System.Windows.Input.KeyEventArgs(
                 System.Windows.Input.Keyboard.PrimaryDevice, source, 0, System.Windows.Input.Key.Escape) {
@@ -231,10 +231,13 @@ internal static partial class SelfTestRunner
         WaitForOnboardingStep(window, 1, "配置自动化任务");
     }
 
+    // The title updates after the step animation and two Loaded passes, so wait for it rather than a fixed pump.
     private static void WaitForOnboardingStep(MainWindow window, int step, string title)
     {
-        PumpUntil(() => ((UIElement)window.FindName("OnboardingOverlay")).Visibility == Visibility.Visible,
-            $"新手指引第 {step} 步未显示。");
+        PumpUntil(() => ((UIElement)window.FindName("OnboardingOverlay")).Visibility == Visibility.Visible
+            && ((TextBlock)window.FindName("OnboardingTitle")).Text == title
+            && ((TextBlock)window.FindName("OnboardingCounter")).Text == $"{step} / 4",
+            $"新手指引第 {step} 步必须显示正确标题和计数。");
         AssertOnboardingStep(window, step, title);
     }
 

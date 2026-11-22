@@ -10,7 +10,10 @@ namespace Gui.Infrastructure;
 // Worker are gone, and only then discard the Admission.
 internal static partial class SelfTestRunner
 {
-    private static readonly TimeSpan EnvironmentWaitLimit = TimeSpan.FromMilliseconds(500);
+    // Long enough that a loaded machine never cuts a normal stop or exit short, yet below OnPoolLimit so a check that
+    // waits it out still fails visibly. Checks of the expiry path itself pass ExpiringWaitLimit.
+    private static readonly TimeSpan EnvironmentWaitLimit = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ExpiringWaitLimit = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan OnPoolLimit = TimeSpan.FromSeconds(30);
 
     // U1, U9: the Active Run is stopped and has ended before logoff, and the Admission is discarded only after the
@@ -86,7 +89,8 @@ internal static partial class SelfTestRunner
                 AwaitRunningWorker(coordinator);
                 var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7] };
                 using var session = wts.CreateManager(logger);
-                var ended = OnPool(() => CreateEnvironment(logger, session, coordinator).EndAsync(() => true));
+                var ended = OnPool(() => CreateEnvironment(logger, session, coordinator,
+                    waitLimit: ExpiringWaitLimit).EndAsync(() => true));
                 Require(ended == EnvironmentEndResult.Ended && wts.LogoffAttempts.SequenceEqual([7u])
                     && AdmissionDiscarded(coordinator), $"{outcome}：Run 停止未确认时仍应注销分身并完成结束。");
             });
@@ -141,7 +145,7 @@ internal static partial class SelfTestRunner
                 } finally {
                     waitEnded.TrySetResult(token.IsCancellationRequested);
                 }
-            });
+            }, ExpiringWaitLimit);
             var first = OnPool(() => environment.EndAsync(() => true));
             Require(first is { Outcome: EnvironmentEndOutcome.Unconfirmed, Error.Message: "无法确认 Worker 已退出。" }
                 && coordinator.TrackedWorkerPid is not null && environment.EndUnconfirmed

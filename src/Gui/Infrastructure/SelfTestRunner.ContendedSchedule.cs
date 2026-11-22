@@ -88,7 +88,9 @@ internal static partial class SelfTestRunner
             }
             var wts = new SimulatedWts();
             using var session = wts.CreateManager(logger);
-            var environment = CreateEnvironment(logger, session, coordinator);
+            // Late leaves its stop unanswered, so the end goes on only once the stop wait expires.
+            var environment = CreateEnvironment(logger, session, coordinator,
+                waitLimit: scenario == ContendedSchedule.Late ? ExpiringWaitLimit : null);
             var preparations = new List<Guid>();
             try {
                 WithRuntimeControlWindow(logger, root, window => {
