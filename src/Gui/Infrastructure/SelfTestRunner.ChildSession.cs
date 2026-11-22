@@ -319,6 +319,8 @@ internal static partial class SelfTestRunner
         internal bool SessionSurvivesLogoff { get; init; }
         internal Action<SimulatedWts>? DuringLogoff { get; set; }
         internal List<uint> LogoffAttempts { get; } = [];
+        // The verified ID each logoff was given; null when the caller left the target to WTS.
+        internal List<uint?> LogoffTargets { get; } = [];
 
         // Never the real WTS or Windows Credential Manager: what is on this machine must not affect a check.
         internal ChildSessionManager CreateManager(AppLogger logger, ChildSessionCredentialStore? credentials = null) =>
@@ -331,9 +333,11 @@ internal static partial class SelfTestRunner
             return EnumerationFails ? throw new Win32Exception(5, "self-test enumeration failure") : Sessions.ToArray();
         }
 
-        private uint? Logoff()
+        // A verified ID is logged off as given; otherwise the logoff targets what WTS reports.
+        private uint? Logoff(uint? verifiedSessionId)
         {
-            if (ReportedId is not uint sessionId) {
+            LogoffTargets.Add(verifiedSessionId);
+            if ((verifiedSessionId ?? ReportedId) is not uint sessionId) {
                 return null;
             }
 
@@ -350,7 +354,9 @@ internal static partial class SelfTestRunner
             }
 
             Sessions.Remove(sessionId);
-            ReportedId = null;
+            if (ReportedId == sessionId) {
+                ReportedId = null;
+            }
             return sessionId;
         }
     }

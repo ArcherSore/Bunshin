@@ -214,7 +214,7 @@ internal static partial class SelfTestRunner
                 ReportedId = 7, Sessions = [0, 1, 7], SessionSurvivesLogoff = true
             }.CreateManager(logger), "无法确认桌面分身已结束。", true),
             ("query-failure", () => new ChildSessionManager(logger,
-                () => throw new Win32Exception(5, "self-test WTS failure"), () => [0u, 1u], () => null,
+                () => throw new Win32Exception(5, "self-test WTS failure"), () => [0u, 1u], _ => null,
                 new ChildSessionCredentialStore(logger, new MemoryCredentialVault())), "无法确认桌面分身状态。", false)
         }) {
             using var session = createSession();
@@ -279,6 +279,34 @@ internal static partial class SelfTestRunner
                 "只剩 Admission 时仍应询问并结束。");
             Require(OnPool(() => environment.EndAsync(() => ++asked > 0)) == EnvironmentEndResult.Ended && asked == 1,
                 "结束确认后再次结束不应询问。");
+        });
+    }
+
+    // #147: the automatic end logs off only the Child Session it verified. One replaced after that verification is
+    // left running with the Admission kept; an unchanged one is logged off by its verified ID.
+    private static void VerifyVerifiedEndSkipsReplacedSession(AppLogger logger, string directory)
+    {
+        var wts = new SimulatedWts { ReportedId = 7, Sessions = [0, 1, 7] };
+        using var session = wts.CreateManager(logger);
+        WithFakeWorker(logger, Path.Combine(directory, "replaced"), (coordinator, _, _) => {
+            var environment = CreateEnvironment(logger, session, coordinator);
+            var verified = 0;
+            var replaced = OnPool(() => environment.EndVerifiedWhileExclusiveAsync(() => {
+                verified++;
+                // Windows replaces the Child Session once the owner has been verified.
+                wts.Sessions.Remove(7);
+                wts.ReportedId = 12;
+                wts.Sessions.Add(12);
+                return 7;
+            }));
+            Require(replaced == EnvironmentEndResult.Declined && verified == 1 && wts.LogoffAttempts.Count == 0
+                && coordinator.TrackedWorkerPid is not null && !environment.EndUnconfirmed && !environment.Ending
+                && session.HasChildSession, "核验后分身被换时，自动收尾不应注销新分身或丢弃 Admission。");
+
+            var ended = OnPool(() => environment.EndVerifiedWhileExclusiveAsync(() => 12));
+            Require(ended == EnvironmentEndResult.Ended && wts.LogoffAttempts.SequenceEqual([12u])
+                && wts.LogoffTargets.SequenceEqual([(uint?)12]) && AdmissionDiscarded(coordinator) && !session.HasChildSession,
+                "核验的分身未变时，自动收尾应按核验的 ID 注销并完成结束。");
         });
     }
 

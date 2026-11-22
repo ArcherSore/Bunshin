@@ -221,6 +221,8 @@ internal static partial class SelfTestRunner
         new(Group.RuntimeControls, nameof(VerifyEndUnconfirmed), c => VerifyEndUnconfirmed(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEndConfirmation), c => VerifyEndConfirmation(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEndHoldsGate), c => VerifyEndHoldsGate(c.Logger, c.Directory)),
+        new(Group.RuntimeControls, nameof(VerifyVerifiedEndSkipsReplacedSession),
+            c => VerifyVerifiedEndSkipsReplacedSession(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyRepeatedEndRequests),
             c => VerifyRepeatedEndRequests(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyEnvironmentClosing),
