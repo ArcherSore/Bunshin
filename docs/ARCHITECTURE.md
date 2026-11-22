@@ -100,7 +100,7 @@ GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的
 
 手动开始和重试、开机自动执行、定时执行都由 `RunLifecycleHost` 登记提交。一次意图有独立的意图 ID，一次执行由 `RunKey(WorkerInstanceId, RunId)` 标识，每次发送都有自己的 `SubmissionId`。同一 Worker 重连后仍可确认原 Run，迟到应答按原发送归属。
 
-`WorkerCoordinator` 核验 Worker 身份，按连接代次和写入顺序提供正文边界、应答、有序查询、快照及进程退出证据。RunLifecycle 纯状态机（`RunLifecycleReducer`）据此确认启动、决定何时补查，并向运行通知、定时完成与收尾、`-q` 三个消费者交付结果。确认期间只查询原 Run。调度候选和倒计时由窗口编排，环境互斥、准备及实际清理归 `RuntimeEnvironment`。
+`WorkerCoordinator` 核验 Worker 身份，按连接代次和写入顺序提供正文边界、应答、有序查询、快照及进程退出证据。RunLifecycle 纯状态机（`RunLifecycleReducer`）据此确认启动、决定何时补查，并向运行通知、定时完成与收尾、`-q` 三个消费者交付结果。确认期间只查询原 Run。调度候选和倒计时由窗口编排，环境互斥、准备及实际清理归 `RuntimeEnvironment`。同一次运行的接纳、发起者和交付进度只由 RunLifecycle 判定，其他对象不另行记录；分散在多个对象里判定时，每轮修复都会引出新的回归（[#122](https://github.com/ArcherSore/Bunshin/issues/122)）。
 
 宿主在 Dispatcher 上串行提交状态转换。手动操作、待交付的结论、定时完成与收尾占位、待退出及其暂缓状态均同步反映在 `RunLifecycleHost.Orchestration`。取得环境闸门的入口先处理已到达的证据，再按这份状态决定是否启动或清理。错误框和托盘气泡按 RunKey 异步呈现，一个 Run 的模态框可以保持打开，其他 Run 仍可完成和收尾。
 
