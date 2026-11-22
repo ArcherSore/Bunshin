@@ -30,7 +30,8 @@ internal static partial class WorkerCoordinatorSelfTest
         internal RunKey Run => new(Admission.WorkerInstanceId, Attempt.RunId);
         internal Submission NewSubmission() => new(Guid.NewGuid(), Guid.NewGuid(), Run, Attempt.PlanDigest);
 
-        internal EvidenceFixture(AppLogger logger, string directory, string projectDirectory)
+        internal EvidenceFixture(AppLogger logger, string directory, string projectDirectory,
+            Func<int, CancellationToken, Task>? waitForExit = null)
         {
             var project = OpenProject(projectDirectory, directory);
             Attempt = project.CreateRunStartAttempt(project.ActiveConfigurationId);
@@ -41,7 +42,8 @@ internal static partial class WorkerCoordinatorSelfTest
             Coordinator = new(logger, stateDirectory, WorkerPath, PipeName, usePipeAcl: false,
                 captureProcesses: () => [new WorkerProcessEntry(Environment.ProcessId, Admission.ChildSessionId, Path.GetFileName(WorkerPath))],
                 enumerateSessions: () => [Admission.ChildSessionId], requestClock: Clock,
-                wrapPipe: pipe => Server = new(pipe, () => Interlocked.Increment(ref _wireStarts)));
+                wrapPipe: pipe => Server = new(pipe, () => Interlocked.Increment(ref _wireStarts)), exitClock: Clock,
+                waitForExit: waitForExit);
             Coordinator.ObservationReceived += (_, batch) => {
                 History.Enqueue(batch);
                 _observed.Writer.TryWrite(batch);
@@ -624,6 +626,95 @@ internal static partial class WorkerCoordinatorSelfTest
         Require(removed.Connection == body.Connection && await healthy.ReadAsync(f.Token) is null
             && !f.History.Any(b => b.Kind == WorkerEvidenceKind.ProcessExited) && f.WireStarts == 1,
             "摘除 Admission 应立即关闭管道，不能冒充进程退出。");
+    }
+
+    internal enum ExitFrame { Buffered, Decoded, Timeout, SnapshotWriteFailed }
+
+    internal static async Task VerifyWorkerExitDrain(AppLogger logger, string directory, string project, ExitFrame frame)
+    {
+        var processExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var f = new EvidenceFixture(logger, directory, project, (_, token) => processExited.Task.WaitAsync(token));
+        await using var peer = await f.ConnectAsync();
+        var delivered = new List<object>();
+        using var host = new RunLifecycleHost(f.Coordinator, Dispatcher.CurrentDispatcher, () => "A",
+            item => { delivered.Add(item); return true; }, () => delivered.Add("quit"), logger, f.Clock);
+        var intent = new RunIntent(Guid.NewGuid(), RunSource.Launch, "开机运行", new(Guid.NewGuid(), 1, 1), "A", QuitAfterRun: true);
+        var submit = host.SubmitAsync(intent, f.Run, f.Attempt);
+        var start = await f.ReadAsync(peer, ProtocolOperations.RunStart);
+        var active = CreateActiveRun(f.Attempt);
+        var snapshot = CreateSnapshot(f.Admission, 0, active);
+        Task SendAsync(WorkerSnapshot state) => peer.WriteAsync(WireEnvelope.Event(ProtocolOperations.RunStateChanged,
+            new StateChangedEvent(f.Run.WorkerInstanceId, state.StateRevision, state)), f.Token);
+        await SendAsync(snapshot with { StateRevision = 2 });
+        await peer.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value, new RunStartResponse("accepted")), f.Token);
+        await submit;
+
+        if (frame == ExitFrame.Timeout) {
+            processExited.SetResult();
+            Require(SpinWait.SpinUntil(() => f.Clock.NextTimerDelay == TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(2)),
+                "已确认进程退出，应开始等待读循环。");
+            f.Clock.Advance(TimeSpan.FromMilliseconds(4999));
+            Require(f.Coordinator.TrackedAdmission == f.Admission
+                && !f.History.Any(b => b.Kind == WorkerEvidenceKind.ProcessExited), "5 秒以内仍须等待 EOF。");
+            f.Clock.Advance(TimeSpan.FromMilliseconds(1));
+            await f.NextAsync(WorkerEvidenceKind.ProcessExited);
+            await f.Coordinator.ChildSessionEndedAsync(f.Admission);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Require(delivered is [LifecycleEffect.Present { Kind: NoticeKind.EndUnconfirmed } unknown]
+                && unknown.Key == f.Run && await peer.ReadAsync(f.Token) is null && f.Coordinator.TrackedAdmission is null,
+                "EOF 超时后应关闭管道，摘除 Admission，仅提醒一次运行结果未确认。");
+            return;
+        }
+
+        var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void PauseReader()
+        {
+            paused.TrySetResult();
+            resume.Task.Wait(f.Token);
+        }
+        var writeFailed = frame == ExitFrame.SnapshotWriteFailed;
+        var terminalRevision = writeFailed ? 6 : 4;
+        f.Coordinator.StateFrameDecoded = state => {
+            if (state.StateRevision == (frame == ExitFrame.Decoded ? terminalRevision : terminalRevision - 1)) PauseReader();
+        };
+        var allowWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task end;
+        try {
+            if (writeFailed) {
+                // The gap starts a full snapshot request. Hold its first byte until the peer has closed.
+                f.Server.StopAfterBytes = 0;
+                f.Server.ResumeWrite = allowWrite.Task;
+                await SendAsync(snapshot with { StateRevision = 4 });
+                await f.Server.Blocked.Task.WaitAsync(f.Token);
+            }
+            await SendAsync(snapshot with { StateRevision = terminalRevision - 1 });
+            await SendAsync(CreateSnapshot(f.Admission, 0) with { StateRevision = terminalRevision,
+                LastRun = active with { State = RunState.Succeeded, EndedAtUtc = DateTime.UtcNow } });
+            peer.Close();
+            await paused.Task.WaitAsync(f.Token);
+            if (writeFailed) {
+                allowWrite.SetResult();
+                await f.Coordinator.SnapshotRefresh.WaitAsync(f.Token);
+                f.Clock.Advance(TimeSpan.FromSeconds(4));
+            }
+            end = f.Coordinator.ChildSessionEndedAsync(f.Admission);
+            if (writeFailed) {
+                f.Clock.Advance(TimeSpan.FromSeconds(2));
+                Require(f.Clock.NextTimerDelay == TimeSpan.FromSeconds(3),
+                    "确认退出两秒后，读循环应还有三秒处理缓冲终态。");
+            }
+        } finally {
+            allowWrite.TrySetResult();
+            resume.TrySetResult();
+        }
+        await end.WaitAsync(f.Token);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        var retired = f.History.Where(b => b.ObservedSnapshot?.LastRun?.RunId == f.Run.RunId
+            || b.Kind is WorkerEvidenceKind.ProcessExited or WorkerEvidenceKind.AdmissionRemoved).Select(b => b.Kind);
+        Require(retired.SequenceEqual([WorkerEvidenceKind.Snapshot, WorkerEvidenceKind.ProcessExited, WorkerEvidenceKind.AdmissionRemoved])
+            && delivered is [LifecycleEffect.Present { Kind: NoticeKind.Succeeded } notice, "quit"] && notice.Key == f.Run,
+            "缓冲区中的成功终态应先于进程退出和 Admission 摘除交付，并在提醒后退出一次。");
     }
 
     internal static async Task VerifyTerminalDuringQueryWrite(AppLogger logger, string directory, string project)

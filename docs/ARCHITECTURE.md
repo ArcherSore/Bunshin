@@ -78,6 +78,8 @@ RuntimeEnvironment 是运行环境生命周期的唯一所有者：持有应用�
 
 GUI 以真实 Windows 进程和 Session 身份核验 Worker，再通过受限的本机 Named Pipe 接纳连接。同一 Child Session 只接纳一个 Worker。GUI 只在能证明 Worker 已不存在或 Child Session 已确认注销时丢弃 Admission，无法确认时拒绝准备；每次启动 Worker 前还会确认目标 Child Session 中没有 Worker 进程。断线时，已接纳 Worker 可继续运行；GUI 重连后取得新的完整 Snapshot 才能重新作出执行决策。Worker 不具备跨进程退出恢复 Run 的能力。
 
+确认 Worker 进程退出后，进程监视和环境结束流程共用原连接的等待期限。读循环先把缓冲帧提交给 RunLifecycle，读到 EOF 后发布进程退出证据，环境结束流程随后摘除 Admission。等待满 5 秒仍无 EOF 时强制关闭连接。已接纳的 Run 有匹配终态就按终态交付提醒及绑定的 `-q`，缺少终态则结算为运行结果未确认。
+
 这些路径依赖管理员权限、交互式 Windows 桌面、RDP ActiveX、WTS、Task Scheduler COM 和 WMI。Child Session 的显示分辨率和缩放固定为 1920×1080、100%；预览缩放不改变隔离桌面的实际设置。
 
 ## 启动与自动执行

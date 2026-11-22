@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Pipes;
 using System.Text;
 using Gui.ChildSession;
 using Gui.Infrastructure;
@@ -11,6 +12,29 @@ namespace Gui.Worker;
 
 internal static partial class WorkerCoordinatorSelfTest
 {
+    private static async Task VerifyRealWorkerExitFramesAsync()
+    {
+        var workerPath = FindRealWorker() ?? throw new SelfTestSkip("需要真实 Worker 可执行文件。");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var token = timeout.Token;
+        var name = $"Gui.Worker.Exit.{Guid.NewGuid():N}";
+        await using var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, 64 * 1024, 64 * 1024);
+        var (process, errors) = StartRealWorker(workerPath, $"--self-test --write-before-exit {name}", Encoding.UTF8, token);
+        using var worker = process;
+        await server.WaitForConnectionAsync(token);
+        await worker.WaitForExitAsync(token);
+        Require(worker.ExitCode == 0, $"写帧子进程失败：{await errors}");
+
+        await using var connection = new ProtocolConnection(server);
+        var sequences = new List<long>();
+        while (await connection.ReadAsync(token) is { } frame) {
+            Require(frame.Operation == ProtocolOperations.LogEntry, "退出前写出的帧应为日志事件。");
+            sequences.Add(ProtocolJson.Deserialize<LogEntryEvent>(frame.Data).Entry.Sequence);
+        }
+        Require(sequences.SequenceEqual([1L, 2, 3, 4, 5, 6, 7, 8]), "进程退出后应依序读到全部八帧，再读到 EOF。");
+    }
+
     // The real Worker executable over the real pipe name and ACL. Task Scheduler and the Child Session stay out of
     // reach, so the process starts directly, with the same arguments production hands to the scheduler.
     private static async Task VerifyRealWorkerAsync(AppLogger logger, string testDirectory, ProjectPlanModule project)

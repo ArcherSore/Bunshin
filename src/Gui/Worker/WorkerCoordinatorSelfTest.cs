@@ -47,6 +47,7 @@ internal static partial class WorkerCoordinatorSelfTest
             logger, directory, OpenProject(project, directory))),
         (nameof(VerifyRealWorkerAsync), (logger, directory, project) => VerifyRealWorkerAsync(
             logger, directory, OpenProject(project, directory))),
+        (nameof(VerifyRealWorkerExitFramesAsync), (_, _, _) => VerifyRealWorkerExitFramesAsync()),
         (nameof(VerifyRealWorkerCleanWhileRunningAsync),
             (logger, directory, _) => VerifyRealWorkerCleanWhileRunningAsync(logger, directory))
     ];

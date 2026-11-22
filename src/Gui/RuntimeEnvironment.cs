@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Gui.ChildSession;
 using Gui.Infrastructure;
 using ProjectModel;
@@ -32,7 +31,7 @@ internal sealed class RuntimeEnvironment
         _logger = logger;
         _session = session;
         _coordinator = coordinator;
-        _waitForWorkerExit = waitForWorkerExit ?? WaitForProcessExit;
+        _waitForWorkerExit = waitForWorkerExit ?? WorkerAdmissionInspection.WaitForProcessExitAsync;
         _waitLimit = waitLimit ?? TimeSpan.FromSeconds(30);
         _runExclusive = runExclusive;
     }
@@ -277,7 +276,7 @@ internal sealed class RuntimeEnvironment
                 }
             }
             failure = "丢弃 Worker Admission 失败。";
-            _coordinator.ChildSessionEnded(workerExit is null ? null : tracked);
+            await _coordinator.ChildSessionEndedAsync(workerExit is null ? null : tracked);
         } catch (Exception exception) {
             return Unconfirmed(failure, exception);
         } finally {
@@ -360,31 +359,6 @@ internal sealed class RuntimeEnvironment
     {
         if (refuseWhileClosing && Closing) {
             throw new OperationCanceledException("应用正在退出，未开始新的操作。");
-        }
-    }
-
-    // The handle is opened before this returns, so the wait follows the Worker even after its PID is released.
-    private static Task WaitForProcessExit(int pid, CancellationToken cancellationToken)
-    {
-        Process process;
-        try {
-            process = Process.GetProcessById(pid);
-        } catch (ArgumentException) {
-            return Task.CompletedTask;
-        }
-        try {
-            _ = process.Handle;
-        } catch {
-            process.Dispose();
-            throw;
-        }
-        return WaitAndDisposeAsync(process, cancellationToken);
-
-        static async Task WaitAndDisposeAsync(Process process, CancellationToken cancellationToken)
-        {
-            using (process) {
-                await process.WaitForExitAsync(cancellationToken);
-            }
         }
     }
 }

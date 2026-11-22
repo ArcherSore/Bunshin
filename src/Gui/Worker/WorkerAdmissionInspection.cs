@@ -16,6 +16,31 @@ internal sealed record WorkerProcessEntry(int ProcessId, uint? SessionId, string
 
 internal static class WorkerAdmissionInspection
 {
+    // Open the handle before returning so the wait follows this process even after PID reuse.
+    internal static Task WaitForProcessExitAsync(int pid, CancellationToken cancellationToken)
+    {
+        Process process;
+        try {
+            process = Process.GetProcessById(pid);
+        } catch (ArgumentException) {
+            return Task.CompletedTask;
+        }
+        try {
+            _ = process.Handle;
+        } catch {
+            process.Dispose();
+            throw;
+        }
+        return WaitAndDisposeAsync(process, cancellationToken);
+
+        static async Task WaitAndDisposeAsync(Process process, CancellationToken cancellationToken)
+        {
+            using (process) {
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
     // Decides only from system state; the coordinator answers Alive itself for connected or launching records.
     internal static AdmissionLiveness Classify(
         WorkerAdmissionRecord record, string workerImageName, DateTime nowUtc,
