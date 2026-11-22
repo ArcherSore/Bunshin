@@ -90,6 +90,9 @@ public partial class MainWindow
             if (decision.SkipReason is { } reason) {
                 _logger.Info($"自动执行已跳过：{reason}。");
             }
+            if (decision.Notice is { } notice) {
+                Notify(new("自动执行未能完成", notice, true));
+            }
             return false;
         }
         var entered = await _environment.TryRunExclusiveAsync(() => StartLaunchConfigurationAsync(project, id));
