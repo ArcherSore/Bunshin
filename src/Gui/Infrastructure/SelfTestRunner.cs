@@ -80,6 +80,12 @@ internal static partial class SelfTestRunner
             PumpUntil(() => check.IsCompleted, "终态取消确认查询后应能继续启动。");
             check.GetAwaiter().GetResult();
         }),
+        new(Group.Project, nameof(WorkerCoordinatorSelfTest.VerifySettledRunSnapshotRetry), c => {
+            var check = System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeAsync(() =>
+                WorkerCoordinatorSelfTest.VerifySettledRunSnapshotRetry(c.Logger, c.Directory, c.Project)).Task.Unwrap();
+            PumpUntil(() => check.IsCompleted, "跨号终态结算后，空闲连接应能自行恢复。");
+            check.GetAwaiter().GetResult();
+        }),
         new(Group.Project, "VerifyRunDeliveryForegroundFault", c =>
             VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.ForegroundFault), RequiresFocus: true),
         new(Group.Project, "VerifyRunDeliveryHiddenFailure", c => VerifyManualSettlement(c.Logger, c.Directory, ManualSettlement.HiddenFailure)),

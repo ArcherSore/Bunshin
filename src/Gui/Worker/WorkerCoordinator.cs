@@ -56,6 +56,7 @@ internal sealed record WorkerCoordinatorSnapshot(
 internal sealed partial class WorkerCoordinator : IAsyncDisposable
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan SnapshotRetryDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan AdmissionTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan WorkerExitRecheckDelay = TimeSpan.FromSeconds(1);
     private const string EndChildSessionHint = "请从托盘菜单选择“结束桌面分身”后重新准备运行环境。";
@@ -83,6 +84,9 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
     private readonly TaskCompletionSource<bool> _serverReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _serverTask;
     private ProtocolConnection? _connection;
+    private bool _refreshingSnapshot;
+    // A full reply below a revision this connection already saw cannot restore Fresh.
+    private long _observedRevision;
     private WorkerAdmissionRecord? _admission;
     private CancellationTokenSource? _exitWatch;
     // An unreadable record may still describe a live Worker, so it blocks Prepare until the session is ended.
@@ -695,6 +699,8 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                         _store.SaveRecord(admission);
                     }
                     _connection = connection;
+                    _refreshingSnapshot = false;
+                    _observedRevision = 0;
                     CancelExitWatchLocked();
                     BeginEvidenceLocked(admission);
                     var logRecoveryGeneration = _logRecovery.ConnectionAdmittedLocked(admission.WorkerInstanceId);
@@ -748,7 +754,7 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                         if (state.WorkerInstanceId != workerInstanceId) {
                             throw new ProtocolException("stateChanged workerInstanceId 不匹配。 ");
                         }
-                        ApplyStateEvent(state, envelope.ProtocolVersion, connection);
+                        ApplyStateEvent(state, envelope.ProtocolVersion, connection, cancellationToken);
                         break;
                     }
                 case ProtocolOperations.LogEntry: {
@@ -842,17 +848,20 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         }
         ValidateSnapshot(snapshot, admission);
         var older = Snapshot.WorkerSnapshot is { } current && current.WorkerInstanceId == snapshot.WorkerInstanceId
-            && current.StateRevision > snapshot.StateRevision;
+            && current.StateRevision > snapshot.StateRevision || snapshot.StateRevision < _observedRevision;
         if (!older) {
             Snapshot = new WorkerCoordinatorSnapshot(WorkerObservation.Connected, true, snapshot,
                 "Worker Snapshot 已同步");
         }
-        _awaitedFreshSnapshot?.TrySetResult(Snapshot.WorkerSnapshot!);
-        _awaitedFreshSnapshot = null;
+        if (Snapshot.Fresh) {
+            _awaitedFreshSnapshot?.TrySetResult(Snapshot.WorkerSnapshot!);
+            _awaitedFreshSnapshot = null;
+        }
         return !older;
     }
 
-    private void ApplyStateEvent(StateChangedEvent state, int protocolVersion, ProtocolConnection connection)
+    private void ApplyStateEvent(StateChangedEvent state, int protocolVersion, ProtocolConnection connection,
+        CancellationToken connectionToken)
     {
         WorkerAdmissionRecord admission;
         long? revisionGapFrom = null;
@@ -870,16 +879,21 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
                 ValidateSnapshot(state.Snapshot, admission);
             }
             var currentRevision = Snapshot.WorkerSnapshot?.StateRevision ?? 0;
-            if (state.StateRevision <= currentRevision) {
+            // Same rule as full replies: a frame below the highest revision seen here cannot restore Fresh.
+            if (state.StateRevision <= currentRevision || state.StateRevision < _observedRevision) {
                 PublishLocked(SnapshotBatchLocked(state.Snapshot));
                 return;
             }
+            _observedRevision = state.StateRevision;
             if (Snapshot.Fresh && state.StateRevision != currentRevision + 1) {
                 Snapshot = Snapshot with {
                     SnapshotFresh = false,
                     Detail = "stateRevision 断档，等待完整 Snapshot"
                 };
-                _ = Task.Run(() => RefreshSnapshotAsync(connection));
+                if (!_refreshingSnapshot) {
+                    _refreshingSnapshot = true;
+                    _ = Task.Run(() => RefreshSnapshotAsync(connection, connectionToken));
+                }
                 revisionGapFrom = currentRevision;
             } else {
                 ValidateSnapshot(state.Snapshot, admission);
@@ -898,13 +912,26 @@ internal sealed partial class WorkerCoordinator : IAsyncDisposable
         RaiseStateChanged();
     }
 
-    private async Task RefreshSnapshotAsync(ProtocolConnection connection)
+    private async Task RefreshSnapshotAsync(ProtocolConnection connection, CancellationToken connectionToken)
     {
         try {
-            await SendRequestAsync<object, GetSnapshotResponse>(
-                ProtocolOperations.WorkerGetSnapshot, new { }, _shutdown.Token, connection: connection);
-        } catch (TimeoutException) {
-            // The request already logged the timeout. Later state events can still make the view fresh.
+            while (!connectionToken.IsCancellationRequested) {
+                lock (_gate) {
+                    if (_connection != connection || connection.IsClosed) return;
+                    if (Snapshot.Fresh) {
+                        // Release under the same lock that starts recovery on the next gap.
+                        _refreshingSnapshot = false;
+                        return;
+                    }
+                }
+                try {
+                    await SendRequestAsync<object, GetSnapshotResponse>(
+                        ProtocolOperations.WorkerGetSnapshot, new { }, connectionToken, connection);
+                } catch (TimeoutException) {
+                    await Task.Delay(SnapshotRetryDelay, _requestClock, connectionToken);
+                }
+            }
+        } catch (OperationCanceledException) when (connectionToken.IsCancellationRequested) {
         } catch (Exception exception) {
             connection.Close(exception);
         }
