@@ -388,9 +388,12 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 Child = row, Margin = new Thickness(0, 8, 0, 0), Padding = new Thickness(10, 7, 10, 7),
                 CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1)
             };
-            box.SetResourceReference(Border.BackgroundProperty, error ? "Brush.Error.Surface" : "Brush.Warning.Surface");
-            box.SetResourceReference(Border.BorderBrushProperty, error ? "Brush.Error.Border" : "Brush.Warning.SurfaceHover");
-            box.SetResourceReference(TextElement.ForegroundProperty, error ? "Brush.Error.Foreground" : "Brush.Warning.Foreground");
+            box.SetResourceReference(Border.BackgroundProperty,
+                error ? "Brush.Error.Surface" : "Brush.Warning.Surface");
+            box.SetResourceReference(Border.BorderBrushProperty,
+                error ? "Brush.Error.Border" : "Brush.Warning.SurfaceHover");
+            box.SetResourceReference(TextElement.ForegroundProperty,
+                error ? "Brush.Error.Foreground" : "Brush.Warning.Foreground");
             IssuesPanel.Children.Add(box);
         }
     }
@@ -444,7 +447,8 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 row.Children.Add(label);
             }
             var dismiss = new SymbolIcon { Symbol = SymbolRegular.Dismiss12, FontSize = 9 };
-            dismiss.SetResourceReference(WpfControl.ForegroundProperty, selected ? "Brush.Text.Inverse" : "Brush.Text.Muted");
+            dismiss.SetResourceReference(WpfControl.ForegroundProperty,
+                selected ? "Brush.Text.Inverse" : "Brush.Text.Muted");
             var remove = new WpfButton {
                 Style = (Style)FindResource("Schedule.ChipRemove"), Margin = new Thickness(2, 0, 0, 0), ToolTip = "删除",
                 Content = dismiss

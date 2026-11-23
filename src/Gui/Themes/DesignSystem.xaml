@@ -410,7 +410,8 @@
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
-                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource Brush.Transparent}" />
+                            <Setter TargetName="Border" Property="Background"
+                                    Value="{DynamicResource Brush.Transparent}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

@@ -182,8 +182,10 @@ internal sealed class ScheduleTimeline : FrameworkElement
 
             dc.PushClip(new RectangleGeometry(track, 6, 6));
             dc.DrawRectangle(BrushFor(TrackBrushProperty), null, track);
-            dc.DrawRectangle(BrushFor(NightBrushProperty), null, new Rect(X(0), track.Top, X(360) - X(0), track.Height));
-            dc.DrawRectangle(BrushFor(NightBrushProperty), null, new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
+            dc.DrawRectangle(BrushFor(NightBrushProperty), null,
+                new Rect(X(0), track.Top, X(360) - X(0), track.Height));
+            dc.DrawRectangle(BrushFor(NightBrushProperty), null,
+                new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
             for (var hour = 1; hour < 24; hour++) {
                 var x = Math.Round(X(hour * 60)) + 0.5;
                 dc.DrawLine(hour % 6 == 0 ? gridStrongPen : gridPen, new WpfPoint(x, track.Top),
@@ -270,17 +272,19 @@ internal sealed class ScheduleTimeline : FrameworkElement
         // A policy's times are shared by all its days, so pointing at one shows every point that changes with it.
         if (pin.Role == TimelinePinRole.Active && _hoverPin is { Role: TimelinePinRole.Active } hovered
             && hovered.PolicyId == pin.PolicyId && hovered.Time == pin.Time && _dragging is null) {
-            dc.DrawEllipse(new SolidColorBrush(WpfColor.FromArgb(0x40, brush.Color.R, brush.Color.G, brush.Color.B)), null,
-                point, radius + 5, radius + 5);
+            dc.DrawEllipse(new SolidColorBrush(WpfColor.FromArgb(0x40, brush.Color.R, brush.Color.G, brush.Color.B)),
+                null, point, radius + 5, radius + 5);
         }
         var removed = _preview is { Remove: true } preview && pin.Role == TimelinePinRole.Active
             && preview.Days.Contains(pin.Day) && preview.Time == pin.Time;
         dc.PushOpacity(pin.Role switch { TimelinePinRole.Sibling => 0.35, TimelinePinRole.Other => 0.8, _ => 1.0 });
         if (removed) {
-            dc.DrawEllipse(BrushFor(NowBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 2), point, radius, radius);
+            dc.DrawEllipse(BrushFor(NowBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 2),
+                point, radius, radius);
         } else if (pin.Enabled) {
             dc.DrawEllipse(brush,
-                new WpfPen(BrushFor(SurfaceBrushProperty), pin.Role == TimelinePinRole.Other ? 1 : 2), point, radius, radius);
+                new WpfPen(BrushFor(SurfaceBrushProperty), pin.Role == TimelinePinRole.Other ? 1 : 2),
+                point, radius, radius);
         } else {
             dc.DrawEllipse(BrushFor(SurfaceBrushProperty), new WpfPen(BrushFor(DisabledBrushProperty), 2), point,
                 radius - 1, radius - 1);
@@ -299,7 +303,8 @@ internal sealed class ScheduleTimeline : FrameworkElement
         var radius = Radius(pin);
         if (pin.Skipped) {
             var badge = new WpfPoint(point.X - radius - 3, point.Y - radius - 2);
-            dc.DrawEllipse(BrushFor(WarningBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 1.5), badge, 6, 6);
+            dc.DrawEllipse(BrushFor(WarningBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 1.5),
+                badge, 6, 6);
             var mark = text("!", 9, BrushFor(InverseBrushProperty), true);
             dc.DrawText(mark, new WpfPoint(badge.X - mark.Width / 2, badge.Y - mark.Height / 2));
         }

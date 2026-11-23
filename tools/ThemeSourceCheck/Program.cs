@@ -13,6 +13,7 @@ internal static partial class Program
     private static readonly HashSet<string> NamedColors = typeof(Colors).GetProperties()
         .Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> LightKeys = [];
+    private static readonly HashSet<string> PrimitiveKeys = [];
     private static readonly HashSet<string> ColorKeys = [];
     private static readonly List<(string Path, int Line, string Site, string Violation)> Findings = [];
 
@@ -28,8 +29,12 @@ internal static partial class Program
 
         var documents = paths.Where(p => p.EndsWith(".xaml") && File.Exists(p))
             .ToDictionary(p => p, p => XDocument.Load(p, LoadOptions.SetLineInfo));
-        foreach (var element in documents[Light].Root!.Elements())
-            if ((string?)element.Attribute(Xaml + "Key") is { } key) LightKeys.Add(key);
+        foreach (var element in documents[Light].Root!.Elements()) {
+            if ((string?)element.Attribute(Xaml + "Key") is not { } key) continue;
+            LightKeys.Add(key);
+            // Color entries define the raw scale. PaletteColor exposes a color under a component key.
+            if (element.Name.LocalName == "Color") PrimitiveKeys.Add(key);
+        }
         foreach (var document in documents.Values)
             foreach (var element in document.Descendants())
                 if (IsColorProperty(element.Name.LocalName) && (string?)element.Attribute(Xaml + "Key") is { } key)
@@ -72,7 +77,8 @@ internal static partial class Program
         || key.StartsWith("Color.", StringComparison.OrdinalIgnoreCase)
         || key.StartsWith("Effect.", StringComparison.OrdinalIgnoreCase);
 
-    [GeneratedRegex(@"\{\s*(StaticResource|DynamicResource)\s+(?:ResourceKey\s*=\s*)?([^\s,{}]+)\s*\}")]
+    [GeneratedRegex(@"\{\s*(?:\w+:)?(StaticResource|DynamicResource|PaletteColor)(?:Extension)?\s+" +
+        @"(?:ResourceKey\s*=\s*)?['""]?([^\s,'""{}]+)['""]?\s*\}")]
     private static partial Regex ResourceReference();
 
     [GeneratedRegex(@"(?:^|(?<=[=,\s]))#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})(?=$|[,}\s])", RegexOptions.IgnoreCase)]
@@ -87,12 +93,14 @@ internal static partial class Program
         // A style dictionary under Themes (including DesignSystem) is still a consumer.
         var root = document.Root!;
         var palette = Path.GetDirectoryName(path) == Path.GetDirectoryName(Light)
-            && root.Name.LocalName == "ResourceDictionary" && root.Elements().All(e => IsColorProperty(e.Name.LocalName));
+            && root.Name.LocalName == "ResourceDictionary"
+            && root.Elements().All(e => IsColorProperty(e.Name.LocalName));
         var localKeys = root.Elements().Attributes(Xaml + "Key").Select(a => a.Value).ToHashSet();
         foreach (var element in document.Descendants()) {
             var type = element.Name.LocalName;
-            var owner = element.AncestorsAndSelf().Select(e =>
-                (string?)e.Attribute(Xaml + "Key") ?? (string?)e.Attribute(Xaml + "Name")).FirstOrDefault(n => n != null);
+            var owner = element.AncestorsAndSelf()
+                .Select(e => (string?)e.Attribute(Xaml + "Key") ?? (string?)e.Attribute(Xaml + "Name"))
+                .FirstOrDefault(n => n != null);
             foreach (var attr in element.Attributes().Where(a => !a.IsNamespaceDeclaration && a.Name.Namespace != Xaml))
                 CheckValue(attr, attr.Name.LocalName, attr.Value.Trim());
             foreach (var node in element.Nodes().OfType<XText>().Where(t => !string.IsNullOrWhiteSpace(t.Value)))
@@ -108,7 +116,8 @@ internal static partial class Program
                 var color = IsColorProperty(property) || (type == "ColorAnimation" && name is "From" or "To" or "By")
                     || (type.EndsWith("ColorKeyFrame") && name == "Value");
                 var site = $"{owner ?? type}/{property}";
-                void Report(string violation) => Findings.Add((path, ((IXmlLineInfo)source).LineNumber, site, violation));
+                void Report(string violation) =>
+                    Findings.Add((path, ((IXmlLineInfo)source).LineNumber, site, violation));
                 if (!palette) {
                     if (color && NamedColors.Contains(value)) Report($"literal {value}");
                     foreach (Match hex in Hex().Matches(value)) Report($"literal {hex.Value}");
@@ -117,15 +126,21 @@ internal static partial class Program
 
                 void Reference(string kind, string key, bool colorTarget)
                 {
+                    if (kind == "PaletteColor") kind = "StaticResource";
                     if (!colorTarget && !IsThemeKey(key) && !palette) return;
                     if (kind == "StaticResource" && !palette) Report($"{kind} {key}");
                     if (!LightKeys.Contains(key)) Report($"missing {kind} {key}");
-                    else if (palette && kind == "StaticResource" && !localKeys.Contains(key)) Report($"nonlocal {kind} {key}");
+                    else if (!palette && PrimitiveKeys.Contains(key)) Report($"private palette key {key}");
+                    else if (palette && kind == "StaticResource" && !localKeys.Contains(key))
+                        Report($"nonlocal {kind} {key}");
                 }
                 foreach (Match reference in ResourceReference().Matches(value))
                     Reference(reference.Groups[1].Value, reference.Groups[2].Value, color && reference.Value == value);
-                if (name == "ResourceKey" && type is "StaticResource" or "DynamicResource")
-                    Reference(type, value, element.Parent is { } parent && IsColorProperty(parent.Name.LocalName));
+                if (name == "ResourceKey") {
+                    var kind = type.EndsWith("Extension") ? type[..^"Extension".Length] : type;
+                    if (kind is "StaticResource" or "DynamicResource" or "PaletteColor")
+                        Reference(kind, value, element.Parent is { } parent && IsColorProperty(parent.Name.LocalName));
+                }
             }
         }
     }

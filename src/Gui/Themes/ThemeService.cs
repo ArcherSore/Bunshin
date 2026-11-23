@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
-using Gui.Views;
 using Microsoft.Win32;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
@@ -10,6 +9,11 @@ using Application = System.Windows.Application;
 namespace Gui.Themes;
 
 internal enum AppThemeMode { Light, Dark, FollowSystem }
+
+internal interface IThemeWindowBackground
+{
+    void RestoreBackground();
+}
 
 internal sealed class ThemeService
 {
@@ -25,13 +29,16 @@ internal sealed class ThemeService
     {
         _resources = resources;
         _readSystemTheme = readSystemTheme ?? ReadSystemTheme;
-        _activePalette = resources.MergedDictionaries.Single(dictionary => dictionary.Contains("Brush.Canvas"));
+        _activePalette = FindPalette(resources);
         _palettes = palettes ?? new Dictionary<ApplicationTheme, ResourceDictionary> {
             [ApplicationTheme.Light] = _activePalette
         };
     }
 
     internal event EventHandler? ThemeChanged;
+
+    internal static ResourceDictionary FindPalette(ResourceDictionary resources) =>
+        resources.MergedDictionaries.Single(dictionary => dictionary.Contains("Brush.Canvas"));
 
     private static ApplicationTheme ReadSystemTheme() =>
         Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
@@ -73,21 +80,17 @@ internal sealed class ThemeService
         var app = Application.Current;
         foreach (Window window in app.Windows) {
             // The library has already updated MainWindow, but misses ownerless secondary windows.
-            if (window != app.MainWindow) WindowBackgroundManager.UpdateBackground(window, mode, WindowBackdropType.None);
-            RestoreCanvas(window);
+            if (window != app.MainWindow)
+                WindowBackgroundManager.UpdateBackground(window, mode, WindowBackdropType.None);
+            (window as IThemeWindowBackground)?.RestoreBackground();
         }
         ThemeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     internal static void InitializeWindow(Window window)
     {
-        WindowBackgroundManager.UpdateBackground(window, ApplicationThemeManager.GetAppTheme(), WindowBackdropType.None);
-        RestoreCanvas(window);
-    }
-
-    private static void RestoreCanvas(Window window)
-    {
-        // WPF-UI removes the backdrop by assigning a local Background, including on HWND creation.
-        if (window is MainWindow) window.SetResourceReference(Window.BackgroundProperty, "Brush.Canvas");
+        WindowBackgroundManager.UpdateBackground(window, ApplicationThemeManager.GetAppTheme(),
+            WindowBackdropType.None);
+        (window as IThemeWindowBackground)?.RestoreBackground();
     }
 }

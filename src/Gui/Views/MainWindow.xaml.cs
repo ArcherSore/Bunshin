@@ -27,7 +27,7 @@ using FluentWindow = Wpf.Ui.Controls.FluentWindow;
 
 namespace Gui.Views;
 
-public partial class MainWindow : FluentWindow
+public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 {
     private const int MaximumGuiLogEntries = 1000;
     private HwndSource? _modalWindowSource;
@@ -281,6 +281,9 @@ public partial class MainWindow : FluentWindow
             },
             unattended: _launchCommand.AutoStart);
     }
+
+    // WPF-UI assigns a local Background when it updates the backdrop, including on HWND creation.
+    void Themes.IThemeWindowBackground.RestoreBackground() => SetResourceReference(BackgroundProperty, "Brush.Canvas");
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -1439,7 +1442,8 @@ public partial class MainWindow : FluentWindow
         RuntimeStatusTitle.Text = title;
         RuntimeStatusDetail.Text = detail;
         RuntimeStatusDetail.Visibility = detail.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        RuntimeStatusDetail.SetResourceReference(TextBlock.ForegroundProperty, warn ? "Brush.Warning.Foreground" : "Brush.Text.Secondary");
+        RuntimeStatusDetail.SetResourceReference(TextBlock.ForegroundProperty,
+            warn ? "Brush.Warning.Foreground" : "Brush.Text.Secondary");
 
         static string RecoveryTitle(RecoveryReason reason) => reason switch {
             RecoveryReason.StopUnconfirmed => "任务未能确认结束",

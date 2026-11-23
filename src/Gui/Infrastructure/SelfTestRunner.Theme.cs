@@ -28,7 +28,7 @@ internal static partial class SelfTestRunner
     private static void VerifyThemeSwitch(AppLogger logger, string directory)
     {
         var app = (App)System.Windows.Application.Current;
-        var light = app.Resources.MergedDictionaries.Single(dictionary => dictionary.Contains("Brush.Canvas"));
+        var light = ThemeService.FindPalette(app.Resources);
         var alternate = CreateTestPalette(light);
         var systemTheme = ApplicationTheme.Dark;
         var service = new ThemeService(app.Resources, new Dictionary<ApplicationTheme, ResourceDictionary> {
@@ -86,8 +86,9 @@ internal static partial class SelfTestRunner
                     var expectedEdge = (GradientBrush)palette["Brush.Splitter.Tether.Dragging"];
                     var expectedFill = (SolidColorBrush)palette["Brush.Primary.SurfaceHover"];
                     var expectedStroke = (SolidColorBrush)palette["Brush.Primary"];
-                    Require(edge.Background is GradientBrush gradient && gradient.GradientStops.Select(stop => stop.Color)
-                        .SequenceEqual(expectedEdge.GradientStops.Select(stop => stop.Color))
+                    Require(edge.Background is GradientBrush gradient
+                        && gradient.GradientStops.Select(stop => stop.Color)
+                            .SequenceEqual(expectedEdge.GradientStops.Select(stop => stop.Color))
                         && disc.Opacity == 1 && disc.Fill is SolidColorBrush fill && fill.Color == expectedFill.Color
                         && disc.Stroke is SolidColorBrush stroke && stroke.Color == expectedStroke.Color
                         && ((UIElement)disc.Parent).Effect is DropShadowEffect shadow
@@ -224,7 +225,8 @@ internal static partial class SelfTestRunner
             && page.KeyCurrent.Fill is SolidColorBrush legend && legend.Color == category
             && swatch.Fill is SolidColorBrush fill && fill.Color == category,
             "已有时间线标记、图例和配置列表应同时显示当前配置色。");
-        Require(shapes.Any(d => d.Geometry is RectangleGeometry && d.Brush is SolidColorBrush day && day.Color == category)
+        Require(shapes.Any(d => d.Geometry is RectangleGeometry && d.Brush is SolidColorBrush day
+                && day.Color == category)
             && shapes.Any(d => d.Brush is SolidColorBrush track
                 && track.Color == ((SolidColorBrush)palette["Brush.Timeline.Track"]).Color),
             "活动星期指示条和时间线轨道应使用当前配色。");

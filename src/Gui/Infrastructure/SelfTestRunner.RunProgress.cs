@@ -204,7 +204,7 @@ internal static partial class SelfTestRunner
                 "计时刷新不得重建执行计划卡片或添加运行信息。");
 
             var resources = System.Windows.Application.Current.Resources;
-            var light = resources.MergedDictionaries.Single(d => d.Contains("Brush.Canvas"));
+            var light = ThemeService.FindPalette(resources);
             var alternate = CreateTestPalette(light);
             var themes = new ThemeService(resources, new Dictionary<ApplicationTheme, ResourceDictionary> {
                 [ApplicationTheme.Light] = light, [ApplicationTheme.Dark] = alternate
@@ -242,7 +242,8 @@ internal static partial class SelfTestRunner
                 Observe(idle with {
                     LastRun = run with { State = runState, Items = [Item(itemState, started)] }
                 });
-                if (itemState == PlanItemState.Failed) CheckSummary("Brush.RunSummary.FailureSurface", "Brush.RunSummary.FailureBorder");
+                if (itemState == PlanItemState.Failed)
+                    CheckSummary("Brush.RunSummary.FailureSurface", "Brush.RunSummary.FailureBorder");
                 Require(Named<TextBlock>(window, "RunProgressCaption").Text == expected,
                     "运行摘要不能在统计文案前重复添加停止或失败状态。");
             }

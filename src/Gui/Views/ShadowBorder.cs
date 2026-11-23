@@ -42,7 +42,8 @@ public sealed class ShadowBorder : Border
     private void DrawShadow(DrawingContext drawingContext, DropShadowEffect shadow)
     {
         var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var background = ((Background as SolidColorBrush) ?? (SolidColorBrush)GetValue(FallbackBackgroundProperty)).Color;
+        var background = (Background as SolidColorBrush
+            ?? (SolidColorBrush)GetValue(FallbackBackgroundProperty)).Color;
         var key = new StampKey(CornerRadius.TopLeft, shadow.BlurRadius, shadow.ShadowDepth,
             shadow.Direction, shadow.Opacity, shadow.Color, background, dpi);
         if (_tiles is null || _stampKey != key) {

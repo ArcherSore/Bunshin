@@ -894,7 +894,8 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
             };
-            tag.SetResourceReference(TextBlock.ForegroundProperty, invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary");
+            tag.SetResourceReference(TextBlock.ForegroundProperty,
+                invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary");
             if (isSwitch) {
                 tag.Text = ShortenPreview(label, 6);
                 var switchPreview = new StackPanel {

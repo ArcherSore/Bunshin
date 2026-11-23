@@ -30,7 +30,8 @@ internal sealed class ParameterRowPanel : WpfPanel
     }
 
     private static DependencyProperty RegisterBrush(string name) => DependencyProperty.Register(name,
-        typeof(WpfBrush), typeof(ParameterRowPanel), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+        typeof(WpfBrush), typeof(ParameterRowPanel),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
     private WpfBrush? LineBrush => (WpfBrush?)GetValue(LineBrushProperty);
     private WpfBrush? GuideBrush => (WpfBrush?)GetValue(GuideBrushProperty);

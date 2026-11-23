@@ -19,7 +19,8 @@ internal static partial class Program
             foreach (var node in tree.GetRoot().DescendantNodes()) {
                 if (node is LiteralExpressionSyntax literal && literal.IsKind(SyntaxKind.StringLiteralExpression)) {
                     var key = literal.Token.ValueText;
-                    if (!LightKeys.Contains(key) && (IsThemeKey(key) || IsColorLookup(literal, model)))
+                    if (PrimitiveKeys.Contains(key)) Report(literal, $"private palette key {key}");
+                    else if (!LightKeys.Contains(key) && (IsThemeKey(key) || IsColorLookup(literal, model)))
                         Report(literal, $"missing key {key}");
                 }
                 if (node is not IdentifierNameSyntax id) continue;
@@ -29,15 +30,18 @@ internal static partial class Program
                 var info = model.GetSymbolInfo(id);
                 var symbol = info.Symbol ?? info.CandidateSymbols.FirstOrDefault();
                 var type = symbol?.ContainingType?.ToDisplayString();
-                var expression = id.Parent is MemberAccessExpressionSyntax member && member.Name == id ? (ExpressionSyntax)member : id;
-                if (construct && expression.Parent is InvocationExpressionSyntax call && call.Expression == expression) {
+                var expression = id.Parent is MemberAccessExpressionSyntax member && member.Name == id
+                    ? (ExpressionSyntax)member : id;
+                if (construct && expression.Parent is InvocationExpressionSyntax call
+                    && call.Expression == expression) {
                     if (type is "System.Windows.Media.Color" or "System.Drawing.Color"
                         or "System.Windows.Media.ColorConverter" or "System.Drawing.ColorConverter") {
                         if (!ChangesOnlyAlpha(call, name, type))
-                            Report(call, call.WithoutTrivia().NormalizeWhitespace(indentation: "", eol: " ").ToFullString());
+                            Report(call, call.WithoutTrivia().NormalizeWhitespace(indentation: "", eol: " ")
+                                .ToFullString());
                     }
-                } else if (symbol is IPropertySymbol && type is ("System.Windows.Media.Colors" or "System.Windows.Media.Brushes"
-                    or "System.Drawing.Brushes" or "System.Drawing.Color")) {
+                } else if (symbol is IPropertySymbol && type is ("System.Windows.Media.Colors"
+                    or "System.Windows.Media.Brushes" or "System.Drawing.Brushes" or "System.Drawing.Color")) {
                     Report(expression, expression.ToString());
                 }
             }
@@ -51,7 +55,8 @@ internal static partial class Program
                     FieldDeclarationSyntax f => f.Declaration.Variables.First().Identifier.ValueText,
                     _ => declaration?.Kind().ToString() ?? "global"
                 };
-                Findings.Add((tree.FilePath, node.GetLocation().GetLineSpan().StartLinePosition.Line + 1, site, violation));
+                var line = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                Findings.Add((tree.FilePath, line, site, violation));
             }
         }
     }
