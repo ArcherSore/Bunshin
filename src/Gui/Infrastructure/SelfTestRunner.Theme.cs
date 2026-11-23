@@ -6,8 +6,11 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
+using Gui.ChildSession;
 using Gui.Themes;
 using Gui.Views;
+using Gui.Worker;
+using Protocol;
 using Wpf.Ui.Appearance;
 using Button = System.Windows.Controls.Button;
 using Color = System.Windows.Media.Color;
@@ -18,6 +21,9 @@ internal static partial class SelfTestRunner
 {
     [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern nint SendMessageW(nint hwnd, int message, nint wParam, string? lParam);
+
+    [DllImport("dwmapi.dll", ExactSpelling = true)]
+    private static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out int value, int size);
 
     private static void VerifyThemeSwitch(AppLogger logger, string directory)
     {
@@ -66,6 +72,7 @@ internal static partial class SelfTestRunner
                     "WPF-UI 明暗模式和四档强调色应与实际配色一致。");
             }
 
+            RdpPreviewWindow? preview = null;
             try {
                 Check(light, ApplicationTheme.Light);
                 var splitter = window.RuntimeSidebarSplitter;
@@ -89,9 +96,14 @@ internal static partial class SelfTestRunner
                 }
 
                 service.Apply(AppThemeMode.Dark);
+                preview = new RdpPreviewWindow();
+                preview.ShowOffscreen();
+                PumpUntil(() => preview.IsLoaded, "预览窗口应已加载标题栏。");
+                CheckPreviewColors(preview, alternate, dark: true);
                 Check(alternate, ApplicationTheme.Dark);
                 CheckDragging(alternate);
                 service.Apply(AppThemeMode.Light);
+                CheckPreviewColors(preview, light, dark: false);
                 Check(light, ApplicationTheme.Light);
                 CheckDragging(light);
                 splitter.RaiseEvent(new DragCompletedEventArgs(0, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
@@ -101,6 +113,7 @@ internal static partial class SelfTestRunner
                 const int wmSettingChange = 0x001A;
                 const int wmThemeChanged = 0x031A;
                 service.Apply(AppThemeMode.FollowSystem);
+                CheckPreviewColors(preview, alternate, dark: true);
                 Check(alternate, ApplicationTheme.Dark);
                 systemTheme = ApplicationTheme.Light;
                 SendMessageW(hwnd, wmThemeChanged, 0, null);
@@ -120,10 +133,84 @@ internal static partial class SelfTestRunner
                     production.Apply(mode);
                     Check(light, ApplicationTheme.Light);
                 }
+                ((System.Windows.Controls.Panel)window.Content).Children.Remove(button);
+                CheckPageThemeSwitch(window, service, light, alternate);
             } finally {
+                preview?.Close();
                 service.Apply(AppThemeMode.Light);
             }
-        }, themeService: service, scheduleClock: new ScheduleTestClock());
+        }, beforeLoad: path => SetAbout(path, "项目简介", "联系作者", null),
+            themeService: service, scheduleClock: new ScheduleTestClock());
+    }
+
+    private static void CheckPageThemeSwitch(MainWindow window, ThemeService service,
+        ResourceDictionary light, ResourceDictionary alternate)
+    {
+        void RoundTrip(Action<ResourceDictionary> check)
+        {
+            service.Apply(AppThemeMode.Dark);
+            window.UpdateLayout();
+            check(alternate);
+            service.Apply(AppThemeMode.Light);
+            window.UpdateLayout();
+            check(light);
+        }
+
+        ClickOnboarding(window, "HomeNavigationItem");
+        var worker = ScenarioWorker("theme", active: RunState.Running);
+        SetOnboardingField(window, "_workerSnapshot", new WorkerCoordinatorSnapshot(WorkerObservation.Connected,
+            true, worker, ""));
+        InvokeOnboarding(window, "RefreshRuntimeControls");
+        window.UpdateLayout();
+        RoundTrip(palette => {
+            Require(window.RunProgressCaption.IsVisible, "首页应已显示运行摘要。");
+            RequireThemeBrush(window.RunProgressCaption.Foreground, palette, "Brush.Primary", "运行中摘要文字");
+            var segment = window.RunProgressBar.Children.OfType<System.Windows.Shapes.Rectangle>().Single();
+            RequireThemeBrush(segment.Fill, palette, "Brush.Primary", "运行中任务的进度段");
+        });
+
+        ClickOnboarding(window, "HelpNavigationItem");
+        RoundTrip(palette => {
+            var summary = SettingsVisualDescendants(window.HelpView).OfType<TextBlock>()
+                .First(text => text.Name == "Summary" && text.IsVisible);
+            RequireThemeBrush(summary.Foreground, palette, "Brush.Text.Secondary", "帮助页问题摘要");
+        });
+
+        var settings = OpenAboutSection(window);
+        window.UpdateLayout();
+        var navigation = settings.SectionNavigation;
+        var about = SettingsVisualDescendants(settings).OfType<ProjectAboutView>().Single();
+        PumpUntil(() => about.TranslatePoint(default, settings).Y is >= 0 and var top && top < settings.ActualHeight,
+            "设置页应已滚动到关于项目。");
+        RoundTrip(palette => {
+            var selected = (ListBoxItem)navigation.ItemContainerGenerator.ContainerFromItem(navigation.SelectedItem);
+            var description = (FlowDocumentScrollViewer)about.Description.Content;
+            Require(description.IsVisible, "关于页应已显示项目简介。");
+            RequireThemeBrush(selected.Background, palette, "Brush.Primary", "设置页选中的目录项");
+            RequireThemeBrush(description.Document.Foreground, palette, "Brush.Text.Secondary", "关于页项目简介");
+        });
+    }
+
+    private static void CheckPreviewColors(RdpPreviewWindow preview, ResourceDictionary palette, bool dark)
+    {
+        RequireThemeBrush(preview.ViewerTitleBar.Background, palette, "Brush.Canvas", "预览窗口标题栏");
+        RequireThemeBrush(preview.StatusDot.Fill, palette, "Brush.Primary", "预览窗口连接状态点");
+        // DWMWA_USE_IMMERSIVE_DARK_MODE is publicly supported starting with Windows 11.
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) {
+            const int immersiveDarkMode = 20;
+            int result = DwmGetWindowAttribute(new WindowInteropHelper(preview).Handle, immersiveDarkMode,
+                out var value, sizeof(int));
+            Require(result == 0 && (value != 0) == dark,
+                $"预览窗口原生标题栏深色状态应为 {dark}，实际值为 {value} (HRESULT 0x{result:X8})。");
+        }
+    }
+
+    private static void RequireThemeBrush(System.Windows.Media.Brush actual, ResourceDictionary palette,
+        string key, string element)
+    {
+        var expected = ((SolidColorBrush)palette[key]).Color;
+        Require(actual is SolidColorBrush brush && brush.Color == expected,
+            $"{element} 应呈现 {key} 的颜色 {expected}，实际为 {actual}。");
     }
 
     private static void CheckScheduleColors(ScheduleView page, ResourceDictionary palette)
@@ -141,6 +228,9 @@ internal static partial class SelfTestRunner
             && shapes.Any(d => d.Brush is SolidColorBrush track
                 && track.Color == ((SolidColorBrush)palette["Brush.Timeline.Track"]).Color),
             "活动星期指示条和时间线轨道应使用当前配色。");
+        Require(shapes.Any(d => d.Geometry is LineGeometry && d.Pen?.Brush is SolidColorBrush marker
+            && marker.Color == ((SolidColorBrush)palette["Brush.Timeline.Now"]).Color),
+            "时间线的当前时刻指示线应使用当前配色。");
         var expected = (LinearGradientBrush)palette["Brush.Schedule.NextRun"];
         Require(page.NextRunBanner.Background is LinearGradientBrush banner
             && banner.GradientStops.Select(s => s.Color).SequenceEqual(expected.GradientStops.Select(s => s.Color)),
