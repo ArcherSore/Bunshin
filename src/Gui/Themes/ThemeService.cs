@@ -1,22 +1,30 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
 using Gui.Views;
+using Microsoft.Win32;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 using Application = System.Windows.Application;
 
 namespace Gui.Themes;
 
+internal enum AppThemeMode { Light, Dark, FollowSystem }
+
 internal sealed class ThemeService
 {
     private readonly ResourceDictionary _resources;
     private readonly IReadOnlyDictionary<ApplicationTheme, ResourceDictionary> _palettes;
+    private readonly Func<ApplicationTheme> _readSystemTheme;
+    private AppThemeMode _requestedMode = AppThemeMode.Light;
     private ResourceDictionary _activePalette;
 
     internal ThemeService(ResourceDictionary resources,
-        IReadOnlyDictionary<ApplicationTheme, ResourceDictionary>? palettes = null)
+        IReadOnlyDictionary<ApplicationTheme, ResourceDictionary>? palettes = null,
+        Func<ApplicationTheme>? readSystemTheme = null)
     {
         _resources = resources;
+        _readSystemTheme = readSystemTheme ?? ReadSystemTheme;
         _activePalette = resources.MergedDictionaries.Single(dictionary => dictionary.Contains("Brush.Canvas"));
         _palettes = palettes ?? new Dictionary<ApplicationTheme, ResourceDictionary> {
             [ApplicationTheme.Light] = _activePalette
@@ -25,9 +33,31 @@ internal sealed class ThemeService
 
     internal event EventHandler? ThemeChanged;
 
-    internal void Apply(ApplicationTheme requested)
+    private static ApplicationTheme ReadSystemTheme() =>
+        Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "AppsUseLightTheme", 1) is 0 ? ApplicationTheme.Dark : ApplicationTheme.Light;
+
+    internal nint SystemThemeHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
-        var mode = _palettes.ContainsKey(requested) ? requested : ApplicationTheme.Light;
+        const int wmSysColorChange = 0x0015, wmSettingChange = 0x001A, wmThemeChanged = 0x031A,
+            wmDwmColorizationColorChanged = 0x0320;
+        if (_requestedMode == AppThemeMode.FollowSystem
+            && (message is wmSysColorChange or wmThemeChanged or wmDwmColorizationColorChanged
+                || message == wmSettingChange && Marshal.PtrToStringUni(lParam) == "ImmersiveColorSet")) {
+            Apply(AppThemeMode.FollowSystem);
+        }
+        return 0;
+    }
+
+    internal void Apply(AppThemeMode requested)
+    {
+        _requestedMode = requested;
+        var resolved = requested switch {
+            AppThemeMode.FollowSystem => _readSystemTheme(),
+            AppThemeMode.Dark => ApplicationTheme.Dark,
+            _ => ApplicationTheme.Light
+        };
+        var mode = _palettes.ContainsKey(resolved) ? resolved : ApplicationTheme.Light;
         var palette = _palettes[mode];
         if (!ReferenceEquals(palette, _activePalette)) {
             var dictionaries = _resources.MergedDictionaries;

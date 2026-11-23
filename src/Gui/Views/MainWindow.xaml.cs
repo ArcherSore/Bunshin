@@ -40,6 +40,7 @@ public partial class MainWindow : FluentWindow
     }
 
     private readonly AppLogger _logger;
+    private readonly Themes.ThemeService _themes;
     private readonly ApplicationSettings _settings;
     private MainSection _section;
     private readonly string _applicationDirectory;
@@ -88,8 +89,10 @@ public partial class MainWindow : FluentWindow
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
         GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null, Action? quitAfterRun = null,
-        DispatcherTimer? scheduleTimer = null, RunPresentation? presentation = null)
+        DispatcherTimer? scheduleTimer = null, RunPresentation? presentation = null,
+        Themes.ThemeService? themeService = null)
     {
+        _themes = themeService ?? ((App)System.Windows.Application.Current).Themes;
         _launchCommand = launchCommand ?? new LaunchCommand();
         _quitAfterRun = quitAfterRun;
         _presentation = presentation ?? new();
@@ -282,7 +285,9 @@ public partial class MainWindow : FluentWindow
     {
         base.OnSourceInitialized(e);
         Themes.ThemeService.InitializeWindow(this);
-        TaskPlanEditor.AddConfigurationWheelHook(PresentationSource.FromVisual(this) as HwndSource);
+        var source = PresentationSource.FromVisual(this) as HwndSource;
+        source?.AddHook(_themes.SystemThemeHook);
+        TaskPlanEditor.AddConfigurationWheelHook(source);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
