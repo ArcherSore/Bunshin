@@ -90,18 +90,53 @@ fn relaunch_failure_does_not_undo_installed_files()
 }
 
 #[cfg(windows)]
+fn assert_restored(root: &Path, result: &serde_json::Value, logged: &[String], failed: &Path)
+{
+    assert_eq!(result["code"], "install_failed", "{result}");
+    let message = result["message"].as_str().unwrap();
+    assert!(message.contains(&failed.display().to_string()), "{message}");
+    assert!(message.contains("已恢复到更新前的版本"), "{message}");
+    assert_eq!(fs::read_to_string(root.join("old-file")).unwrap(), "old");
+    assert_eq!(fs::read_to_string(root.join("state/old")).unwrap(), "old");
+    assert!(!root.join("Bunshin.exe").exists());
+    assert!(!root.join("cache/updater/old").exists());
+    for name in ["Bunshin.exe", "update-engine.exe"] {
+        assert_eq!(fs::read_to_string(root.join("cache/updater/payload").join(name)).unwrap(), "new");
+    }
+    assert!(logged.iter().any(|line| line.contains("0 项未恢复")), "{logged:?}");
+}
+
+#[cfg(windows)]
 #[test]
-fn move_failure_stops_without_relaunch_or_rollback()
+fn phase_one_failure_names_the_entry_and_restores_moved_entries()
 {
     use std::os::windows::fs::OpenOptionsExt;
     let root = fixture("move-failure");
-    let held = fs::OpenOptions::new().read(true).share_mode(0).open(root.join("old-file")).unwrap();
+    // A handle inside a directory blocks renaming that directory, like a window left in one of its subfolders.
+    let held = fs::OpenOptions::new().read(true).share_mode(0).open(root.join("state/old")).unwrap();
+    let mut logged = Vec::new();
     let result = install(&request(&root, 123), |_| Ok(()), |_| Ok(()),
-        |_| panic!("failed install must not relaunch"), &mut |_| {});
-    assert_eq!(result["code"], "install_failed");
-    assert!(!root.join("Bunshin.exe").exists());
-    assert!(root.join("cache/updater/old").exists());
+        |_| panic!("failed install must not relaunch"), &mut |line| logged.push(line.to_owned()));
     drop(held);
+    assert!(result["message"].as_str().unwrap().contains("阶段 1"), "{result}");
+    assert_restored(&root, &result, &logged, &root.join("state"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn phase_two_failure_returns_new_entries_to_payload_and_restores_old_ones()
+{
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = fixture("payload-failure");
+    let blocked = root.join("cache").join("updater").join("payload").join("update-engine.exe");
+    let held = fs::OpenOptions::new().read(true).share_mode(0).open(&blocked).unwrap();
+    let mut logged = Vec::new();
+    let result = install(&request(&root, 123), |_| Ok(()), |_| Ok(()),
+        |_| panic!("failed install must not relaunch"), &mut |line| logged.push(line.to_owned()));
+    drop(held);
+    assert!(result["message"].as_str().unwrap().contains("阶段 2"), "{result}");
+    assert_restored(&root, &result, &logged, &blocked);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -234,8 +269,9 @@ fn post_ready_failures_show_native_message_with_log_path()
             assert!(!root.join("cache/updater/old").exists());
             assert!(root.join("old-file").exists());
         } else {
-            assert!(text.contains("不要从 old 恢复"));
+            assert!(text.contains("已恢复到更新前的版本"));
             assert!(!root.join("Bunshin.exe").exists());
+            assert_eq!(fs::read_to_string(root.join("old-file")).unwrap(), "old");
         }
         drop(output);
         let clock = Instant::now();
@@ -266,23 +302,6 @@ fn preflight_process_failure_logs_once_without_launching_copy()
     assert!(log.contains("install_preflight"));
     assert!(!root.join("cache/updater/run").exists());
     assert_eq!(fs::read_to_string(root.join("old-file")).unwrap(), "old");
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[cfg(windows)]
-#[test]
-fn payload_write_failure_keeps_old_isolated_and_does_not_launch()
-{
-    use std::os::windows::fs::OpenOptionsExt;
-    let root = fixture("write-failure");
-    let held = fs::OpenOptions::new().read(true).share_mode(0)
-        .open(root.join("cache/updater/payload/Bunshin.exe")).unwrap();
-    let result = install(&request(&root, 123), |_| Ok(()), |_| Ok(()),
-        |_| panic!("partial install cannot launch"), &mut |_| {});
-    assert_eq!(result["code"], "install_failed");
-    assert!(!root.join("old-file").exists());
-    assert!(root.join("cache/updater/old/old-file").exists());
-    drop(held);
     fs::remove_dir_all(root).unwrap();
 }
 
