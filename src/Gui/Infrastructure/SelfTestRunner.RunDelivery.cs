@@ -249,7 +249,8 @@ internal static partial class SelfTestRunner
         var exitErrors = new List<Exception>();
         MainWindow? window = null;
         window = new MainWindow(logger, session, worker, environment, () => Task.CompletedTask,
-            () => Task.CompletedTask, _ => Task.CompletedTask, root, prepareEnvironment: (plan, options, _) => {
+            () => Task.CompletedTask, _ => Task.CompletedTask, root, checkForUpdate: OfflineUpdateCheck,
+            prepareEnvironment: (plan, options, _) => {
                 if (scenario != "quit-recovery") throw loginError;
                 wts.ReportedId = record.ChildSessionId;
                 wts.Sessions.Add(record.ChildSessionId);

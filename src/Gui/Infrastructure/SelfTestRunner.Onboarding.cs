@@ -241,6 +241,10 @@ internal static partial class SelfTestRunner
         AssertOnboardingStep(window, step, title);
     }
 
+    // Self-tests never start the real update engine: it writes logs/updater.log into the application directory.
+    private static Task<Updates.EngineCheckResult> OfflineUpdateCheck(CancellationToken _)
+        => Task.FromException<Updates.EngineCheckResult>(new InvalidOperationException("自检不访问更新引擎。"));
+
     private static void RunOnboardingScenario(AppLogger logger, string directory,
         Action<MainWindow, string> verify, Action<string>? beforeLoad = null, bool recoveryCompleted = false,
         Func<CancellationToken, Task<Updates.EngineCheckResult>>? checkForUpdate = null,
@@ -259,7 +263,7 @@ internal static partial class SelfTestRunner
             $"Gui.Tour.SelfTest.{Guid.NewGuid():N}", usePipeAcl: false);
         var window = new MainWindow(logger, session, coordinator, WindowEnvironment(logger, session, coordinator),
             requestExit ?? (() => Task.CompletedTask), () => Task.CompletedTask, _ => Task.CompletedTask,
-            projectDirectory, checkForUpdate, prepareEnvironment: prepareEnvironment, prepareUpdate: prepareUpdate,
+            projectDirectory, checkForUpdate ?? OfflineUpdateCheck, prepareEnvironment: prepareEnvironment, prepareUpdate: prepareUpdate,
             autostart: InertAutostart(), launchCommand: launchCommand, scheduleClock: scheduleClock,
             themeService: themeService);
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
