@@ -157,14 +157,6 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-        <LinearGradientBrush x:Key="Scroll.FadeTop" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Offset="0" Color="{StaticResource Color.Neutral.50}" />
-            <GradientStop Offset="1" Color="{StaticResource Color.Neutral.50.Clear}" />
-        </LinearGradientBrush>
-        <LinearGradientBrush x:Key="Scroll.FadeBottom" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Offset="0" Color="{StaticResource Color.Neutral.50.Clear}" />
-            <GradientStop Offset="1" Color="{StaticResource Color.Neutral.50}" />
-        </LinearGradientBrush>
         <!-- Canvas scroll areas: overlay thin scrollbar in the right gutter, edges fade while more content exists. -->
         <ControlTemplate x:Key="Scroll.Faded" TargetType="ScrollViewer">
             <Grid>
@@ -172,7 +164,7 @@
                                         CanContentScroll="{TemplateBinding CanContentScroll}" />
                 <Border x:Name="TopFade" Height="{StaticResource Height.ScrollFade}" VerticalAlignment="Top"
                         IsHitTestVisible="False"
-                        Background="{StaticResource Scroll.FadeTop}">
+                        Background="{DynamicResource Brush.Scroll.FadeTop}">
                     <Border.Visibility>
                         <MultiBinding Converter="{StaticResource Scroll.EdgeVisibility}" ConverterParameter="Top">
                             <Binding Path="VerticalOffset" RelativeSource="{RelativeSource TemplatedParent}" />
@@ -182,7 +174,7 @@
                 </Border>
                 <Border x:Name="BottomFade" Height="{StaticResource Height.ScrollFade}" VerticalAlignment="Bottom"
                         IsHitTestVisible="False"
-                        Background="{StaticResource Scroll.FadeBottom}">
+                        Background="{DynamicResource Brush.Scroll.FadeBottom}">
                     <Border.Visibility>
                         <MultiBinding Converter="{StaticResource Scroll.EdgeVisibility}" ConverterParameter="Bottom">
                             <Binding Path="VerticalOffset" RelativeSource="{RelativeSource TemplatedParent}" />
@@ -483,10 +475,10 @@
                                         Visibility="Collapsed">
                                 <ui:SymbolIcon Symbol="Checkmark16" FontSize="13" Margin="0,0,4,0"
                                                VerticalAlignment="Center"
-                                               Foreground="{StaticResource Brush.TasksAccent}" />
+                                               Foreground="{DynamicResource Brush.Tasks.Accent}" />
                                 <TextBlock x:Name="AddedTasksText" FontSize="12"
                                            VerticalAlignment="Center"
-                                           Foreground="{StaticResource Brush.TasksAccent}" />
+                                           Foreground="{DynamicResource Brush.Tasks.Accent}" />
                             </StackPanel>
                         </StackPanel>
                         <ui:TextBox x:Name="TaskSearchBox" Grid.Column="2" Width="180" MinHeight="32"

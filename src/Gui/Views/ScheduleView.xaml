@@ -4,9 +4,6 @@
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              xmlns:views="clr-namespace:Gui.Views">
     <UserControl.Resources>
-        <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{StaticResource Color.Indigo.600}" />
-        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource Color.Indigo.700}" />
-        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{StaticResource Color.Indigo.800}" />
         <Style x:Key="Schedule.Card" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
             <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Gui.ChildSession;
 using Gui.Infrastructure;
+using Gui.Themes;
 using Gui.Views;
 using Gui.Worker;
 using Forms = System.Windows.Forms;
@@ -25,12 +26,20 @@ public partial class App : System.Windows.Application
     private bool _ownsSingleInstanceMutex;
     private bool _hasShownTrayNotification;
     private bool _userExitRequested;
+    internal ThemeService Themes { get; private set; } = null!;
+
+    private void ApplyStartupTheme()
+    {
+        Themes = new ThemeService(Resources);
+        Themes.Apply(Wpf.Ui.Appearance.ApplicationTheme.Light);
+    }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         if (e.Args.Contains("--self-test", StringComparer.OrdinalIgnoreCase)) {
+            ApplyStartupTheme();
             Environment.ExitCode = SelfTestRunner.Run(e.Args);
             Shutdown(Environment.ExitCode);
             return;
@@ -68,6 +77,7 @@ public partial class App : System.Windows.Application
             _logger, Path.Combine(AppContext.BaseDirectory, "state"),
             Path.Combine(AppContext.BaseDirectory, "worker", AppIdentity.WorkerFileName));
         _environment = new RuntimeEnvironment(_logger, _sessionManager, _workerCoordinator);
+        ApplyStartupTheme();
         _mainWindow = new MainWindow(
             _logger, _sessionManager, _workerCoordinator, _environment, RequestExitAsync, EndEnvironmentAsync,
             InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: () => _ = ExitAsync(confirm: null),

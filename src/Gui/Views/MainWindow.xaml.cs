@@ -281,6 +281,7 @@ public partial class MainWindow : FluentWindow
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
+        Themes.ThemeService.InitializeWindow(this);
         TaskPlanEditor.AddConfigurationWheelHook(PresentationSource.FromVisual(this) as HwndSource);
     }
 
@@ -1383,7 +1384,7 @@ public partial class MainWindow : FluentWindow
 
     private static (string Surface, string Foreground) ToneBrushes(StatusTone tone) => tone switch {
         StatusTone.Busy => ("Brush.Warning.Surface", "Brush.Warning.Foreground"),
-        StatusTone.Ok => ("Brush.TasksAccent.Surface", "Brush.Success"),
+        StatusTone.Ok => ("Brush.Tasks.Accent.Surface", "Brush.Success"),
         StatusTone.Run => ("Brush.Primary.Surface", "Brush.Primary"),
         StatusTone.Bad => ("Brush.Error.Surface", "Brush.Error"),
         _ => ("Brush.Surface.Disabled", "Brush.Text.Secondary")

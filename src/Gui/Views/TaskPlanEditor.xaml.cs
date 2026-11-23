@@ -303,8 +303,8 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         }
         var restoreBorder = ((SolidColorBrush)card.BorderBrush).Color;
         var restoreSurface = ((SolidColorBrush)card.Background).Color;
-        var border = new SolidColorBrush(((SolidColorBrush)FindResource("Brush.TasksAccent")).Color);
-        var surface = new SolidColorBrush(((SolidColorBrush)FindResource("Brush.TasksAccent.Surface")).Color);
+        var border = new SolidColorBrush(((SolidColorBrush)FindResource("Brush.Tasks.Accent")).Color);
+        var surface = new SolidColorBrush(((SolidColorBrush)FindResource("Brush.Tasks.Accent.Surface")).Color);
         card.BorderBrush = border;
         card.Background = surface;
         var delay = TimeSpan.FromMilliseconds(700);
@@ -602,7 +602,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             };
             var icon = CreateSymbolIcon(added ? WpfSymbolRegular.Checkmark16 : WpfSymbolRegular.Add16);
             icon.Margin = new Thickness(8, 0, 0, 0);
-            icon.Foreground = (WpfBrush)FindResource("Brush.TasksAccent");
+            icon.Foreground = (WpfBrush)FindResource("Brush.Tasks.Accent");
             var content = new DockPanel();
             DockPanel.SetDock(icon, Dock.Right);
             content.Children.Add(icon);
@@ -700,7 +700,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
                 Margin = new Thickness(1, 6, 0, 6),
                 CornerRadius = new CornerRadius(1.5),
-                Background = (WpfBrush)FindResource("Brush.TasksAccent")
+                Background = (WpfBrush)FindResource("Brush.Tasks.Accent")
             };
             Grid.SetRowSpan(accentLine, 2);
             layout.Children.Add(accentLine);
@@ -906,7 +906,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 switchPreview.Children.Add(new System.Windows.Shapes.Ellipse {
                     Width = 6, Height = 6, Margin = new Thickness(4, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
-                    Fill = (WpfBrush)FindResource(isOn ? "Brush.TasksAccent" : "Brush.Text.Muted")
+                    Fill = (WpfBrush)FindResource(isOn ? "Brush.Tasks.Accent" : "Brush.Text.Muted")
                 });
                 preview.Children.Add(switchPreview);
             } else {
@@ -1357,7 +1357,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     {
         ClearDropIndicators();
         if (boundary >= 0 && boundary < _dropIndicators.Count) {
-            _dropIndicators[boundary].Background = (WpfBrush)FindResource("Brush.TasksAccent");
+            _dropIndicators[boundary].Background = (WpfBrush)FindResource("Brush.Tasks.Accent");
         }
     }
 

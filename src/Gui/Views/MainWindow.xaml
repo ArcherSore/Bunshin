@@ -11,7 +11,7 @@
                  Height="760"
                  MinWidth="920"
                  MinHeight="640"
-                 Background="{StaticResource Brush.Canvas}"
+                 Background="{DynamicResource Brush.Canvas}"
                  Foreground="{StaticResource Brush.Text.Body}"
                  FontFamily="{StaticResource FontFamily.Ui}"
                  FontSize="{StaticResource FontSize.Body}"
@@ -212,9 +212,9 @@
                                                  To="0.6" Duration="0:0:0.09"
                                                  EasingFunction="{StaticResource Handle.In}" />
                                 <ColorAnimation Storyboard.TargetName="DiscFill" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Neutral.0}" Duration="0:0:0.12" />
+                                                To="{StaticResource Color.Surface}" Duration="0:0:0.12" />
                                 <ColorAnimation Storyboard.TargetName="DiscStroke" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Indigo.200}" Duration="0:0:0.12" />
+                                                To="{StaticResource Color.Primary.Border}" Duration="0:0:0.12" />
                             </Storyboard>
                         </VisualState>
                         <VisualState x:Name="Hover">
@@ -239,9 +239,9 @@
                                     <DiscreteBooleanKeyFrame KeyTime="0" Value="True" />
                                 </BooleanAnimationUsingKeyFrames>
                                 <ColorAnimation Storyboard.TargetName="DiscFill" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Neutral.0}" Duration="0:0:0.12" />
+                                                To="{StaticResource Color.Surface}" Duration="0:0:0.12" />
                                 <ColorAnimation Storyboard.TargetName="DiscStroke" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Indigo.200}" Duration="0:0:0.12" />
+                                                To="{StaticResource Color.Primary.Border}" Duration="0:0:0.12" />
                             </Storyboard>
                         </VisualState>
                         <!-- Pressed tint, primary ring and a longer primary edge segment; no fill, no motion. -->
@@ -265,9 +265,9 @@
                                     <DiscreteBooleanKeyFrame KeyTime="0" Value="True" />
                                 </BooleanAnimationUsingKeyFrames>
                                 <ColorAnimation Storyboard.TargetName="DiscFill" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Indigo.100}" Duration="0:0:0.1" />
+                                                To="{StaticResource Color.Primary.SurfaceHover}" Duration="0:0:0.1" />
                                 <ColorAnimation Storyboard.TargetName="DiscStroke" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Indigo.600}" Duration="0:0:0.1" />
+                                                To="{StaticResource Color.Primary}" Duration="0:0:0.1" />
                                 <DoubleAnimation Storyboard.TargetName="DiscShadow" Storyboard.TargetProperty="Opacity"
                                                  To="0.1" Duration="0:0:0.1" />
                             </Storyboard>
@@ -295,9 +295,9 @@
                                 <DoubleAnimation Storyboard.TargetName="DiscShadow" Storyboard.TargetProperty="Opacity"
                                                  To="0" Duration="0:0:0.12" />
                                 <ColorAnimation Storyboard.TargetName="DiscFill" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Neutral.0}" Duration="0:0:0.12" />
+                                                To="{StaticResource Color.Surface}" Duration="0:0:0.12" />
                                 <ColorAnimation Storyboard.TargetName="DiscStroke" Storyboard.TargetProperty="Color"
-                                                To="{StaticResource Color.Indigo.200}" Duration="0:0:0.12" />
+                                                To="{StaticResource Color.Primary.Border}" Duration="0:0:0.12" />
                             </Storyboard>
                         </VisualState>
                     </VisualStateGroup>
@@ -326,7 +326,7 @@
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                                         <GradientStop Color="#003156A3" Offset="0" />
-                                        <GradientStop Color="{StaticResource Color.Indigo.600}" Offset="0.5" />
+                                        <GradientStop Color="{StaticResource Color.Primary}" Offset="0.5" />
                                         <GradientStop Color="#003156A3" Offset="1" />
                                     </LinearGradientBrush>
                                 </Border.Background>
@@ -345,14 +345,14 @@
                         </Grid>
                         <Ellipse StrokeThickness="1">
                             <Ellipse.Fill>
-                                <SolidColorBrush x:Name="DiscFill" Color="{StaticResource Color.Neutral.0}" />
+                                <SolidColorBrush x:Name="DiscFill" Color="{StaticResource Color.Surface}" />
                             </Ellipse.Fill>
                             <Ellipse.Stroke>
-                                <SolidColorBrush x:Name="DiscStroke" Color="{StaticResource Color.Indigo.200}" />
+                                <SolidColorBrush x:Name="DiscStroke" Color="{StaticResource Color.Primary.Border}" />
                             </Ellipse.Stroke>
                             <Ellipse.Effect>
                                 <DropShadowEffect x:Name="DiscShadow" BlurRadius="7" ShadowDepth="1" Direction="270"
-                                                  Opacity="0.16" Color="{StaticResource Color.Neutral.900}" />
+                                                  Opacity="0.16" Color="{StaticResource Color.Splitter.Shadow}" />
                             </Ellipse.Effect>
                         </Ellipse>
                         <Viewbox Width="12" Height="12">
@@ -576,7 +576,7 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <!-- A fixed 64 px rail on every page: icon above label, home on top, update, help, settings below. -->
-            <Border x:Name="MainNavigation" BorderThickness="0,0,1,0" BorderBrush="{StaticResource Rail.Border}"
+            <Border x:Name="MainNavigation" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource Brush.Rail.Border}"
                     Background="{StaticResource Brush.Canvas}" AutomationProperties.Name="导航">
                 <DockPanel Margin="0,6,0,10">
                     <views:RailItem x:Name="HomeNavigationItem" DockPanel.Dock="Top" Tag="Home" IsActive="True"

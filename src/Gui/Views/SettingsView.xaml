@@ -7,10 +7,6 @@
              xmlns:protocol="clr-namespace:Protocol;assembly=Protocol">
     <UserControl.Resources>
         <CornerRadius x:Key="Radius.Settings">8</CornerRadius>
-        <!-- WPF-UI's default blue would sit next to the indigo list highlight. -->
-        <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{StaticResource Color.Indigo.600}" />
-        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource Color.Indigo.700}" />
-        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{StaticResource Color.Indigo.800}" />
         <Style x:Key="OptionalText" TargetType="TextBlock" BasedOn="{StaticResource SecondaryTextStyle}">
             <Style.Triggers>
                 <Trigger Property="Text" Value="">

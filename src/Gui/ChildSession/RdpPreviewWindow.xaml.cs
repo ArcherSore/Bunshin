@@ -68,6 +68,12 @@ internal sealed partial class RdpPreviewWindow
     // True while the window is open far off screen for a connection nobody needs to watch.
     internal bool Offscreen => _offscreen;
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        Themes.ThemeService.InitializeWindow(this);
+    }
+
     // The RDP control needs a shown window to connect. This one has no focus, no taskbar button and no place on screen.
     internal void ShowOffscreen()
     {
