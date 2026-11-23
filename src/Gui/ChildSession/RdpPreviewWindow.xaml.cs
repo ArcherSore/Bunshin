@@ -1,7 +1,8 @@
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
-using WpfBrush = System.Windows.Media.Brush;
+using Border = System.Windows.Controls.Border;
+using Shape = System.Windows.Shapes.Shape;
 using WpfSymbolRegular = Wpf.Ui.Controls.SymbolRegular;
 
 namespace Gui.ChildSession;
@@ -67,6 +68,12 @@ internal sealed partial class RdpPreviewWindow
 
     // True while the window is open far off screen for a connection nobody needs to watch.
     internal bool Offscreen => _offscreen;
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        Themes.ThemeService.InitializeWindow(this);
+    }
 
     // The RDP control needs a shown window to connect. This one has no focus, no taskbar button and no place on screen.
     internal void ShowOffscreen()
@@ -210,8 +217,8 @@ internal sealed partial class RdpPreviewWindow
             : !_large ? "只读观看 · 放大后可允许操作"
             : _interactive ? "可操作 · 输入可能影响正在执行的任务，点击锁定为只读"
             : "只读观看 · 鼠标、滚轮和键盘不传入分身，点击允许操作";
-        PictureFrame.BorderBrush = (WpfBrush)FindResource(_interactive ? "Brush.Warning" : "Brush.Canvas");
-        StatusDot.Fill = (WpfBrush)FindResource(_disconnected ? "Brush.Error"
+        PictureFrame.SetResourceReference(Border.BorderBrushProperty, _interactive ? "Brush.Warning" : "Brush.Canvas");
+        StatusDot.SetResourceReference(Shape.FillProperty, _disconnected ? "Brush.Error"
             : _connected ? "Brush.Success" : "Brush.Primary");
         StatusText.Text = _disconnected ? "连接已断开 · 输入已锁定，请回到主窗口处理"
             : !_connected ? "正在连接 · 如有登录提示，请先完成登录" : string.Empty;

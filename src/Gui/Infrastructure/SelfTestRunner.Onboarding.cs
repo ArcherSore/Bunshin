@@ -248,7 +248,7 @@ internal static partial class SelfTestRunner
         Func<string, IProgress<Updates.EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         LaunchCommand? launchCommand = null,
         Func<ProjectPlanModule, Func<MaaFrameworkOptions>, bool, Task>? prepareEnvironment = null,
-        TimeProvider? scheduleClock = null)
+        TimeProvider? scheduleClock = null, Themes.ThemeService? themeService = null)
     {
         var projectDirectory = CreateProjectFixture(directory);
         beforeLoad?.Invoke(projectDirectory);
@@ -260,7 +260,8 @@ internal static partial class SelfTestRunner
         var window = new MainWindow(logger, session, coordinator, WindowEnvironment(logger, session, coordinator),
             requestExit ?? (() => Task.CompletedTask), () => Task.CompletedTask, _ => Task.CompletedTask,
             projectDirectory, checkForUpdate, prepareEnvironment: prepareEnvironment, prepareUpdate: prepareUpdate,
-            autostart: InertAutostart(), launchCommand: launchCommand, scheduleClock: scheduleClock);
+            autostart: InertAutostart(), launchCommand: launchCommand, scheduleClock: scheduleClock,
+            themeService: themeService);
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var loaded = typeof(MainWindow).GetMethod("MainWindow_Loaded", flags)!;
         window.Loaded -= (RoutedEventHandler)loaded.CreateDelegate(typeof(RoutedEventHandler), window);

@@ -18,6 +18,12 @@ public sealed class ShadowBorder : Border
         nameof(Shadow), typeof(DropShadowEffect), typeof(ShadowBorder),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    private static readonly DependencyProperty FallbackBackgroundProperty = DependencyProperty.Register(
+        "FallbackBackground", typeof(SolidColorBrush), typeof(ShadowBorder),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public ShadowBorder() => SetResourceReference(FallbackBackgroundProperty, "Brush.Surface");
+
     // Reuse the existing shadow settings as data; this is deliberately not UIElement.Effect.
     public DropShadowEffect? Shadow
     {
@@ -36,7 +42,8 @@ public sealed class ShadowBorder : Border
     private void DrawShadow(DrawingContext drawingContext, DropShadowEffect shadow)
     {
         var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var background = (Background as SolidColorBrush)?.Color ?? Colors.White;
+        var background = (Background as SolidColorBrush
+            ?? (SolidColorBrush)GetValue(FallbackBackgroundProperty)).Color;
         var key = new StampKey(CornerRadius.TopLeft, shadow.BlurRadius, shadow.ShadowDepth,
             shadow.Direction, shadow.Opacity, shadow.Color, background, dpi);
         if (_tiles is null || _stampKey != key) {

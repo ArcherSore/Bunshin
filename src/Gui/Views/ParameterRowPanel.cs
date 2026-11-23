@@ -18,9 +18,24 @@ internal sealed class ParameterRowPanel : WpfPanel
 
     internal int Depth { get; init; }
     internal bool Separated { get; init; }
-    internal WpfBrush? LineBrush { get; init; }
-    internal WpfBrush? GuideBrush { get; init; }
-    internal WpfBrush? InvalidBrush { get; init; }
+    private static readonly DependencyProperty LineBrushProperty = RegisterBrush("LineBrush");
+    private static readonly DependencyProperty GuideBrushProperty = RegisterBrush("GuideBrush");
+    private static readonly DependencyProperty InvalidBrushProperty = RegisterBrush("InvalidBrush");
+
+    internal ParameterRowPanel()
+    {
+        SetResourceReference(LineBrushProperty, "Brush.Border.Subtle");
+        SetResourceReference(GuideBrushProperty, "Brush.Parameter.Guide");
+        SetResourceReference(InvalidBrushProperty, "Brush.Error");
+    }
+
+    private static DependencyProperty RegisterBrush(string name) => DependencyProperty.Register(name,
+        typeof(WpfBrush), typeof(ParameterRowPanel),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    private WpfBrush? LineBrush => (WpfBrush?)GetValue(LineBrushProperty);
+    private WpfBrush? GuideBrush => (WpfBrush?)GetValue(GuideBrushProperty);
+    private WpfBrush? InvalidBrush => (WpfBrush?)GetValue(InvalidBrushProperty);
 
     internal bool IsInvalid
     {

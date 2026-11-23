@@ -186,6 +186,7 @@ internal static partial class SelfTestRunner
         new(Group.Project, nameof(VerifyProjectIdentityWindow),
             c => VerifyProjectIdentityWindow(c.Logger, c.Directory)),
 
+        new(Group.Other, nameof(VerifyThemeSwitch), c => VerifyThemeSwitch(c.Logger, c.Directory)),
         new(Group.Other, nameof(VerifyChildSessionPresence), c => VerifyChildSessionPresence(c.Logger)),
         new(Group.Other, nameof(VerifyRdpClientClsid), _ => VerifyRdpClientClsid()),
         new(Group.Other, nameof(VerifyRdpLogonEvents), _ => VerifyRdpLogonEvents()),

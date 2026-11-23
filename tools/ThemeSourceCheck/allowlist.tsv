@@ -1,0 +1,2 @@
+# Path, owning element/member and property, violation, reason (tab-separated, one row per occurrence).
+src/Gui/Infrastructure/SelfTestRunner.Theme.cs	CreateTestPalette	Color.FromRgb(0x52, ++index, 0x81)	切换自测需要逐键生成可区分的替代色。

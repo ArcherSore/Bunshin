@@ -6,7 +6,6 @@ using System.Windows.Media;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfColor = System.Windows.Media.Color;
-using WpfColors = System.Windows.Media.Colors;
 using WpfCursors = System.Windows.Input.Cursors;
 using WpfFontFamily = System.Windows.Media.FontFamily;
 using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
@@ -21,7 +20,7 @@ namespace Gui.Views;
 // configuration, which can only be selected here.
 internal enum TimelinePinRole { Active, Sibling, Other }
 
-internal sealed record TimelinePin(Guid ConfigurationId, Guid PolicyId, DayOfWeek Day, TimeOnly Time, WpfColor Color,
+internal sealed record TimelinePin(Guid ConfigurationId, Guid PolicyId, DayOfWeek Day, TimeOnly Time, int PaletteIndex,
     TimelinePinRole Role, bool Enabled, bool Skipped, double Offset, string Tip);
 
 // One week, Monday first, 24 hours across. Drawn in OnRender so many points stay cheap. Clicking an empty track picks
@@ -33,21 +32,31 @@ internal sealed class ScheduleTimeline : FrameworkElement
     // The smallest row that still reads well; below it the editor column scrolls instead.
     private const double MinRow = 20;
     private const int AddStep = 15, DragStep = 5;
-    // The static parts of every row are drawn with shared frozen resources instead of new ones per render.
-    private static readonly WpfPen GridPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
-        WpfColor.FromRgb(0xE9, 0xEE, 0xF4))), 1));
-    private static readonly WpfPen GridStrongPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
-        WpfColor.FromRgb(0xDC, 0xE3, 0xEC))), 1));
-    private static readonly WpfPen HatchPen = Frozen(new WpfPen(Frozen(new SolidColorBrush(
-        WpfColor.FromArgb(0x18, 0x18, 0x22, 0x30))), 1));
-    private static readonly SolidColorBrush NightBrush =
-        Frozen(new SolidColorBrush(WpfColor.FromRgb(0xF1, 0xF4, 0xF8)));
-    private static readonly SolidColorBrush TrackBrush =
-        Frozen(new SolidColorBrush(WpfColor.FromRgb(0xFB, 0xFC, 0xFE)));
-    private static readonly WpfColor NowColor = WpfColor.FromRgb(0xE0, 0x31, 0x31);
-    private static readonly WpfColor WarnColor = WpfColor.FromRgb(0xD0, 0x8A, 0x16);
-    private static readonly WpfColor MutedColor = WpfColor.FromRgb(0x5F, 0x6E, 0x80);
-    private static readonly WpfColor DisabledColor = WpfColor.FromRgb(0xA3, 0xAF, 0xBF);
+    internal static readonly IReadOnlyList<string> PaletteKeys = [
+        "Brush.Chart.Category1", "Brush.Chart.Category2", "Brush.Chart.Category3",
+        "Brush.Chart.Category4", "Brush.Chart.Category5", "Brush.Chart.Category6"
+    ];
+
+    // Each brush invalidates the drawing independently, including a palette slot used only by another configuration.
+    private static DependencyProperty RegisterBrush(string name) => DependencyProperty.Register(
+        name, typeof(SolidColorBrush), typeof(ScheduleTimeline),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    private static readonly DependencyProperty[] CategoryBrushes = PaletteKeys
+        .Select((_, index) => RegisterBrush($"CategoryBrush{index + 1}")).ToArray();
+    private static readonly DependencyProperty GridBrushProperty = RegisterBrush("GridBrush");
+    private static readonly DependencyProperty GridStrongBrushProperty = RegisterBrush("GridStrongBrush");
+    private static readonly DependencyProperty HatchBrushProperty = RegisterBrush("HatchBrush");
+    private static readonly DependencyProperty NightBrushProperty = RegisterBrush("NightBrush");
+    private static readonly DependencyProperty TrackBrushProperty = RegisterBrush("TrackBrush");
+    private static readonly DependencyProperty NowBrushProperty = RegisterBrush("NowBrush");
+    private static readonly DependencyProperty WarningBrushProperty = RegisterBrush("WarningBrush");
+    private static readonly DependencyProperty MutedBrushProperty = RegisterBrush("MutedBrush");
+    private static readonly DependencyProperty DisabledBrushProperty = RegisterBrush("DisabledBrush");
+    private static readonly DependencyProperty SurfaceBrushProperty = RegisterBrush("SurfaceBrush");
+    private static readonly DependencyProperty InverseBrushProperty = RegisterBrush("InverseBrush");
+    private static readonly DependencyProperty PrimaryBrushProperty = RegisterBrush("PrimaryBrush");
+    private static readonly DependencyProperty TodayBorderBrushProperty = RegisterBrush("TodayBorderBrush");
 
     private readonly WpfToolTip _tip = new() { Placement = PlacementMode.Relative };
     private IReadOnlyList<TimelinePin> _pins = [];
@@ -60,16 +69,30 @@ internal sealed class ScheduleTimeline : FrameworkElement
     // Taking focus on a press lets a time being typed in the editor commit before the click changes anything.
     public ScheduleTimeline()
     {
+        SetResourceReference(GridBrushProperty, "Brush.Timeline.Grid");
+        SetResourceReference(GridStrongBrushProperty, "Brush.Timeline.GridStrong");
+        SetResourceReference(HatchBrushProperty, "Brush.Timeline.Hatch");
+        SetResourceReference(NightBrushProperty, "Brush.Timeline.Night");
+        SetResourceReference(TrackBrushProperty, "Brush.Timeline.Track");
+        SetResourceReference(NowBrushProperty, "Brush.Timeline.Now");
+        SetResourceReference(WarningBrushProperty, "Brush.Timeline.Warning");
+        SetResourceReference(MutedBrushProperty, "Brush.Text.Muted");
+        SetResourceReference(DisabledBrushProperty, "Brush.Timeline.Inactive");
+        SetResourceReference(SurfaceBrushProperty, "Brush.Surface");
+        SetResourceReference(InverseBrushProperty, "Brush.Text.Inverse");
+        SetResourceReference(PrimaryBrushProperty, "Brush.Primary");
+        SetResourceReference(TodayBorderBrushProperty, "Brush.Primary.Border");
+        for (var index = 0; index < CategoryBrushes.Length; index++) {
+            SetResourceReference(CategoryBrushes[index], PaletteKeys[index]);
+        }
         _tip.PlacementTarget = this;
         Focusable = true;
         FocusVisualStyle = null;
     }
 
-    private static T Frozen<T>(T resource) where T : Freezable
-    {
-        resource.Freeze();
-        return resource;
-    }
+    private SolidColorBrush BrushFor(DependencyProperty property) => (SolidColorBrush)GetValue(property);
+    private SolidColorBrush CategoryBrush(int index) => BrushFor(CategoryBrushes[index]);
+    private SolidColorBrush ActiveBrush => CategoryBrush(ActivePaletteIndex);
 
     internal event Action<DayOfWeek, TimeOnly>? EmptyClicked;
     internal event Action<DayOfWeek>? DayClicked;
@@ -91,7 +114,7 @@ internal sealed class ScheduleTimeline : FrameworkElement
     }
 
     internal IReadOnlySet<DayOfWeek> ActiveDays { get; set; } = new HashSet<DayOfWeek>();
-    internal WpfColor ActiveColor { get; set; } = WpfColor.FromRgb(0x31, 0x56, 0xA3);
+    internal int ActivePaletteIndex { get; set; }
     internal (Guid PolicyId, TimeOnly Time)? Selected { get; set; }
     internal DateTime Clock { get; set; } = DateTime.Now;
 
@@ -124,17 +147,23 @@ internal sealed class ScheduleTimeline : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
+        var gridPen = new WpfPen(BrushFor(GridBrushProperty), 1);
+        var gridStrongPen = new WpfPen(BrushFor(GridStrongBrushProperty), 1);
+        var hatchPen = new WpfPen(BrushFor(HatchBrushProperty), 1);
+        var muted = BrushFor(MutedBrushProperty);
+        var nowBrush = BrushFor(NowBrushProperty);
+        var inverse = BrushFor(InverseBrushProperty);
         var dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         var family = TryFindResource("FontFamily.Ui") as WpfFontFamily ?? new WpfFontFamily("Segoe UI");
         var regular = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
         var bold = new Typeface(family, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
-        FormattedText Text(string text, double size, WpfColor color, bool strong) => new(text,
+        FormattedText Text(string text, double size, WpfBrush brush, bool strong) => new(text,
             CultureInfo.CurrentUICulture, System.Windows.FlowDirection.LeftToRight, strong ? bold : regular, size,
-            new SolidColorBrush(color), dip);
+            brush, dip);
 
         dc.DrawRectangle(WpfBrushes.Transparent, null, new Rect(0, 0, ActualWidth, ActualHeight));
         for (var hour = 0; hour <= 24; hour += 3) {
-            var label = Text(hour.ToString("00"), 10.5, MutedColor, false);
+            var label = Text(hour.ToString("00"), 10.5, muted, false);
             dc.DrawText(label, new WpfPoint(X(hour * 60) - label.Width / 2, 3));
         }
 
@@ -144,36 +173,38 @@ internal sealed class ScheduleTimeline : FrameworkElement
             var top = RowTop(day);
             var track = new Rect(Gutter, TrackTop(day), TrackWidth, TrackHeight);
             var active = ActiveDays.Contains(day);
-            var label = Text(SchedulePreview.DayName(day), 12, active ? ActiveColor : MutedColor, active);
+            var label = Text(SchedulePreview.DayName(day), 12, active ? ActiveBrush : muted, active);
             dc.DrawText(label, new WpfPoint(Gutter - 14 - label.Width, top + (RowHeight - label.Height) / 2));
             if (active) {
-                dc.DrawRoundedRectangle(new SolidColorBrush(ActiveColor), null,
+                dc.DrawRoundedRectangle(ActiveBrush, null,
                     new Rect(6, top + RowHeight / 2 - 8, 3, 16), 1.5, 1.5);
             }
 
             dc.PushClip(new RectangleGeometry(track, 6, 6));
-            dc.DrawRectangle(TrackBrush, null, track);
-            dc.DrawRectangle(NightBrush, null, new Rect(X(0), track.Top, X(360) - X(0), track.Height));
-            dc.DrawRectangle(NightBrush, null, new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
+            dc.DrawRectangle(BrushFor(TrackBrushProperty), null, track);
+            dc.DrawRectangle(BrushFor(NightBrushProperty), null,
+                new Rect(X(0), track.Top, X(360) - X(0), track.Height));
+            dc.DrawRectangle(BrushFor(NightBrushProperty), null,
+                new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
             for (var hour = 1; hour < 24; hour++) {
                 var x = Math.Round(X(hour * 60)) + 0.5;
-                dc.DrawLine(hour % 6 == 0 ? GridStrongPen : GridPen, new WpfPoint(x, track.Top),
+                dc.DrawLine(hour % 6 == 0 ? gridStrongPen : gridPen, new WpfPoint(x, track.Top),
                     new WpfPoint(x, track.Bottom));
             }
             if (day == today) {
                 // Today's elapsed part: minutes that have passed are never caught up on.
                 dc.PushClip(new RectangleGeometry(new Rect(track.Left, track.Top, X(now) - track.Left, track.Height)));
                 for (var x = track.Left - track.Height; x < X(now); x += 6) {
-                    dc.DrawLine(HatchPen,new WpfPoint(x, track.Bottom), new WpfPoint(x + track.Height, track.Top));
+                    dc.DrawLine(hatchPen, new WpfPoint(x, track.Bottom), new WpfPoint(x + track.Height, track.Top));
                 }
                 dc.Pop();
             }
             dc.Pop();
-            if (day == today && TryFindResource("Brush.Primary.Border") is WpfBrush border) {
-                dc.DrawRoundedRectangle(null, new WpfPen(border, 1), track, 6, 6);
+            if (day == today) {
+                dc.DrawRoundedRectangle(null, new WpfPen(BrushFor(TodayBorderBrushProperty), 1), track, 6, 6);
             }
             if (_preview is { } preview && preview.Days.Contains(day)) {
-                var tint = preview.Remove ? NowColor : ActiveColor;
+                var tint = (preview.Remove ? nowBrush : ActiveBrush).Color;
                 dc.DrawRoundedRectangle(new SolidColorBrush(WpfColor.FromArgb(0x1C, tint.R, tint.G, tint.B)),
                     new WpfPen(new SolidColorBrush(WpfColor.FromArgb(0x80, tint.R, tint.G, tint.B)), 1), track, 6, 6);
             }
@@ -190,32 +221,32 @@ internal sealed class ScheduleTimeline : FrameworkElement
         }
 
         if (_preview is { Remove: false } added) {
-            var pen = new WpfPen(new SolidColorBrush(ActiveColor), 2) { DashStyle = new DashStyle([1.5, 1.5], 0) };
+            var pen = new WpfPen(ActiveBrush, 2) { DashStyle = new DashStyle([1.5, 1.5], 0) };
             foreach (var day in added.Days) {
                 var point = new WpfPoint(X(Minutes(added.Time)), RowTop(day) + RowHeight / 2);
-                dc.DrawEllipse(WpfBrushes.White, pen, point, 6, 6);
-                var label = Text(SchedulePreview.TimeText(added.Time), 10, ActiveColor, true);
+                dc.DrawEllipse(BrushFor(SurfaceBrushProperty), pen, point, 6, 6);
+                var label = Text(SchedulePreview.TimeText(added.Time), 10, ActiveBrush, true);
                 dc.DrawText(label, new WpfPoint(point.X + 11, point.Y - label.Height / 2));
             }
         }
 
-        var primary = (TryFindResource("Brush.Primary") as SolidColorBrush)?.Color ?? ActiveColor;
+        var primary = BrushFor(PrimaryBrushProperty);
         if (_hover is { } hover && _dragging is null && _preview is null) {
             var top = TrackTop(hover.Day);
             var x = Math.Round(X(hover.Minutes)) + 0.5;
-            dc.DrawLine(new WpfPen(new SolidColorBrush(primary), 1), new WpfPoint(x, top + 2),
+            dc.DrawLine(new WpfPen(primary, 1), new WpfPoint(x, top + 2),
                 new WpfPoint(x, top + TrackHeight - 2));
             var time = SchedulePreview.TimeText(FromMinutes(hover.Minutes));
-            DrawTag(dc, Text((ActiveDays.Contains(hover.Day) ? "+ " : "新建 ") + time, 10, WpfColors.White, true),
+            DrawTag(dc, Text((ActiveDays.Contains(hover.Day) ? "+ " : "新建 ") + time, 10, inverse, true),
                 x, top - 10, primary);
         }
 
         var nowX = Math.Round(X(now)) + 0.5;
         var todayTop = TrackTop(today) - 3;
-        dc.DrawLine(new WpfPen(new SolidColorBrush(NowColor), 2), new WpfPoint(nowX, todayTop),
+        dc.DrawLine(new WpfPen(nowBrush, 2), new WpfPoint(nowX, todayTop),
             new WpfPoint(nowX, todayTop + TrackHeight + 6));
-        DrawTag(dc, Text("现在 " + Clock.ToString("HH\\:mm"), 10, WpfColors.White, true), nowX, todayTop - 10,
-            NowColor);
+        DrawTag(dc, Text("现在 " + Clock.ToString("HH\\:mm"), 10, inverse, true), nowX, todayTop - 10,
+            nowBrush);
     }
 
     private bool IsDragging(TimelinePin pin) => _dragging is { } drag && drag.PolicyId == pin.PolicyId
@@ -237,53 +268,57 @@ internal sealed class ScheduleTimeline : FrameworkElement
     {
         var point = DrawnPoint(pin);
         var radius = Radius(pin);
+        var brush = CategoryBrush(pin.PaletteIndex);
         // A policy's times are shared by all its days, so pointing at one shows every point that changes with it.
         if (pin.Role == TimelinePinRole.Active && _hoverPin is { Role: TimelinePinRole.Active } hovered
             && hovered.PolicyId == pin.PolicyId && hovered.Time == pin.Time && _dragging is null) {
-            dc.DrawEllipse(new SolidColorBrush(WpfColor.FromArgb(0x40, pin.Color.R, pin.Color.G, pin.Color.B)), null,
-                point, radius + 5, radius + 5);
+            dc.DrawEllipse(new SolidColorBrush(WpfColor.FromArgb(0x40, brush.Color.R, brush.Color.G, brush.Color.B)),
+                null, point, radius + 5, radius + 5);
         }
         var removed = _preview is { Remove: true } preview && pin.Role == TimelinePinRole.Active
             && preview.Days.Contains(pin.Day) && preview.Time == pin.Time;
         dc.PushOpacity(pin.Role switch { TimelinePinRole.Sibling => 0.35, TimelinePinRole.Other => 0.8, _ => 1.0 });
         if (removed) {
-            dc.DrawEllipse(new SolidColorBrush(NowColor), new WpfPen(WpfBrushes.White, 2), point, radius, radius);
+            dc.DrawEllipse(BrushFor(NowBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 2),
+                point, radius, radius);
         } else if (pin.Enabled) {
-            dc.DrawEllipse(new SolidColorBrush(pin.Color),
-                new WpfPen(WpfBrushes.White, pin.Role == TimelinePinRole.Other ? 1 : 2), point, radius, radius);
+            dc.DrawEllipse(brush,
+                new WpfPen(BrushFor(SurfaceBrushProperty), pin.Role == TimelinePinRole.Other ? 1 : 2),
+                point, radius, radius);
         } else {
-            dc.DrawEllipse(WpfBrushes.White, new WpfPen(new SolidColorBrush(DisabledColor), 2), point,
+            dc.DrawEllipse(BrushFor(SurfaceBrushProperty), new WpfPen(BrushFor(DisabledBrushProperty), 2), point,
                 radius - 1, radius - 1);
         }
         if (pin.Role == TimelinePinRole.Active && Selected is { } selected
             && selected.PolicyId == pin.PolicyId && selected.Time == pin.Time) {
-            dc.DrawEllipse(null, new WpfPen(new SolidColorBrush(pin.Color), 2), point, radius + 4, radius + 4);
+            dc.DrawEllipse(null, new WpfPen(brush, 2), point, radius + 4, radius + 4);
         }
         dc.Pop();
     }
 
     private void DrawPinMarks(DrawingContext dc, TimelinePin pin,
-        Func<string, double, WpfColor, bool, FormattedText> text)
+        Func<string, double, WpfBrush, bool, FormattedText> text)
     {
         var point = DrawnPoint(pin);
         var radius = Radius(pin);
         if (pin.Skipped) {
             var badge = new WpfPoint(point.X - radius - 3, point.Y - radius - 2);
-            dc.DrawEllipse(new SolidColorBrush(WarnColor), new WpfPen(WpfBrushes.White, 1.5), badge, 6, 6);
-            var mark = text("!", 9, WpfColors.White, true);
+            dc.DrawEllipse(BrushFor(WarningBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 1.5),
+                badge, 6, 6);
+            var mark = text("!", 9, BrushFor(InverseBrushProperty), true);
             dc.DrawText(mark, new WpfPoint(badge.X - mark.Width / 2, badge.Y - mark.Height / 2));
         }
         if (pin.Role == TimelinePinRole.Active) {
             var label = text(SchedulePreview.TimeText(IsDragging(pin) ? FromMinutes(_dragMinutes) : pin.Time), 10,
-                pin.Color, true);
+                CategoryBrush(pin.PaletteIndex), true);
             dc.DrawText(label, new WpfPoint(point.X + radius + 4, point.Y - label.Height / 2));
         }
     }
 
-    private static void DrawTag(DrawingContext dc, FormattedText label, double x, double y, WpfColor background)
+    private static void DrawTag(DrawingContext dc, FormattedText label, double x, double y, WpfBrush background)
     {
         var box = new Rect(x - label.Width / 2 - 5, y - 1, label.Width + 10, label.Height + 2);
-        dc.DrawRoundedRectangle(new SolidColorBrush(background), null, box, 3, 3);
+        dc.DrawRoundedRectangle(background, null, box, 3, 3);
         dc.DrawText(label, new WpfPoint(box.Left + 5, y));
     }
 

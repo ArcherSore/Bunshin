@@ -7,10 +7,6 @@
              xmlns:protocol="clr-namespace:Protocol;assembly=Protocol">
     <UserControl.Resources>
         <CornerRadius x:Key="Radius.Settings">8</CornerRadius>
-        <!-- WPF-UI's default blue would sit next to the indigo list highlight. -->
-        <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="{StaticResource Color.Indigo.600}" />
-        <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource Color.Indigo.700}" />
-        <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="{StaticResource Color.Indigo.800}" />
         <Style x:Key="OptionalText" TargetType="TextBlock" BasedOn="{StaticResource SecondaryTextStyle}">
             <Style.Triggers>
                 <Trigger Property="Text" Value="">
@@ -23,18 +19,18 @@
         </Style>
         <Style x:Key="ItemHeading" TargetType="TextBlock" BasedOn="{StaticResource OptionalText}">
             <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
             <Setter Property="FontWeight" Value="Medium" />
         </Style>
         <Style x:Key="ItemDescription" TargetType="TextBlock" BasedOn="{StaticResource OptionalText}">
             <Setter Property="Margin" Value="0,2,0,0" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Muted}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
         </Style>
         <Style x:Key="ItemIcon" TargetType="ui:SymbolIcon">
             <Setter Property="Margin" Value="0,0,12,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="FontSize" Value="20" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Primary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Primary}" />
         </Style>
         <!-- The quiet filled button that keeps rows calm; the outlined default would compete with the text. -->
         <Style x:Key="ItemButton" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
@@ -43,8 +39,8 @@
             <Setter Property="Padding" Value="16,7" />
             <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
             <Setter Property="FontWeight" Value="Medium" />
-            <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Body}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -58,20 +54,20 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Border}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Border}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Border.Strong}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Border.Strong}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}" />
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="NavigationItem" TargetType="ListBoxItem">
             <Setter Property="Margin" Value="0,0,0,4" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
             <Setter Property="AutomationProperties.Name" Value="{Binding Definition.Title}" />
             <Setter Property="Template">
@@ -86,12 +82,12 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                 </Trigger>
                 <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Primary}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Inverse}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Primary}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Inverse}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -182,7 +178,7 @@
                            RenderOptions.BitmapScalingMode="HighQuality" />
                     <TextBlock x:Name="ProjectAboutName"
                                Text="{Binding About.Content.Name, FallbackValue={x:Static protocol:AppIdentity.Name}}" Margin="0,12,0,0"
-                               FontSize="18" FontWeight="Bold" Foreground="{StaticResource Brush.Text.Primary}"
+                               FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.Text.Primary}"
                                TextAlignment="Center" />
                 </StackPanel>
                 <views:ProjectAboutView Project="{Binding About.Content}" OpenLink="{Binding About.OpenLink}" />
@@ -215,7 +211,7 @@
         </Style>
         <Style x:Key="RowBorder" TargetType="Border">
             <Setter Property="Padding" Value="16,14" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Subtle}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
             <Setter Property="BorderThickness" Value="0,1,0,0" />
             <Style.Triggers>
                 <DataTrigger Value="0" Binding="{Binding (ItemsControl.AlternationIndex),
@@ -233,8 +229,8 @@
             <ColumnDefinition Width="160" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
-        <Border Padding="12,16" Background="{StaticResource Brush.Surface}"
-                BorderBrush="{StaticResource Brush.Border.Subtle}" BorderThickness="0,0,1,0">
+        <Border Padding="12,16" Background="{DynamicResource Brush.Surface}"
+                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,1,0">
             <!-- No scroll host: the list is short, and the content column owns scrolling. -->
             <ListBox x:Name="SectionNavigation" ItemsSource="{Binding Sections}" SelectedIndex="0"
                      ItemContainerStyle="{StaticResource NavigationItem}"
@@ -268,17 +264,17 @@
                             <StackPanel Margin="0,0,0,20">
                                 <StackPanel Orientation="Horizontal">
                                     <ui:SymbolIcon Symbol="{Binding Definition.Icon}" FontSize="16" Margin="0,0,8,0"
-                                                   Foreground="{StaticResource Brush.Text.Primary}" />
+                                                   Foreground="{DynamicResource Brush.Text.Primary}" />
                                     <TextBlock Text="{Binding Definition.Title}" FontWeight="SemiBold"
-                                               Foreground="{StaticResource Brush.Text.Primary}" />
+                                               Foreground="{DynamicResource Brush.Text.Primary}" />
                                 </StackPanel>
                                 <TextBlock Text="{Binding Definition.Description}" Margin="0,4,0,0"
                                            Style="{StaticResource OptionalText}" />
                                 <ItemsControl ItemsSource="{Binding Cards}" Margin="0,12,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border Margin="0,0,0,12" Background="{StaticResource Brush.Surface}"
-                                                    BorderBrush="{StaticResource Brush.Border}" BorderThickness="1"
+                                            <Border Margin="0,0,0,12" Background="{DynamicResource Brush.Surface}"
+                                                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
                                                     CornerRadius="10">
                                                 <ItemsControl ItemsSource="{Binding}"
                                                               AlternationCount="2147483647">

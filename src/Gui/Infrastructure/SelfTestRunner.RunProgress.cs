@@ -5,6 +5,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Point = System.Windows.Point;
 using Gui.ChildSession;
+using Gui.Themes;
+using Wpf.Ui.Appearance;
 using Protocol;
 using Gui.Views;
 using Gui.Worker;
@@ -201,9 +203,32 @@ internal static partial class SelfTestRunner
                 items.Children.OfType<System.Windows.Controls.Border>().Single(border => border.Tag is not null)),
                 "计时刷新不得重建执行计划卡片或添加运行信息。");
 
+            var resources = System.Windows.Application.Current.Resources;
+            var light = ThemeService.FindPalette(resources);
+            var alternate = CreateTestPalette(light);
+            var themes = new ThemeService(resources, new Dictionary<ApplicationTheme, ResourceDictionary> {
+                [ApplicationTheme.Light] = light, [ApplicationTheme.Dark] = alternate
+            });
+            void CheckSummary(string surfaceKey, string borderKey)
+            {
+                var summary = window.RunSummaryCard;
+                try {
+                    themes.Apply(AppThemeMode.Dark);
+                    Check(alternate);
+                } finally {
+                    themes.Apply(AppThemeMode.Light);
+                }
+                Check(light);
+
+                void Check(ResourceDictionary palette) =>
+                    Require(summary.IsVisible && summary.Background == palette[surfaceKey]
+                        && summary.BorderBrush == palette[borderKey], "已有运行摘要的背景和边框应随配色切换。");
+            }
+
             Observe(idle with {
                 LastRun = run with { State = RunState.Succeeded, Items = [Item(PlanItemState.Succeeded, started)] }
             });
+            CheckSummary("Brush.Surface.Subdued", "Brush.Border.Subtle");
             Require(CardText() == idleCardText && !timer.IsEnabled, "Run 结束后卡片不展示结果，控制台计时停止。");
             window.ApplyRuntimeControls(new(new RuntimeAction.Prepare(true), true, null,
                 new DesktopToggle(DesktopAction.Show, false, DesktopStatus.NotRunning), true));
@@ -217,6 +242,8 @@ internal static partial class SelfTestRunner
                 Observe(idle with {
                     LastRun = run with { State = runState, Items = [Item(itemState, started)] }
                 });
+                if (itemState == PlanItemState.Failed)
+                    CheckSummary("Brush.RunSummary.FailureSurface", "Brush.RunSummary.FailureBorder");
                 Require(Named<TextBlock>(window, "RunProgressCaption").Text == expected,
                     "运行摘要不能在统计文案前重复添加停止或失败状态。");
             }

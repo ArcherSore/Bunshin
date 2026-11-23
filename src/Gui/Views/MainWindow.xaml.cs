@@ -18,7 +18,8 @@ using Gui.Settings;
 using Gui.Runtime;
 using Updates;
 using Gui.Worker;
-using WpfBrush = System.Windows.Media.Brush;
+using WpfControl = System.Windows.Controls.Control;
+using Shape = System.Windows.Shapes.Shape;
 using WpfSymbol = Wpf.Ui.Controls.SymbolRegular;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
 using WpfMessageBox = System.Windows.MessageBox;
@@ -26,7 +27,7 @@ using FluentWindow = Wpf.Ui.Controls.FluentWindow;
 
 namespace Gui.Views;
 
-public partial class MainWindow : FluentWindow
+public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 {
     private const int MaximumGuiLogEntries = 1000;
     private HwndSource? _modalWindowSource;
@@ -40,6 +41,7 @@ public partial class MainWindow : FluentWindow
     }
 
     private readonly AppLogger _logger;
+    private readonly Themes.ThemeService _themes;
     private readonly ApplicationSettings _settings;
     private MainSection _section;
     private readonly string _applicationDirectory;
@@ -88,8 +90,10 @@ public partial class MainWindow : FluentWindow
         Func<string, IProgress<EngineProgress>, CancellationToken, Task<string>>? prepareUpdate = null,
         AutostartTask? autostart = null, LaunchCommand? launchCommand = null,
         GuiTelemetry? telemetry = null, TimeProvider? scheduleClock = null, Action? quitAfterRun = null,
-        DispatcherTimer? scheduleTimer = null, RunPresentation? presentation = null)
+        DispatcherTimer? scheduleTimer = null, RunPresentation? presentation = null,
+        Themes.ThemeService? themeService = null)
     {
+        _themes = themeService ?? ((App)System.Windows.Application.Current).Themes;
         _launchCommand = launchCommand ?? new LaunchCommand();
         _quitAfterRun = quitAfterRun;
         _presentation = presentation ?? new();
@@ -278,10 +282,16 @@ public partial class MainWindow : FluentWindow
             unattended: _launchCommand.AutoStart);
     }
 
+    // WPF-UI assigns a local Background when it updates the backdrop, including on HWND creation.
+    void Themes.IThemeWindowBackground.RestoreBackground() => SetResourceReference(BackgroundProperty, "Brush.Canvas");
+
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
-        TaskPlanEditor.AddConfigurationWheelHook(PresentationSource.FromVisual(this) as HwndSource);
+        Themes.ThemeService.InitializeWindow(this);
+        var source = PresentationSource.FromVisual(this) as HwndSource;
+        source?.AddHook(_themes.SystemThemeHook);
+        TaskPlanEditor.AddConfigurationWheelHook(source);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
@@ -1286,10 +1296,14 @@ public partial class MainWindow : FluentWindow
             _ => "未启动"
         };
         RuntimeStatusPill.Background = System.Windows.Media.Brushes.Transparent;
-        RuntimeStatusText.Foreground = (WpfBrush)FindResource("Brush.Text.Secondary");
-        SessionStatusDot.Fill = running ? (WpfBrush)FindResource("Brush.Success")
-            : System.Windows.Media.Brushes.Transparent;
-        SessionStatusDot.Stroke = running ? null : (WpfBrush)FindResource("Brush.Border.Strong");
+        RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
+        if (running) {
+            SessionStatusDot.SetResourceReference(Shape.FillProperty, "Brush.Success");
+            SessionStatusDot.Stroke = null;
+        } else {
+            SessionStatusDot.Fill = System.Windows.Media.Brushes.Transparent;
+            SessionStatusDot.SetResourceReference(Shape.StrokeProperty, "Brush.Border.Strong");
+        }
         SessionStatusDot.StrokeThickness = running ? 0 : 1.5;
         AutomationProperties.SetName(RuntimeStatusPill, $"桌面分身：{RuntimeStatusText.Text}");
         DesktopViewText.Text = state.Desktop.Action == DesktopAction.Hide ? "隐藏窗口" : "显示窗口";
@@ -1310,12 +1324,10 @@ public partial class MainWindow : FluentWindow
         if (progress is null || state.Action is RuntimeAction.Recover) {
             return;
         }
-        RunSummaryCard.Background = new System.Windows.Media.SolidColorBrush(
-            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(
-                progress.Failed > 0 ? "#FEF4F5" : "#F6F8FB"));
-        RunSummaryCard.BorderBrush = new System.Windows.Media.SolidColorBrush(
-            (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(
-                progress.Failed > 0 ? "#F2D0D4" : "#E4EAF0"));
+        RunSummaryCard.SetResourceReference(Border.BackgroundProperty,
+            progress.Failed > 0 ? "Brush.RunSummary.FailureSurface" : "Brush.Surface.Subdued");
+        RunSummaryCard.SetResourceReference(Border.BorderBrushProperty,
+            progress.Failed > 0 ? "Brush.RunSummary.FailureBorder" : "Brush.Border.Subtle");
         RuntimeStatusDetail.Visibility = Visibility.Collapsed;
         RuntimeStatusTitle.Text = progress.Current?.TaskLabel
             ?? progress.Items.FirstOrDefault(item => item.State == PlanItemProgress.Failed)?.TaskLabel
@@ -1326,7 +1338,7 @@ public partial class MainWindow : FluentWindow
             : progress.Failed == 0 && progress.Stopped == 0 && progress.NotRun == 0
                 ? $"{progress.EndedAtUtc?.ToLocalTime():HH:mm} 完成"
                 : RunProgress.Caption(progress).Replace("上次运行：", "");
-        RunProgressCaption.Foreground = (WpfBrush)FindResource(progress.Active ? "Brush.Primary"
+        RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active ? "Brush.Primary"
             : progress.Failed > 0 ? "Brush.Error.Foreground" : "Brush.Success");
         RunProgressCaption.FontWeight = FontWeights.SemiBold;
     }
@@ -1356,8 +1368,8 @@ public partial class MainWindow : FluentWindow
                 + "M12.3 10A2.3 2.3 0 1 1 7.7 10A2.3 2.3 0 1 1 12.3 10");
         DesktopViewButton.IsEnabled = desktop.Enabled;
         if (desktop.Status == DesktopStatus.Interactive) {
-            DesktopViewButton.Background = (WpfBrush)FindResource("Brush.Warning.Surface");
-            DesktopViewButton.Foreground = (WpfBrush)FindResource("Brush.Warning.Foreground");
+            DesktopViewButton.SetResourceReference(WpfControl.BackgroundProperty, "Brush.Warning.Surface");
+            DesktopViewButton.SetResourceReference(WpfControl.ForegroundProperty, "Brush.Warning.Foreground");
         } else {
             DesktopViewButton.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
             DesktopViewButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
@@ -1383,7 +1395,7 @@ public partial class MainWindow : FluentWindow
 
     private static (string Surface, string Foreground) ToneBrushes(StatusTone tone) => tone switch {
         StatusTone.Busy => ("Brush.Warning.Surface", "Brush.Warning.Foreground"),
-        StatusTone.Ok => ("Brush.TasksAccent.Surface", "Brush.Success"),
+        StatusTone.Ok => ("Brush.Tasks.Accent.Surface", "Brush.Success"),
         StatusTone.Run => ("Brush.Primary.Surface", "Brush.Primary"),
         StatusTone.Bad => ("Brush.Error.Surface", "Brush.Error"),
         _ => ("Brush.Surface.Disabled", "Brush.Text.Secondary")
@@ -1422,16 +1434,16 @@ public partial class MainWindow : FluentWindow
             _ => (StatusTone.Idle, string.Empty, string.Empty, string.Empty, false)
         };
         var (surface, foreground) = ToneBrushes(tone);
-        RuntimeStatusPill.Background = (WpfBrush)FindResource(surface);
-        RuntimeStatusText.Foreground = (WpfBrush)FindResource(foreground);
+        RuntimeStatusPill.SetResourceReference(Border.BackgroundProperty, surface);
+        RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, foreground);
         RuntimeStatusText.Text = pill;
         AutomationProperties.SetName(RuntimeStatusPill, $"运行状态：{pill}");
         ApplyScheduleCapsule(tone);
         RuntimeStatusTitle.Text = title;
         RuntimeStatusDetail.Text = detail;
         RuntimeStatusDetail.Visibility = detail.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        RuntimeStatusDetail.Foreground =
-            (WpfBrush)FindResource(warn ? "Brush.Warning.Foreground" : "Brush.Text.Secondary");
+        RuntimeStatusDetail.SetResourceReference(TextBlock.ForegroundProperty,
+            warn ? "Brush.Warning.Foreground" : "Brush.Text.Secondary");
 
         static string RecoveryTitle(RecoveryReason reason) => reason switch {
             RecoveryReason.StopUnconfirmed => "任务未能确认结束",
@@ -1509,9 +1521,10 @@ public partial class MainWindow : FluentWindow
         void Add(double left, double size, string brush)
         {
             var bar = new System.Windows.Shapes.Rectangle {
-                Width = Math.Max(0, size), Height = 6, Fill = (WpfBrush)FindResource(brush),
+                Width = Math.Max(0, size), Height = 6,
                 RadiusX = gap == 0 ? 0 : 3, RadiusY = gap == 0 ? 0 : 3
             };
+            bar.SetResourceReference(Shape.FillProperty, brush);
             Canvas.SetLeft(bar, left);
             RunProgressBar.Children.Add(bar);
         }

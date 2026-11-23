@@ -4,12 +4,12 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Effects;
+using Shape = System.Windows.Shapes.Shape;
+using Ellipse = System.Windows.Shapes.Ellipse;
 using System.Windows.Threading;
 using Gui.Infrastructure;
 using ProjectModel;
 using Protocol;
-using WpfBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
 using WpfComboBox = System.Windows.Controls.ComboBox;
@@ -301,22 +301,21 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         if (!SystemParameters.ClientAreaAnimation) {
             return;
         }
-        var restoreBorder = ((SolidColorBrush)card.BorderBrush).Color;
-        var restoreSurface = ((SolidColorBrush)card.Background).Color;
-        var border = new SolidColorBrush(((SolidColorBrush)FindResource("Brush.TasksAccent")).Color);
-        var surface = new SolidColorBrush(((SolidColorBrush)FindResource("Brush.TasksAccent.Surface")).Color);
-        card.BorderBrush = border;
-        card.Background = surface;
-        var delay = TimeSpan.FromMilliseconds(700);
-        var duration = TimeSpan.FromMilliseconds(600);
-        var borderFade = new ColorAnimation(restoreBorder, duration) { BeginTime = delay };
-        borderFade.Completed += (_, _) => {
-            card.ClearValue(Border.BorderBrushProperty);
-            card.ClearValue(Border.BackgroundProperty);
+        var layout = (Grid)card.Child;
+        var edge = card.BorderThickness;
+        var highlight = new Border {
+            BorderThickness = edge, CornerRadius = card.CornerRadius, IsHitTestVisible = false,
+            Margin = new Thickness(-edge.Left, -edge.Top, -edge.Right, -edge.Bottom)
         };
-        border.BeginAnimation(SolidColorBrush.ColorProperty, borderFade);
-        surface.BeginAnimation(SolidColorBrush.ColorProperty,
-            new ColorAnimation(restoreSurface, duration) { BeginTime = delay });
+        highlight.SetResourceReference(Border.BorderBrushProperty, "Brush.Tasks.Accent");
+        highlight.SetResourceReference(Border.BackgroundProperty, "Brush.Tasks.Accent.Surface");
+        Grid.SetRowSpan(highlight, layout.RowDefinitions.Count);
+        layout.Children.Insert(0, highlight);
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(600)) {
+            BeginTime = TimeSpan.FromMilliseconds(700)
+        };
+        fade.Completed += (_, _) => layout.Children.Remove(highlight);
+        highlight.BeginAnimation(OpacityProperty, fade);
     }
 
     // A rejected value kept as a visible draft is left to RevealInvalidParameter instead of silently blocking Start.
@@ -430,7 +429,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         if (message is null) {
             editor.ClearValue(BorderBrushProperty);
         } else {
-            editor.BorderBrush = (WpfBrush)FindResource("Brush.Error");
+            editor.SetResourceReference(BorderBrushProperty, "Brush.Error");
         }
         AutomationProperties.SetItemStatus(editor, message ?? string.Empty);
     }
@@ -602,7 +601,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             };
             var icon = CreateSymbolIcon(added ? WpfSymbolRegular.Checkmark16 : WpfSymbolRegular.Add16);
             icon.Margin = new Thickness(8, 0, 0, 0);
-            icon.Foreground = (WpfBrush)FindResource("Brush.TasksAccent");
+            icon.SetResourceReference(ForegroundProperty, "Brush.Tasks.Accent");
             var content = new DockPanel();
             DockPanel.SetDock(icon, Dock.Right);
             content.Children.Add(icon);
@@ -699,9 +698,9 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
                 VerticalAlignment = System.Windows.VerticalAlignment.Stretch,
                 Margin = new Thickness(1, 6, 0, 6),
-                CornerRadius = new CornerRadius(1.5),
-                Background = (WpfBrush)FindResource("Brush.TasksAccent")
+                CornerRadius = new CornerRadius(1.5)
             };
+            accentLine.SetResourceReference(Border.BackgroundProperty, "Brush.Tasks.Accent");
             Grid.SetRowSpan(accentLine, 2);
             layout.Children.Add(accentLine);
         }
@@ -893,9 +892,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 FontSize = (double)FindResource("FontSize.Label"), MaxWidth = 140,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (WpfBrush)FindResource(invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary"),
                 ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
             };
+            tag.SetResourceReference(TextBlock.ForegroundProperty,
+                invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary");
             if (isSwitch) {
                 tag.Text = ShortenPreview(label, 6);
                 var switchPreview = new StackPanel {
@@ -903,11 +903,12 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                     ToolTip = tag.ToolTip
                 };
                 switchPreview.Children.Add(tag);
-                switchPreview.Children.Add(new System.Windows.Shapes.Ellipse {
+                var dot = new Ellipse {
                     Width = 6, Height = 6, Margin = new Thickness(4, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Fill = (WpfBrush)FindResource(isOn ? "Brush.TasksAccent" : "Brush.Text.Muted")
-                });
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                dot.SetResourceReference(Shape.FillProperty, isOn ? "Brush.Tasks.Accent" : "Brush.Text.Muted");
+                switchPreview.Children.Add(dot);
                 preview.Children.Add(switchPreview);
             } else {
                 tag.Text = $"{ShortenPreview(label, 4)}：{ShortenPreview(ParameterInspector.ShowValue(value), 6)}";
@@ -978,9 +979,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         }
         var panel = new ParameterRowPanel {
             Depth = row.Depth, Separated = separated, Style = (Style)FindResource("Inspector.Row"),
-            LineBrush = (WpfBrush)FindResource("Brush.Border.Subtle"),
-            GuideBrush = (WpfBrush)FindResource("Brush.Parameter.Guide"),
-            InvalidBrush = (WpfBrush)FindResource("Brush.Error"),
             Children = {
                 new Border {
                     Padding = new Thickness(12 + row.Depth * ParameterRowPanel.IndentStep, 8, 12, 8), Child = label
@@ -989,7 +987,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             }
         };
         if (row.Depth > 0) {
-            panel.Background = (WpfBrush)FindResource("Brush.Parameter.Nested");
+            panel.SetResourceReference(System.Windows.Controls.Panel.BackgroundProperty, "Brush.Parameter.Nested");
         }
         var view = new InspectorRowView(panel, caseNotes, inputNotes);
         _inspectorRows[row.Option.Name] = view;
@@ -1002,7 +1000,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         var icon = CreateSymbolIcon(WpfSymbolRegular.Link16);
         icon.Width = icon.Height = icon.FontSize = 12;
         icon.Margin = new Thickness(0, 0, 4, 0);
-        icon.Foreground = (WpfBrush)FindResource("Brush.Text.Muted");
+        icon.SetResourceReference(ForegroundProperty, "Brush.Text.Muted");
         var text = row.IsGlobal ? "所有任务共用" : $"与 {row.SharedWith.Count} 个任务共用";
         var hint = new StackPanel {
             Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 2, 0, 0),
@@ -1283,7 +1281,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         _expandedTask = null;
         RenderTaskPlan();
         if (_planItemContainers.TryGetValue((task.Kind, task.Name), out var container)) {
-            container.Effect = (Effect)FindResource("Effect.Surface.Drag");
+            container.SetResourceReference(EffectProperty, "Effect.Surface.Drag");
         }
         try {
             var data = new WpfDataObject(PlanItemDragDataFormat, task.Name);
@@ -1357,7 +1355,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     {
         ClearDropIndicators();
         if (boundary >= 0 && boundary < _dropIndicators.Count) {
-            _dropIndicators[boundary].Background = (WpfBrush)FindResource("Brush.TasksAccent");
+            _dropIndicators[boundary].SetResourceReference(Border.BackgroundProperty, "Brush.Tasks.Accent");
         }
     }
 

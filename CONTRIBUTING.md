@@ -43,6 +43,18 @@
 每个套件先检查固定等待，超出既有基线即失败；标记为依赖前台焦点的失败用例会单独重跑一次，通过时摘要显示 `FOCUS-RERUN PASS <名称>`。
 审查时请阅读仓库根目录的 [CODING_STANDARDS.md](CODING_STANDARDS.md)。
 
+### 主题颜色源码检查
+
+`Gui`、`All` 及其他构建 GUI 的套件在构建前运行 `theme-sources`，使用 `-Only` 时也会执行。
+使用 `-NoBuild` 时，`theme-sources` 仍会编译检查工具。浅色配色字典
+`src/Gui/Themes/Colors/Light.xaml` 定义颜色键，可以使用色值并静态引用本字典的键。视图和
+`DesignSystem.xaml` 样式用 `DynamicResource` 引用配色，字体、尺寸和控件样式仍可静态引用。
+C# 从配色资源取色，允许 `Transparent` 和基于原色 RGB 通道的透明度调整。
+
+失败日志给出源码路径、行号、所在元素或成员和违规表达式。迁移现有用法时，从
+[`allowlist.tsv`](tools/ThemeSourceCheck/allowlist.tsv) 删除对应行。确需例外时，按“路径、位置、违规表达式、原因”写一行，
+列之间用制表符分隔，路径省略诊断中的行号。每行只放行一次匹配；多余的条目也会使检查失败。
+
 ## 发布包
 
 ```powershell
