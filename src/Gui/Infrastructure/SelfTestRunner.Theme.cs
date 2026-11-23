@@ -1,9 +1,11 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using System.Windows.Shapes;
 using Gui.Themes;
 using Wpf.Ui.Appearance;
 using Button = System.Windows.Controls.Button;
@@ -40,6 +42,11 @@ internal static partial class SelfTestRunner
                 Require(face.Background is SolidColorBrush fill && fill.Color == primary
                     && window.Background is SolidColorBrush canvas && canvas.Color == Expected("Brush.Canvas"),
                     "已显示窗口的背景和公共按钮模板应呈现当前配色。");
+                Require(window.Foreground is SolidColorBrush body && body.Color == Expected("Brush.Text.Body")
+                    && window.UpdateNavigationBadge.Fill is SolidColorBrush badge
+                    && badge.Color == Expected("Brush.Rail.UpdateBadge")
+                    && window.UpdateDialog.Shadow?.Color == ((DropShadowEffect)palette["Effect.Dialog"]).Color,
+                    "主窗口正文、更新提示点和对话框阴影应跟随配色切换。");
                 Require(ApplicationThemeManager.GetAppTheme() == mode
                     && Equals(app.FindResource("SystemAccentColor"), primary)
                     && Equals(app.FindResource("SystemAccentColorPrimary"), primary)
@@ -50,10 +57,33 @@ internal static partial class SelfTestRunner
 
             try {
                 Check(light, ApplicationTheme.Light);
+                var splitter = window.RuntimeSidebarSplitter;
+                splitter.RaiseEvent(new DragStartedEventArgs(0, 0) { RoutedEvent = Thumb.DragStartedEvent });
+                var disc = (Ellipse)splitter.Template.FindName("DraggingDisc", splitter);
+                var edge = (Border)splitter.Template.FindName("TetherStrong", splitter);
+                PumpUntil(() => disc.Opacity == 1 && edge.Opacity == 1, "拖动时应显示分隔柄的按下色和渐变。");
+
+                void CheckDragging(ResourceDictionary palette)
+                {
+                    var expectedEdge = (GradientBrush)palette["Brush.Splitter.Tether.Dragging"];
+                    var expectedFill = (SolidColorBrush)palette["Brush.Primary.SurfaceHover"];
+                    var expectedStroke = (SolidColorBrush)palette["Brush.Primary"];
+                    Require(edge.Background is GradientBrush gradient && gradient.GradientStops.Select(stop => stop.Color)
+                        .SequenceEqual(expectedEdge.GradientStops.Select(stop => stop.Color))
+                        && disc.Opacity == 1 && disc.Fill is SolidColorBrush fill && fill.Color == expectedFill.Color
+                        && disc.Stroke is SolidColorBrush stroke && stroke.Color == expectedStroke.Color
+                        && ((UIElement)disc.Parent).Effect is DropShadowEffect shadow
+                        && shadow.Color == (Color)palette["Color.Splitter.Shadow"],
+                        "拖动中的分隔柄应持续显示当前配色的渐变、填充、描边和阴影。");
+                }
+
                 service.Apply(AppThemeMode.Dark);
                 Check(alternate, ApplicationTheme.Dark);
+                CheckDragging(alternate);
                 service.Apply(AppThemeMode.Light);
                 Check(light, ApplicationTheme.Light);
+                CheckDragging(light);
+                splitter.RaiseEvent(new DragCompletedEventArgs(0, 0, false) { RoutedEvent = Thumb.DragCompletedEvent });
                 Require(notifications == 2, "每次应用配色后应通知订阅者。");
 
                 var hwnd = new WindowInteropHelper(window).Handle;
