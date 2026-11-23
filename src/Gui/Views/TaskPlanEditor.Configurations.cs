@@ -115,7 +115,7 @@ public sealed partial class TaskPlanEditor
                 : blocked ? $"{name}\n{reason}，无法切换配置" : $"{name}\n{reason}，暂时不能重命名";
             // A blocked tab keeps its dimmed look on hover, so it never reads as clickable.
             if (blocked) {
-                tab.Foreground = (System.Windows.Media.Brush)FindResource("Brush.Text.Disabled");
+                tab.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "Brush.Text.Disabled");
                 tab.Background = System.Windows.Media.Brushes.Transparent;
             } else {
                 tab.ClearValue(ForegroundProperty);

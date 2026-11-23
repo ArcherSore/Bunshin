@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using Gui.Infrastructure;
 using Updates;
-using Brush = System.Windows.Media.Brush;
+using Border = System.Windows.Controls.Border;
 
 namespace Gui.Views;
 
@@ -299,9 +299,9 @@ public partial class MainWindow
         UpdateAvailableActions.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
         UpdateAppIcon.Visibility = available && !ready ? Visibility.Visible : Visibility.Collapsed;
         UpdateStateIconBackground.Visibility = available && !ready ? Visibility.Collapsed : Visibility.Visible;
-        UpdateStateIconBackground.Background = (Brush)FindResource(
+        UpdateStateIconBackground.SetResourceReference(Border.BackgroundProperty,
             latest || ready ? "Brush.Success" : "Brush.Primary.Surface");
-        UpdateStateIcon.Foreground = (Brush)FindResource(latest || ready ? "Brush.Text.Inverse" : "Brush.Primary");
+        UpdateStateIcon.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, latest || ready ? "Brush.Text.Inverse" : "Brush.Primary");
         UpdateStateIcon.Symbol = latest || ready ? Wpf.Ui.Controls.SymbolRegular.Checkmark24
             : failed ? Wpf.Ui.Controls.SymbolRegular.Warning24 : Wpf.Ui.Controls.SymbolRegular.ArrowSync24;
         UpdateStateTitle.Text = ready ? "更新已就绪" : available ? "发现新版本"

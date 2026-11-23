@@ -10,9 +10,9 @@ using System.Windows.Threading;
 using ProjectModel;
 using SymbolIcon = Wpf.Ui.Controls.SymbolIcon;
 using SymbolRegular = Wpf.Ui.Controls.SymbolRegular;
-using WpfBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
+using WpfControl = System.Windows.Controls.Control;
 using WpfColor = System.Windows.Media.Color;
 using ContextMenu = System.Windows.Controls.ContextMenu;
 using MenuItem = System.Windows.Controls.MenuItem;
@@ -32,10 +32,6 @@ internal sealed record ScheduleScopeOption(string Header, string? Note, IReadOnl
 // Policies are saved through ProjectPlanModule as soon as they change; this view keeps only what is selected.
 public sealed partial class ScheduleView : System.Windows.Controls.UserControl
 {
-    private static readonly WpfColor[] Palette = [
-        WpfColor.FromRgb(0x31, 0x56, 0xA3), WpfColor.FromRgb(0x26, 0x73, 0x4D), WpfColor.FromRgb(0xB2, 0x6A, 0x00),
-        WpfColor.FromRgb(0x0E, 0x7C, 0x86), WpfColor.FromRgb(0x7A, 0x3E, 0x9D), WpfColor.FromRgb(0xB4, 0x23, 0x2F)];
-
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly Dictionary<Guid, Guid> _activePolicy = [];
     private Func<ProjectPlanModule?> _project = () => null;
@@ -94,7 +90,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
     internal void SetRuntimeStatus(string text, ScheduleRuntimeTone tone)
     {
         StatusText.Text = text;
-        StatusDot.Fill = (WpfBrush)FindResource(tone switch {
+        StatusDot.SetResourceReference(Shape.FillProperty, tone switch {
             ScheduleRuntimeTone.Run => "Brush.Success",
             ScheduleRuntimeTone.Busy => "Brush.Warning",
             ScheduleRuntimeTone.Failed => "Brush.Error",
@@ -108,7 +104,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
     private ProjectPlanModule? Project => _project();
     private TaskConfiguration? Focused => Project?.Configurations.FirstOrDefault(c => c.Id == _focus);
 
-    private static WpfColor ColorOf(int index) => Palette[index % Palette.Length];
+    private static int PaletteIndex(int index) => index % ScheduleTimeline.PaletteKeys.Count;
 
     private SchedulePolicy? ActivePolicy(TaskConfiguration configuration)
     {
@@ -130,7 +126,8 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         var focus = Focused ?? configurations.FirstOrDefault(c => c.Id == project.ActiveConfigurationId)
             ?? configurations[0];
         _focus = focus.Id;
-        var color = ColorOf(configurations.ToList().IndexOf(focus));
+        var paletteIndex = PaletteIndex(configurations.ToList().IndexOf(focus));
+        var brushKey = ScheduleTimeline.PaletteKeys[paletteIndex];
         var policy = ActivePolicy(focus);
         if (_selected is { } selected && (policy?.Id != selected.PolicyId || !policy.Times.Contains(selected.Time))) {
             _selected = null;
@@ -138,9 +135,9 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         _preview = new SchedulePreview(configurations, _invalidReason, Now);
         RenderBanner(_preview);
         RenderList(configurations, focus);
-        RenderTimeline(configurations, focus, policy, color);
-        RenderPolicyBar(focus, policy, color);
-        RenderInspector(focus, policy, color);
+        RenderTimeline(configurations, focus, policy, paletteIndex);
+        RenderPolicyBar(focus, policy, brushKey);
+        RenderInspector(focus, policy, brushKey);
     }
 
     private void RenderBanner(SchedulePreview preview)
@@ -149,10 +146,9 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             var policies = next.Entries.First(e => e.Configuration == winner).Policies.Select(p => p.Name);
             var skipped = next.Entries.Where(e => e.Configuration != winner).Select(e => e.Configuration.Name)
                 .ToArray();
-            NextRunBanner.Background = new LinearGradientBrush(WpfColor.FromRgb(0x20, 0x3F, 0x7E),
-                WpfColor.FromRgb(0x4D, 0x72, 0xBF), 0);
+            NextRunBanner.SetResourceReference(Border.BackgroundProperty, "Brush.Schedule.NextRun");
             NextRunBanner.BorderThickness = new Thickness(0);
-            SetBannerForeground(WpfBrushes.White);
+            SetBannerForeground("Brush.Text.Inverse");
             NextRunLabel.Visibility = Visibility.Visible;
             NextRunTime.FontSize = 20;
             NextRunTime.Text = SchedulePreview.WhenText(next.Time, preview.Now);
@@ -160,10 +156,10 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 + SchedulePreview.InText(next.Time, preview.Now)
                 + (skipped.Length == 0 ? string.Empty : $" · 跳过 {string.Join("、", skipped)}");
         } else {
-            NextRunBanner.Background = (WpfBrush)FindResource("Brush.Surface");
-            NextRunBanner.BorderBrush = (WpfBrush)FindResource("Brush.Border");
+            NextRunBanner.SetResourceReference(Border.BackgroundProperty, "Brush.Surface");
+            NextRunBanner.SetResourceReference(Border.BorderBrushProperty, "Brush.Border");
             NextRunBanner.BorderThickness = new Thickness(1);
-            SetBannerForeground((WpfBrush)FindResource("Brush.Text.Secondary"));
+            SetBannerForeground("Brush.Text.Secondary");
             NextRunLabel.Visibility = Visibility.Collapsed;
             NextRunTime.FontSize = 15;
             NextRunTime.Text = "没有启用的定时";
@@ -171,10 +167,12 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         }
         AutomationProperties.SetName(NextRunBanner, $"{NextRunLabel.Text}：{NextRunTime.Text}");
 
-        void SetBannerForeground(WpfBrush brush)
+        void SetBannerForeground(string key)
         {
-            NextRunIcon.Foreground = brush;
-            NextRunLabel.Foreground = NextRunTime.Foreground = NextRunDetail.Foreground = brush;
+            NextRunIcon.SetResourceReference(WpfControl.ForegroundProperty, key);
+            NextRunLabel.SetResourceReference(WpfTextBlock.ForegroundProperty, key);
+            NextRunTime.SetResourceReference(WpfTextBlock.ForegroundProperty, key);
+            NextRunDetail.SetResourceReference(WpfTextBlock.ForegroundProperty, key);
         }
     }
 
@@ -191,41 +189,47 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition());
             grid.RowDefinitions.Add(new RowDefinition());
-            grid.Children.Add(new System.Windows.Shapes.Rectangle {
+            var brushKey = ScheduleTimeline.PaletteKeys[PaletteIndex(index)];
+            var swatch = new System.Windows.Shapes.Rectangle {
                 Width = 10, Height = 10, RadiusX = 3, RadiusY = 3, Margin = new Thickness(0, 0, 8, 0),
-                Fill = new SolidColorBrush(ColorOf(index)), VerticalAlignment = VerticalAlignment.Center
-            });
-            AddCell(grid, new WpfTextBlock {
-                Text = configuration.Name, FontWeight = FontWeights.SemiBold,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = (WpfBrush)FindResource("Brush.Text.Primary")
-            }, 0, 1);
-            var enabled = configuration.SchedulePolicies.Count(p => p.Enabled);
-            AddCell(grid, new WpfTextBlock {
-                Text = $"{enabled}/{configuration.SchedulePolicies.Count}", FontSize = 11,
-                Foreground = (WpfBrush)FindResource("Brush.Text.Muted"), VerticalAlignment = VerticalAlignment.Center
-            }, 0, 2);
-            var state = new WpfTextBlock {
-                Text = text, FontSize = 11.5, Margin = new Thickness(0, 2, 0, 0),
-                Foreground = (WpfBrush)FindResource(outcome switch {
-                    ScheduleOutcome.Skip => "Brush.Warning.Foreground",
-                    ScheduleOutcome.Invalid => "Brush.Error.Foreground",
-                    ScheduleOutcome.Run => "Brush.Text.Secondary",
-                    _ => "Brush.Text.Muted"
-                })
+                VerticalAlignment = VerticalAlignment.Center
             };
+            swatch.SetResourceReference(Shape.FillProperty, brushKey);
+            grid.Children.Add(swatch);
+            var name = new WpfTextBlock {
+                Text = configuration.Name, FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            name.SetResourceReference(WpfTextBlock.ForegroundProperty, "Brush.Text.Primary");
+            AddCell(grid, name, 0, 1);
+            var enabled = configuration.SchedulePolicies.Count(p => p.Enabled);
+            var count = new WpfTextBlock {
+                Text = $"{enabled}/{configuration.SchedulePolicies.Count}", FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            count.SetResourceReference(WpfTextBlock.ForegroundProperty, "Brush.Text.Muted");
+            AddCell(grid, count, 0, 2);
+            var state = new WpfTextBlock {
+                Text = text, FontSize = 11.5, Margin = new Thickness(0, 2, 0, 0)
+            };
+            state.SetResourceReference(WpfTextBlock.ForegroundProperty, outcome switch {
+                ScheduleOutcome.Skip => "Brush.Warning.Foreground",
+                ScheduleOutcome.Invalid => "Brush.Error.Foreground",
+                ScheduleOutcome.Run => "Brush.Text.Secondary",
+                _ => "Brush.Text.Muted"
+            });
             AddCell(grid, state, 1, 1);
             Grid.SetColumnSpan(state, 2);
             var button = new WpfButton {
                 Content = grid, Tag = configuration.Id, Padding = new Thickness(10, 8, 10, 8),
                 HorizontalContentAlignment = System.Windows.HorizontalAlignment.Stretch,
                 Style = (Style)FindResource("SubtleButtonStyle"), Margin = new Thickness(0, 0, 0, 2),
-                BorderThickness = new Thickness(selected ? 3 : 0, 0, 0, 0),
-                BorderBrush = new SolidColorBrush(ColorOf(index))
+                BorderThickness = new Thickness(selected ? 3 : 0, 0, 0, 0)
             };
+            button.SetResourceReference(WpfControl.BorderBrushProperty, brushKey);
             // Only the selected row sets its background, so the others keep the style's hover feedback.
             if (selected) {
-                button.Background = (WpfBrush)FindResource("Brush.Primary.Surface");
+                button.SetResourceReference(WpfControl.BackgroundProperty, "Brush.Primary.Surface");
             }
             AutomationProperties.SetName(button, $"{configuration.Name}，{text}");
             button.Click += (_, _) => {
@@ -245,7 +249,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
     }
 
     private void RenderTimeline(IReadOnlyList<TaskConfiguration> configurations, TaskConfiguration focus,
-        SchedulePolicy? active, WpfColor color)
+        SchedulePolicy? active, int paletteIndex)
     {
         var lane = configurations.Count <= 1 ? 0 : Math.Min(7, 28.0 / (configurations.Count - 1));
         var pins = new List<TimelinePin>();
@@ -265,51 +269,61 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                             + (policy.Enabled ? "" : "（已停用）")
                             + (winner is null ? "" : $"\n与「{winner.Name}」同时到点，将跳过")
                             + (role == TimelinePinRole.Active ? "\n拖动调整 · 双击删除" : "");
-                        pins.Add(new(configuration.Id, policy.Id, day, time, ColorOf(index), role, policy.Enabled,
+                        pins.Add(new(configuration.Id, policy.Id, day, time, PaletteIndex(index), role, policy.Enabled,
                             winner is not null, offset, tip));
                     }
                 }
             }
         }
-        Timeline.ActiveColor = color;
+        Timeline.ActivePaletteIndex = paletteIndex;
         Timeline.ActiveDays = (active?.Days ?? []).ToHashSet();
         Timeline.Selected = _selected;
         Timeline.Clock = Now;
         Timeline.Pins = pins;
-        KeyCurrent.Fill = new SolidColorBrush(color);
+        KeyCurrent.SetResourceReference(Shape.FillProperty, ScheduleTimeline.PaletteKeys[paletteIndex]);
     }
 
-    private void RenderPolicyBar(TaskConfiguration focus, SchedulePolicy? active, WpfColor focusColor)
+    private void RenderPolicyBar(TaskConfiguration focus, SchedulePolicy? active, string brushKey)
     {
         PolicyBar.Children.Clear();
-        PolicyBar.Children.Add(new WpfTextBlock {
+        var name = new WpfTextBlock {
             Text = focus.Name, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 10, 0), Foreground = (WpfBrush)FindResource("Brush.Text.Primary")
-        });
-        var color = new SolidColorBrush(focusColor);
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        name.SetResourceReference(WpfTextBlock.ForegroundProperty, "Brush.Text.Primary");
+        PolicyBar.Children.Add(name);
         foreach (var policy in focus.SchedulePolicies) {
             var content = new StackPanel { Orientation = WpfOrientation.Horizontal };
-            content.Children.Add(new Ellipse {
+            var dot = new Ellipse {
                 Width = 10, Height = 10, VerticalAlignment = VerticalAlignment.Center,
-                Fill = policy.Enabled ? color : WpfBrushes.Transparent,
-                Stroke = policy.Enabled ? null : (WpfBrush)FindResource("Brush.Border.Strong"), StrokeThickness = 2
-            });
+                StrokeThickness = 2
+            };
+            if (policy.Enabled) {
+                dot.SetResourceReference(Shape.FillProperty, brushKey);
+            } else {
+                dot.Fill = WpfBrushes.Transparent;
+                dot.SetResourceReference(Shape.StrokeProperty, "Brush.Border.Strong");
+            }
+            content.Children.Add(dot);
             var text = new StackPanel { Margin = new Thickness(8, 0, 0, 0), MaxWidth = 220 };
             text.Children.Add(new WpfTextBlock { Text = policy.Name, TextTrimming = TextTrimming.CharacterEllipsis });
-            text.Children.Add(new WpfTextBlock {
+            var summary = new WpfTextBlock {
                 Text = SchedulePreview.ShortSummary(policy), FontSize = 11, FontWeight = FontWeights.Normal,
-                TextTrimming = TextTrimming.CharacterEllipsis, Foreground = (WpfBrush)FindResource("Brush.Text.Muted")
-            });
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            summary.SetResourceReference(WpfTextBlock.ForegroundProperty, "Brush.Text.Muted");
+            text.Children.Add(summary);
             content.Children.Add(text);
             var isActive = policy == active;
             var chip = new WpfButton {
                 Content = content, Height = 42, Padding = new Thickness(10, 0, 12, 0),
                 Margin = new Thickness(0, 0, 6, 0), ToolTip = SchedulePreview.Summary(policy),
-                Style = (Style)FindResource("SubtleButtonStyle"), Background = (WpfBrush)FindResource("Brush.Surface"),
-                BorderBrush = isActive ? color : (WpfBrush)FindResource("Brush.Border"),
+                Style = (Style)FindResource("SubtleButtonStyle"),
                 BorderThickness = new Thickness(isActive ? 2 : 1), FontWeight = isActive ? FontWeights.SemiBold
                     : FontWeights.Normal
             };
+            chip.SetResourceReference(WpfControl.BackgroundProperty, "Brush.Surface");
+            chip.SetResourceReference(WpfControl.BorderBrushProperty, isActive ? brushKey : "Brush.Border");
             AutomationProperties.SetName(chip, $"{policy.Name}，{SchedulePreview.Summary(policy)}");
             // The short summary hides times, so the full list opens after the system hover time.
             ToolTipService.SetInitialShowDelay(chip, (int)SystemParameters.MouseHoverTime.TotalMilliseconds);
@@ -330,14 +344,14 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         PolicyBar.Children.Add(add);
     }
 
-    private void RenderInspector(TaskConfiguration focus, SchedulePolicy? policy, WpfColor color)
+    private void RenderInspector(TaskConfiguration focus, SchedulePolicy? policy, string brushKey)
     {
         Inspector.Visibility = policy is null ? Visibility.Collapsed : Visibility.Visible;
         EmptyHint.Visibility = policy is null ? Visibility.Visible : Visibility.Collapsed;
         if (policy is null) {
             return;
         }
-        Inspector.BorderBrush = new SolidColorBrush(color);
+        Inspector.SetResourceReference(Border.BorderBrushProperty, brushKey);
         PolicyEnabled.IsChecked = policy.Enabled;
         if (!PolicyName.IsKeyboardFocusWithin) {
             PolicyName.Text = policy.Name;
@@ -346,20 +360,22 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         PresetWeekdays.IsChecked = days.SetEquals(SchedulePreview.WeekOrder[..5]);
         PresetWeekend.IsChecked = days.SetEquals(SchedulePreview.WeekOrder[5..]);
         PresetEveryDay.IsChecked = days.Count == 7;
-        RenderDays(policy, color);
+        RenderDays(policy, brushKey);
         // While the editor has focus its chip stays as it is; leaving it commits and renders again. Everything that
         // selects another time takes focus first, so this only skips the editor's own changes and the clock tick.
         if (!_timeEditor.IsKeyboardFocusWithin || _selected is not { } editing || editing.PolicyId != policy.Id
             || !policy.Times.Contains(editing.Time)) {
-            RenderTimes(policy, color);
+            RenderTimes(policy, brushKey);
         }
         var rest = SchedulePreview.WeekOrder.Where(d => !days.Contains(d)).ToArray();
         ShareHint.Visibility = _shareHintClosed ? Visibility.Collapsed : Visibility.Visible;
         SplitRestButton.Visibility = rest.Length == 0 || policy.Times.Count == 0 ? Visibility.Collapsed
             : Visibility.Visible;
-        SplitRestButton.Content = new WpfTextBlock {
-            Text = $"为{SchedulePreview.DaysText(rest)}新建定时", Foreground = (WpfBrush)FindResource("Brush.Primary")
+        var splitLabel = new WpfTextBlock {
+            Text = $"为{SchedulePreview.DaysText(rest)}新建定时"
         };
+        splitLabel.SetResourceReference(WpfTextBlock.ForegroundProperty, "Brush.Primary");
+        SplitRestButton.Content = splitLabel;
         IssuesPanel.Children.Clear();
         foreach (var (error, text) in _preview!.Issues(focus, policy)) {
             var row = new DockPanel();
@@ -370,18 +386,17 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             row.Children.Add(new WpfTextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 12 });
             var box = new Border {
                 Child = row, Margin = new Thickness(0, 8, 0, 0), Padding = new Thickness(10, 7, 10, 7),
-                CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1),
-                Background = (WpfBrush)FindResource(error ? "Brush.Error.Surface" : "Brush.Warning.Surface"),
-                BorderBrush = (WpfBrush)FindResource(error ? "Brush.Error.Border" : "Brush.Warning.SurfaceHover")
+                CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1)
             };
-            TextElement.SetForeground(box, (WpfBrush)FindResource(error ? "Brush.Error.Foreground"
-                : "Brush.Warning.Foreground"));
+            box.SetResourceReference(Border.BackgroundProperty, error ? "Brush.Error.Surface" : "Brush.Warning.Surface");
+            box.SetResourceReference(Border.BorderBrushProperty, error ? "Brush.Error.Border" : "Brush.Warning.SurfaceHover");
+            box.SetResourceReference(TextElement.ForegroundProperty, error ? "Brush.Error.Foreground" : "Brush.Warning.Foreground");
             IssuesPanel.Children.Add(box);
         }
     }
 
     // The day buttons are created once, so a click that first commits a typed time still lands on them.
-    private void RenderDays(SchedulePolicy policy, WpfColor color)
+    private void RenderDays(SchedulePolicy policy, string brushKey)
     {
         if (DayChips.Children.Count == 0) {
             foreach (var day in SchedulePreview.WeekOrder) {
@@ -396,8 +411,9 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         foreach (ToggleButton chip in DayChips.Children) {
             chip.IsChecked = policy.Days.Contains((DayOfWeek)chip.Tag);
             if (chip.IsChecked == true) {
-                chip.Background = chip.BorderBrush = new SolidColorBrush(color);
-                chip.Foreground = WpfBrushes.White;
+                chip.SetResourceReference(WpfControl.BackgroundProperty, brushKey);
+                chip.SetResourceReference(WpfControl.BorderBrushProperty, brushKey);
+                chip.SetResourceReference(WpfControl.ForegroundProperty, "Brush.Text.Inverse");
             } else {
                 chip.ClearValue(BackgroundProperty);
                 chip.ClearValue(BorderBrushProperty);
@@ -406,11 +422,10 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         }
     }
 
-    private void RenderTimes(SchedulePolicy policy, WpfColor color)
+    private void RenderTimes(SchedulePolicy policy, string brushKey)
     {
         TimeChips.Children.Clear();
         (_timeEditor.Parent as System.Windows.Controls.Panel)?.Children.Remove(_timeEditor);
-        var brush = new SolidColorBrush(color);
         foreach (var time in policy.Times) {
             var selected = _selected is { } s && s.PolicyId == policy.Id && s.Time == time;
             var row = new StackPanel { Orientation = WpfOrientation.Horizontal };
@@ -420,18 +435,19 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             } else {
                 // Same width as the editor, so selecting a chip does not change its length.
                 // Colours are set on the text itself: the app-wide TextBlock style ignores inherited ones.
-                row.Children.Add(new WpfTextBlock {
+                var label = new WpfTextBlock {
                     Text = SchedulePreview.TimeText(time), Width = 46, Padding = new Thickness(2, 0, 2, 0),
-                    FontSize = 14, FontWeight = FontWeights.Bold, Foreground = brush,
+                    FontSize = 14, FontWeight = FontWeights.Bold,
                     VerticalAlignment = VerticalAlignment.Center
-                });
+                };
+                label.SetResourceReference(WpfTextBlock.ForegroundProperty, brushKey);
+                row.Children.Add(label);
             }
+            var dismiss = new SymbolIcon { Symbol = SymbolRegular.Dismiss12, FontSize = 9 };
+            dismiss.SetResourceReference(WpfControl.ForegroundProperty, selected ? "Brush.Text.Inverse" : "Brush.Text.Muted");
             var remove = new WpfButton {
                 Style = (Style)FindResource("Schedule.ChipRemove"), Margin = new Thickness(2, 0, 0, 0), ToolTip = "删除",
-                Content = new SymbolIcon {
-                    Symbol = SymbolRegular.Dismiss12, FontSize = 9,
-                    Foreground = selected ? WpfBrushes.White : (WpfBrush)FindResource("Brush.Text.Muted")
-                }
+                Content = dismiss
             };
             AutomationProperties.SetName(remove, $"删除 {SchedulePreview.TimeText(time)}");
             // The chip buttons are rebuilt by every refresh, so they never take focus; a time being typed elsewhere
@@ -448,19 +464,24 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             var chip = new Border {
                 Child = row, Height = 30, CornerRadius = new CornerRadius(15), Padding = new Thickness(12, 0, 5, 0),
                 Margin = new Thickness(0, 0, 6, 6), BorderThickness = new Thickness(1),
-                Background = selected ? brush : Tint(0x1A), BorderBrush = selected ? brush : Tint(0x70),
                 Cursor = selected ? System.Windows.Input.Cursors.IBeam : System.Windows.Input.Cursors.Hand
             };
-            TextElement.SetForeground(chip, selected ? WpfBrushes.White : brush);
-            if (!selected) {
+            chip.SetResourceReference(TextElement.ForegroundProperty, selected ? "Brush.Text.Inverse" : brushKey);
+            if (selected) {
+                chip.SetResourceReference(Border.BackgroundProperty, brushKey);
+                chip.SetResourceReference(Border.BorderBrushProperty, brushKey);
+            } else {
+                BindTint(chip, Border.BackgroundProperty, 0x1A);
+                BindTint(chip, Border.BorderBrushProperty, 0x70);
                 chip.MouseLeftButtonUp += (_, _) => SelectTime(policy.Id, time);
             }
             TimeChips.Children.Add(chip);
         }
         var add = new WpfButton {
-            Content = "+ 时间", Style = (Style)FindResource("Schedule.AddTime"), BorderBrush = brush,
-            Foreground = brush
+            Content = "+ 时间", Style = (Style)FindResource("Schedule.AddTime")
         };
+        add.SetResourceReference(WpfControl.BorderBrushProperty, brushKey);
+        add.SetResourceReference(WpfControl.ForegroundProperty, brushKey);
         AutomationProperties.SetName(add, "添加时间");
         add.Click += (_, _) => {
             Keyboard.ClearFocus();
@@ -476,7 +497,27 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         };
         TimeChips.Children.Add(add);
 
-        SolidColorBrush Tint(byte alpha) => new(WpfColor.FromArgb(alpha, color.R, color.G, color.B));
+        static void BindTint(Border chip, DependencyProperty property, byte alpha)
+        {
+            chip.SetBinding(property, new System.Windows.Data.Binding {
+                Source = chip, Path = new PropertyPath("(0)", TextElement.ForegroundProperty),
+                Converter = ChipTint.Instance, ConverterParameter = alpha
+            });
+        }
+    }
+
+    private sealed class ChipTint : System.Windows.Data.IValueConverter
+    {
+        internal static readonly ChipTint Instance = new();
+
+        public object Convert(object value, Type type, object parameter, System.Globalization.CultureInfo culture)
+        {
+            var color = ((SolidColorBrush)value).Color;
+            return new SolidColorBrush(WpfColor.FromArgb((byte)parameter, color.R, color.G, color.B));
+        }
+
+        public object ConvertBack(object value, Type type, object parameter, System.Globalization.CultureInfo culture)
+            => throw new NotSupportedException();
     }
 
     private void SelectTime(Guid policyId, TimeOnly time)
@@ -600,10 +641,12 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             Style = (Style)FindResource("FloatingContextMenuStyle"), PlacementTarget = Timeline,
             Placement = PlacementMode.MousePoint
         };
-        menu.Items.Add(new MenuItem {
+        var heading = new MenuItem {
             Header = title, IsEnabled = false, Style = itemStyle, FontSize = 11.5, FontWeight = FontWeights.Normal,
-            Foreground = (WpfBrush)FindResource("Brush.Text.Muted"), Cursor = System.Windows.Input.Cursors.Arrow
-        });
+            Cursor = System.Windows.Input.Cursors.Arrow
+        };
+        heading.SetResourceReference(WpfControl.ForegroundProperty, "Brush.Text.Muted");
+        menu.Items.Add(heading);
         foreach (var option in options) {
             var item = new MenuItem { Header = option.Header, Tag = option.Note, Style = itemStyle };
             void Show() => Timeline.Preview = (option.Days.ToHashSet(), time, option.Remove);

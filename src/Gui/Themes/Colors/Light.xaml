@@ -48,6 +48,16 @@
     <Color x:Key="Color.Red.700">#9E1C2A</Color>
     <Color x:Key="Color.White.Alpha140">#8CFFFFFF</Color>
 
+    <Color x:Key="Color.Amber.600">#B26A00</Color>
+    <Color x:Key="Color.Indigo.400">#4D72BF</Color>
+    <Color x:Key="Color.Neutral.75">#F1F4F8</Color>
+    <Color x:Key="Color.Neutral.120">#E9EEF4</Color>
+    <Color x:Key="Color.Neutral.900.Alpha24">#18182230</Color>
+    <Color x:Key="Color.Purple.600">#7A3E9D</Color>
+    <Color x:Key="Color.Red.25">#FEF4F5</Color>
+    <Color x:Key="Color.Red.150">#F2D0D4</Color>
+    <Color x:Key="Color.Teal.600">#0E7C86</Color>
+
     <!-- Color-valued tokens for gradient stops and animation targets. -->
     <Color x:Key="Color.Primary">#3156A3</Color>
     <Color x:Key="Color.Primary.Border">#B8CCF4</Color>
@@ -111,6 +121,23 @@
     <SolidColorBrush x:Key="Brush.TitleBar.Hover" Color="{StaticResource Color.Black.Alpha26}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.TitleBar.Pressed" Color="{StaticResource Color.Black.Alpha38}" po:Freeze="True" />
 
+    <SolidColorBrush x:Key="Brush.Chart.Category1" Color="{StaticResource Color.Primary}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Chart.Category2" Color="{StaticResource Color.Green.600}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Chart.Category3" Color="{StaticResource Color.Amber.600}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Chart.Category4" Color="{StaticResource Color.Teal.600}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Chart.Category5" Color="{StaticResource Color.Purple.600}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Chart.Category6" Color="{StaticResource Color.Red.600}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Grid" Color="{StaticResource Color.Neutral.120}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.GridStrong" Color="{StaticResource Color.Neutral.175}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Hatch" Color="{StaticResource Color.Neutral.900.Alpha24}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Night" Color="{StaticResource Color.Neutral.75}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Track" Color="{StaticResource Color.Neutral.10}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.RunSummary.FailureSurface" Color="{StaticResource Color.Red.25}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.RunSummary.FailureBorder" Color="{StaticResource Color.Red.150}" po:Freeze="True" />
+    <LinearGradientBrush x:Key="Brush.Schedule.NextRun" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
+        <GradientStop Offset="0" Color="{StaticResource Color.Indigo.800}" />
+        <GradientStop Offset="1" Color="{StaticResource Color.Indigo.400}" />
+    </LinearGradientBrush>
     <SolidColorBrush x:Key="Brush.Schedule.ChipRemoveHover" Color="{StaticResource Color.Neutral.900.Alpha31}"
                      po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="{StaticResource Color.Neutral.300}" po:Freeze="True" />

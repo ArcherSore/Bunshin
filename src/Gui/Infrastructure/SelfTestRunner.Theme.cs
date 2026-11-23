@@ -5,6 +5,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using Gui.Themes;
+using Gui.Views;
 using Wpf.Ui.Appearance;
 using Button = System.Windows.Controls.Button;
 using Color = System.Windows.Media.Color;
@@ -29,6 +30,11 @@ internal static partial class SelfTestRunner
             var button = new Button { Style = (Style)window.FindResource("PrimaryButtonStyle") };
             ((System.Windows.Controls.Panel)window.Content).Children.Add(button);
             var configurationBar = Named<Border>(window.TaskPlanEditor, "ConfigurationBar");
+            var project = ProjectOf(window);
+            project.AddSchedulePolicy(project.ActiveConfigurationId, "早班");
+            ClickOnboarding(window, "ScheduleNavigationItem");
+            var schedule = window.ScheduleView;
+            Require(schedule.Timeline.Pins.Count > 0, "切换前应已显示定时标记。");
             int notifications = 0;
             service.ThemeChanged += (_, _) => notifications++;
 
@@ -36,6 +42,7 @@ internal static partial class SelfTestRunner
             {
                 Color Expected(string key) => ((SolidColorBrush)palette[key]).Color;
                 window.UpdateLayout();
+                CheckScheduleColors(schedule, palette);
                 var face = (Border)VisualTreeHelper.GetChild(button, 0);
                 var primary = Expected("Brush.Primary");
                 Require(face.Background is SolidColorBrush fill && fill.Color == primary
@@ -86,7 +93,42 @@ internal static partial class SelfTestRunner
             } finally {
                 service.Apply(AppThemeMode.Light);
             }
-        }, themeService: service);
+        }, themeService: service, scheduleClock: new ScheduleTestClock());
+    }
+
+    private static void CheckScheduleColors(ScheduleView page, ResourceDictionary palette)
+    {
+        var category = ((SolidColorBrush)palette["Brush.Chart.Category1"]).Color;
+        var drawing = VisualTreeHelper.GetDrawing(page.Timeline);
+        var shapes = Shapes(drawing).ToArray();
+        var pin = shapes.First(d => d.Geometry is EllipseGeometry && d.Brush is SolidColorBrush);
+        var swatch = ConfigurationDescendants(page.ConfigurationList).OfType<System.Windows.Shapes.Rectangle>().First();
+        Require(pin.Brush is SolidColorBrush point && point.Color == category
+            && page.KeyCurrent.Fill is SolidColorBrush legend && legend.Color == category
+            && swatch.Fill is SolidColorBrush fill && fill.Color == category,
+            "已有时间线标记、图例和配置列表应同时显示当前配置色。");
+        Require(shapes.Any(d => d.Geometry is RectangleGeometry && d.Brush is SolidColorBrush day && day.Color == category)
+            && shapes.Any(d => d.Brush is SolidColorBrush track
+                && track.Color == ((SolidColorBrush)palette["Brush.Timeline.Track"]).Color),
+            "活动星期指示条和时间线轨道应使用当前配色。");
+        var expected = (LinearGradientBrush)palette["Brush.Schedule.NextRun"];
+        Require(page.NextRunBanner.Background is LinearGradientBrush banner
+            && banner.GradientStops.Select(s => s.Color).SequenceEqual(expected.GradientStops.Select(s => s.Color)),
+            "已有下次运行横幅的渐变应随配色切换。");
+        var chip = page.TimeChips.Children.OfType<Border>().First();
+        Require(chip.Background is SolidColorBrush tint
+            && tint.Color == Color.FromArgb(0x1A, category.R, category.G, category.B),
+            "已有时间标签的半透明背景应从当前配置色派生。");
+
+        static IEnumerable<GeometryDrawing> Shapes(DrawingGroup group)
+        {
+            foreach (var child in group.Children) {
+                if (child is GeometryDrawing shape) yield return shape;
+                if (child is DrawingGroup nested) {
+                    foreach (var item in Shapes(nested)) yield return item;
+                }
+            }
+        }
     }
 
     private static ResourceDictionary CreateTestPalette(ResourceDictionary light)
