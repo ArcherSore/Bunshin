@@ -32,7 +32,7 @@
             <Setter Property="Control.Template">
                 <Setter.Value>
                     <ControlTemplate>
-                        <Border Margin="2" BorderBrush="{StaticResource Brush.Primary}" BorderThickness="2"
+                        <Border Margin="2" BorderBrush="{DynamicResource Brush.Primary}" BorderThickness="2"
                                 CornerRadius="4" SnapsToDevicePixels="True" />
                     </ControlTemplate>
                 </Setter.Value>
@@ -44,8 +44,8 @@
             <Setter Property="MinWidth" Value="40" />
             <Setter Property="Padding" Value="12,0" />
             <Setter Property="VerticalAlignment" Value="Top" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Body}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource Viewer.Focus}" />
             <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
@@ -60,25 +60,25 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.TitleBar.Hover}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.TitleBar.Hover}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.TitleBar.Pressed}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.TitleBar.Pressed}" />
                 </Trigger>
                 <Trigger Property="Tag" Value="On">
-                    <Setter Property="Background" Value="{StaticResource Brush.Warning.Surface}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Warning.Foreground}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Warning.Surface}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Warning.Foreground}" />
                 </Trigger>
                 <MultiTrigger>
                     <MultiTrigger.Conditions>
                         <Condition Property="Tag" Value="On" />
                         <Condition Property="IsMouseOver" Value="True" />
                     </MultiTrigger.Conditions>
-                    <Setter Property="Background" Value="{StaticResource Brush.Warning.SurfaceHover}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Warning.SurfaceHover}" />
                 </MultiTrigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Background" Value="Transparent" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -86,7 +86,7 @@
 
     <!-- Focusable so locking can pull keyboard focus out of the RDP window. It paints the canvas itself, because
          WPF-UI resets the window background to its own theme brush. -->
-    <Grid x:Name="ViewerRoot" Background="{StaticResource Brush.Canvas}" Focusable="True"
+    <Grid x:Name="ViewerRoot" Background="{DynamicResource Brush.Canvas}" Focusable="True"
           FocusVisualStyle="{x:Null}" KeyboardNavigation.IsTabStop="False">
         <Grid.RowDefinitions>
             <RowDefinition Height="32" />
@@ -94,22 +94,22 @@
         </Grid.RowDefinitions>
 
         <!-- Header and status text ignore hit testing, so they drag the window like the empty caption. -->
-        <ui:TitleBar x:Name="ViewerTitleBar" Height="32" Background="{StaticResource Brush.Canvas}">
+        <ui:TitleBar x:Name="ViewerTitleBar" Height="32" Background="{DynamicResource Brush.Canvas}">
             <ui:TitleBar.Icon>
                 <ui:ImageIcon Source="pack://application:,,,/Assets/app.png" />
             </ui:TitleBar.Icon>
             <ui:TitleBar.Header>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" IsHitTestVisible="False">
                     <Ellipse x:Name="StatusDot" Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center"
-                             Fill="{StaticResource Brush.Primary}" />
+                             Fill="{DynamicResource Brush.Primary}" />
                     <TextBlock Text="桌面分身" FontSize="12" VerticalAlignment="Center"
-                               Foreground="{StaticResource Brush.Text.Body}" />
+                               Foreground="{DynamicResource Brush.Text.Body}" />
                 </StackPanel>
             </ui:TitleBar.Header>
             <ui:TitleBar.CenterContent>
                 <TextBlock x:Name="StatusText" Margin="12,0,12,0" FontSize="12" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" IsHitTestVisible="False"
-                           Foreground="{StaticResource Brush.Text.Muted}" />
+                           Foreground="{DynamicResource Brush.Text.Muted}" />
             </ui:TitleBar.CenterContent>
             <ui:TitleBar.TrailingContent>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
@@ -136,7 +136,7 @@
         <!-- The 1 DIP inset and 2 DIP frame keep the RDP child window off the resize border. The frame turns
              amber while input reaches the Child Session. -->
         <Grid x:Name="PictureArea" Grid.Row="1" Margin="1,0,1,1" SizeChanged="PictureArea_SizeChanged">
-            <Border x:Name="PictureFrame" BorderThickness="2" BorderBrush="{StaticResource Brush.Canvas}"
+            <Border x:Name="PictureFrame" BorderThickness="2" BorderBrush="{DynamicResource Brush.Canvas}"
                     HorizontalAlignment="Center" VerticalAlignment="Center">
                 <wfi:WindowsFormsHost x:Name="RdpFormsHost" />
             </Border>

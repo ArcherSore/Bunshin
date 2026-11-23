@@ -5,6 +5,7 @@
     <!-- Primitive colors, private to this palette. -->
     <Color x:Key="Color.Amber.50">#FFF4E5</Color>
     <Color x:Key="Color.Amber.100">#FDE8C8</Color>
+    <Color x:Key="Color.Amber.500">#D08A16</Color>
     <Color x:Key="Color.Amber.700">#8A5400</Color>
     <Color x:Key="Color.Amber.800">#7A4700</Color>
     <Color x:Key="Color.Black.Alpha26">#1A000000</Color>
@@ -25,10 +26,13 @@
     <Color x:Key="Color.Neutral.50">#F6F8FB</Color>
     <Color x:Key="Color.Neutral.50.Clear">#00F6F8FB</Color>
     <Color x:Key="Color.Neutral.100">#EEF2F6</Color>
+    <Color x:Key="Color.Neutral.125">#E9EDF3</Color>
+    <Color x:Key="Color.Neutral.125.Clear">#00E9EDF3</Color>
     <Color x:Key="Color.Neutral.150">#E4EAF0</Color>
     <Color x:Key="Color.Neutral.160">#E3E8EF</Color>
     <Color x:Key="Color.Neutral.175">#DCE3EC</Color>
     <Color x:Key="Color.Neutral.200">#D6DEE8</Color>
+    <Color x:Key="Color.Neutral.300">#A3AFBF</Color>
     <Color x:Key="Color.Neutral.400">#7B899B</Color>
     <Color x:Key="Color.Neutral.450">#718096</Color>
     <Color x:Key="Color.Neutral.500">#5F6E80</Color>
@@ -36,10 +40,13 @@
     <Color x:Key="Color.Neutral.800">#26313F</Color>
     <Color x:Key="Color.Neutral.900">#182230</Color>
     <Color x:Key="Color.Neutral.900.Alpha13">#0D182230</Color>
+    <Color x:Key="Color.Neutral.900.Alpha31">#1F182230</Color>
     <Color x:Key="Color.Red.50">#FDEBED</Color>
     <Color x:Key="Color.Red.200">#E7AAB0</Color>
+    <Color x:Key="Color.Red.500">#E03131</Color>
     <Color x:Key="Color.Red.600">#B4232F</Color>
     <Color x:Key="Color.Red.700">#9E1C2A</Color>
+    <Color x:Key="Color.White.Alpha140">#8CFFFFFF</Color>
 
     <!-- Color-valued tokens for gradient stops and animation targets. -->
     <Color x:Key="Color.Primary">#3156A3</Color>
@@ -104,6 +111,24 @@
     <SolidColorBrush x:Key="Brush.TitleBar.Hover" Color="{StaticResource Color.Black.Alpha26}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.TitleBar.Pressed" Color="{StaticResource Color.Black.Alpha38}" po:Freeze="True" />
 
+    <SolidColorBrush x:Key="Brush.Schedule.ChipRemoveHover" Color="{StaticResource Color.Neutral.900.Alpha31}"
+                     po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="{StaticResource Color.Neutral.300}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Warning" Color="{StaticResource Color.Amber.500}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Now" Color="{StaticResource Color.Red.500}" po:Freeze="True" />
+
+    <SolidColorBrush x:Key="Brush.Configuration.Bar" Color="{StaticResource Color.Neutral.125}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Configuration.TabHover" Color="{StaticResource Color.White.Alpha140}"
+                     po:Freeze="True" />
+    <LinearGradientBrush x:Key="Brush.Configuration.FadeLeft" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
+        <GradientStop Offset="0" Color="{StaticResource Color.Neutral.125}" />
+        <GradientStop Offset="1" Color="{StaticResource Color.Neutral.125.Clear}" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="Brush.Configuration.FadeRight" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
+        <GradientStop Offset="0" Color="{StaticResource Color.Neutral.125.Clear}" />
+        <GradientStop Offset="1" Color="{StaticResource Color.Neutral.125}" />
+    </LinearGradientBrush>
+
     <LinearGradientBrush x:Key="Brush.Scroll.FadeTop" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
         <GradientStop Offset="0" Color="{StaticResource Color.Neutral.50}" />
         <GradientStop Offset="1" Color="{StaticResource Color.Neutral.50.Clear}" />
@@ -113,6 +138,8 @@
         <GradientStop Offset="1" Color="{StaticResource Color.Neutral.50}" />
     </LinearGradientBrush>
 
+    <DropShadowEffect x:Key="Effect.Configuration.SelectedTab" Color="{StaticResource Color.Neutral.900}"
+                      BlurRadius="3" ShadowDepth="1" Direction="270" Opacity="0.14" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light"
                       BlurRadius="8"
                       Direction="270"

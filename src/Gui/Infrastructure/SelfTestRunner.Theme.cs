@@ -28,6 +28,7 @@ internal static partial class SelfTestRunner
         RunOnboardingScenario(logger, directory, (window, _) => {
             var button = new Button { Style = (Style)window.FindResource("PrimaryButtonStyle") };
             ((System.Windows.Controls.Panel)window.Content).Children.Add(button);
+            var configurationBar = Named<Border>(window.TaskPlanEditor, "ConfigurationBar");
             int notifications = 0;
             service.ThemeChanged += (_, _) => notifications++;
 
@@ -40,6 +41,9 @@ internal static partial class SelfTestRunner
                 Require(face.Background is SolidColorBrush fill && fill.Color == primary
                     && window.Background is SolidColorBrush canvas && canvas.Color == Expected("Brush.Canvas"),
                     "已显示窗口的背景和公共按钮模板应呈现当前配色。");
+                Require(configurationBar.Background is SolidColorBrush bar
+                    && bar.Color == Expected("Brush.Configuration.Bar"),
+                    "任务计划编辑器中已显示的配置标签栏应跟随当前配色。");
                 Require(ApplicationThemeManager.GetAppTheme() == mode
                     && Equals(app.FindResource("SystemAccentColor"), primary)
                     && Equals(app.FindResource("SystemAccentColorPrimary"), primary)

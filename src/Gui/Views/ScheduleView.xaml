@@ -5,8 +5,8 @@
              xmlns:views="clr-namespace:Gui.Views">
     <UserControl.Resources>
         <Style x:Key="Schedule.Card" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
         </Style>
@@ -21,8 +21,8 @@
             <Setter Property="Padding" Value="10,0" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Body}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -39,11 +39,11 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
                 </Trigger>
                 <Trigger Property="IsChecked" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Primary.Surface}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Primary}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Primary.Surface}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Primary}" />
                     <Setter Property="FontWeight" Value="SemiBold" />
                 </Trigger>
             </Style.Triggers>
@@ -60,9 +60,9 @@
             <Setter Property="Margin" Value="0,0,4,0" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Body}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -83,7 +83,7 @@
                         <Condition Property="IsMouseOver" Value="True" />
                         <Condition Property="IsChecked" Value="False" />
                     </MultiTrigger.Conditions>
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
                 </MultiTrigger>
             </Style.Triggers>
         </Style>
@@ -92,7 +92,7 @@
             <Setter Property="Height" Value="20" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -101,7 +101,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Back" Property="Background" Value="#1F182230" />
+                                <Setter TargetName="Back" Property="Background"
+                                        Value="{DynamicResource Brush.Schedule.ChipRemoveHover}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -114,7 +115,7 @@
             <Setter Property="Padding" Value="12,0" />
             <Setter Property="FontSize" Value="12.5" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -132,7 +133,7 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -140,9 +141,9 @@
             <Setter Property="Width" Value="46" />
             <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="CaretBrush" Value="White" />
-            <Setter Property="SelectionBrush" Value="White" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Inverse}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource Brush.Text.Inverse}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource Brush.Text.Inverse}" />
             <Setter Property="SelectionOpacity" Value="0.35" />
             <Setter Property="MaxLength" Value="5" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -159,24 +160,24 @@
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="Row" Background="Transparent" CornerRadius="6" Padding="10,6"
-                                MinWidth="200">
+                        <Border x:Name="Row" Background="{DynamicResource Brush.Transparent}"
+                                CornerRadius="6" Padding="10,6" MinWidth="200">
                             <StackPanel>
                                 <TextBlock Text="{TemplateBinding Header}" FontSize="{TemplateBinding FontSize}"
                                            FontWeight="{TemplateBinding FontWeight}"
                                            Foreground="{TemplateBinding Foreground}" />
                                 <TextBlock x:Name="Note" Text="{TemplateBinding Tag}" Margin="0,1,0,0"
-                                           FontSize="11.5" Foreground="{StaticResource Brush.Text.Muted}" />
+                                           FontSize="11.5" Foreground="{DynamicResource Brush.Text.Muted}" />
                             </StackPanel>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
                                 <Setter TargetName="Row" Property="Background"
-                                        Value="{StaticResource Brush.Surface.Disabled}" />
+                                        Value="{DynamicResource Brush.Surface.Disabled}" />
                             </Trigger>
                             <Trigger Property="Tag" Value="{x:Null}">
                                 <Setter TargetName="Note" Property="Visibility" Value="Collapsed" />
@@ -198,18 +199,18 @@
                         <Condition Property="IsMouseOver" Value="True" />
                         <Condition Property="IsEnabled" Value="True" />
                     </MultiTrigger.Conditions>
-                    <Setter Property="Background" Value="{StaticResource Brush.Error.Surface}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Error.Border}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Error.Surface}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Error.Border}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
                 </MultiTrigger>
                 <MultiTrigger>
                     <MultiTrigger.Conditions>
                         <Condition Property="IsPressed" Value="True" />
                         <Condition Property="IsEnabled" Value="True" />
                     </MultiTrigger.Conditions>
-                    <Setter Property="Background" Value="{StaticResource Brush.Error.Surface}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Error}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Error.Surface}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Error}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
                 </MultiTrigger>
             </Style.Triggers>
         </Style>
@@ -229,8 +230,8 @@
                 <TextBlock Text="定时" VerticalAlignment="Center" Style="{StaticResource WindowTitleTextStyle}" />
                 <!-- Mirrors the home page's desktop status; the full run console stays on the home page. -->
                 <Button x:Name="StatusCapsule" HorizontalAlignment="Right" Height="32" Padding="12,0,10,0"
-                        Style="{StaticResource BaseButtonStyle}" Background="{StaticResource Brush.Surface}"
-                        BorderBrush="{StaticResource Brush.Border}" BorderThickness="1"
+                        Style="{StaticResource BaseButtonStyle}" Background="{DynamicResource Brush.Surface}"
+                        BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
                         ToolTip="回到首页查看运行控制" Click="StatusCapsule_Click">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -244,9 +245,9 @@
                     <StackPanel Orientation="Horizontal">
                         <Ellipse x:Name="StatusDot" Width="7" Height="7" VerticalAlignment="Center" />
                         <TextBlock x:Name="StatusText" Margin="6,0,0,0" FontSize="12" VerticalAlignment="Center"
-                                   Foreground="{StaticResource Brush.Text.Secondary}" />
+                                   Foreground="{DynamicResource Brush.Text.Secondary}" />
                         <TextBlock x:Name="StatusView" Text="查看 ›" Margin="10,0,0,0" FontSize="12"
-                                   VerticalAlignment="Center" Foreground="{StaticResource Brush.Primary}" />
+                                   VerticalAlignment="Center" Foreground="{DynamicResource Brush.Primary}" />
                     </StackPanel>
                 </Button>
 
@@ -294,18 +295,21 @@
                                 <WrapPanel DockPanel.Dock="Bottom" Margin="66,6,12,0">
                                     <Ellipse x:Name="KeyCurrent" Width="10" Height="10" VerticalAlignment="Center" />
                                     <TextBlock Text="当前配置" Style="{StaticResource Schedule.Key}" />
-                                    <Ellipse Width="8" Height="8" Fill="#A3AFBF" VerticalAlignment="Center" />
-                                    <TextBlock Text="其他配置" Style="{StaticResource Schedule.Key}" />
-                                    <Ellipse Width="10" Height="10" Stroke="#A3AFBF" StrokeThickness="2"
+                                    <Ellipse Width="8" Height="8" Fill="{DynamicResource Brush.Timeline.Inactive}"
                                              VerticalAlignment="Center" />
+                                    <TextBlock Text="其他配置" Style="{StaticResource Schedule.Key}" />
+                                    <Ellipse Width="10" Height="10" Stroke="{DynamicResource Brush.Timeline.Inactive}"
+                                             StrokeThickness="2" VerticalAlignment="Center" />
                                     <TextBlock Text="已停用" Style="{StaticResource Schedule.Key}" />
                                     <Grid Width="12" Height="12" VerticalAlignment="Center">
-                                        <Ellipse Fill="#D08A16" />
-                                        <TextBlock Text="!" FontSize="9" FontWeight="Bold" Foreground="White"
+                                        <Ellipse Fill="{DynamicResource Brush.Timeline.Warning}" />
+                                        <TextBlock Text="!" FontSize="9" FontWeight="Bold"
+                                                   Foreground="{DynamicResource Brush.Text.Inverse}"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Grid>
                                     <TextBlock Text="将跳过" Style="{StaticResource Schedule.Key}" />
-                                    <Rectangle Width="2" Height="14" Fill="#E03131" VerticalAlignment="Center" />
+                                    <Rectangle Width="2" Height="14" Fill="{DynamicResource Brush.Timeline.Now}"
+                                               VerticalAlignment="Center" />
                                     <TextBlock Text="现在" Style="{StaticResource Schedule.Key}" />
                                 </WrapPanel>
                                 <views:ScheduleTimeline x:Name="Timeline"
@@ -343,7 +347,7 @@
                                         <StackPanel x:Name="DayChips" Orientation="Horizontal"
                                                     AutomationProperties.Name="星期" />
                                         <Border Margin="8,0,0,0" Padding="2" CornerRadius="6" BorderThickness="1"
-                                                BorderBrush="{StaticResource Brush.Border}"
+                                                BorderBrush="{DynamicResource Brush.Border}"
                                                 VerticalAlignment="Center" AutomationProperties.Name="星期预设">
                                             <StackPanel Orientation="Horizontal">
                                                 <ToggleButton x:Name="PresetWeekdays" Content="工作日" Tag="Weekdays"
@@ -364,13 +368,13 @@
                                     <WrapPanel x:Name="TimeChips" Margin="0,0,0,-6" AutomationProperties.Name="时间" />
                                 </DockPanel>
                                 <Border x:Name="ShareHint" Margin="0,10,0,0" Padding="10,4,4,4" CornerRadius="6"
-                                        Background="{StaticResource Brush.Surface.Subdued}">
+                                        Background="{DynamicResource Brush.Surface.Subdued}">
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" MinHeight="26" Height="26" Padding="8,0"
                                                 FontSize="12" FontWeight="Normal"
                                                 Style="{StaticResource SubtleButtonStyle}"
                                                 Click="ShareHintClose_Click">
-                                            <TextBlock Text="知道了" Foreground="{StaticResource Brush.Text.Muted}" />
+                                            <TextBlock Text="知道了" Foreground="{DynamicResource Brush.Text.Muted}" />
                                         </Button>
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <TextBlock Text="勾选的星期共用这些时间。" FontSize="12"

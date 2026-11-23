@@ -7,21 +7,11 @@
         <views:ScrollEdgeVisibilityConverter x:Key="Scroll.EdgeVisibility" />
         <!-- Configuration tabs are segments on one tinted bar. The scroll bar stays hidden; edge fades show where
              more tabs are clipped, and the add button sits outside the scroller. -->
-        <Color x:Key="Configuration.BarColor">#E9EDF3</Color>
-        <Color x:Key="Configuration.BarColor.Clear">#00E9EDF3</Color>
-        <LinearGradientBrush x:Key="Configuration.FadeLeft" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Offset="0" Color="{StaticResource Configuration.BarColor}" />
-            <GradientStop Offset="1" Color="{StaticResource Configuration.BarColor.Clear}" />
-        </LinearGradientBrush>
-        <LinearGradientBrush x:Key="Configuration.FadeRight" StartPoint="0,0" EndPoint="1,0">
-            <GradientStop Offset="0" Color="{StaticResource Configuration.BarColor.Clear}" />
-            <GradientStop Offset="1" Color="{StaticResource Configuration.BarColor}" />
-        </LinearGradientBrush>
         <ControlTemplate x:Key="Configuration.Scroll" TargetType="ScrollViewer">
             <Grid>
                 <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" />
                 <Border x:Name="LeftFade" Width="28" HorizontalAlignment="Left" IsHitTestVisible="False"
-                        Background="{StaticResource Configuration.FadeLeft}">
+                        Background="{DynamicResource Brush.Configuration.FadeLeft}">
                     <Border.Visibility>
                         <MultiBinding Converter="{StaticResource Scroll.EdgeVisibility}" ConverterParameter="Left">
                             <Binding Path="HorizontalOffset" RelativeSource="{RelativeSource TemplatedParent}" />
@@ -30,7 +20,7 @@
                     </Border.Visibility>
                 </Border>
                 <Border x:Name="RightFade" Width="28" HorizontalAlignment="Right" IsHitTestVisible="False"
-                        Background="{StaticResource Configuration.FadeRight}">
+                        Background="{DynamicResource Brush.Configuration.FadeRight}">
                     <Border.Visibility>
                         <MultiBinding Converter="{StaticResource Scroll.EdgeVisibility}" ConverterParameter="Right">
                             <Binding Path="HorizontalOffset" RelativeSource="{RelativeSource TemplatedParent}" />
@@ -44,11 +34,7 @@
             <Setter Property="Height" Value="34" />
             <Setter Property="Padding" Value="3" />
             <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Background">
-                <Setter.Value>
-                    <SolidColorBrush Color="{StaticResource Configuration.BarColor}" />
-                </Setter.Value>
-            </Setter>
+            <Setter Property="Background" Value="{DynamicResource Brush.Configuration.Bar}" />
         </Style>
         <Style x:Key="Configuration.Tab" TargetType="TabItem">
             <Setter Property="Height" Value="28" />
@@ -56,35 +42,31 @@
             <Setter Property="MaxWidth" Value="200" />
             <Setter Property="Margin" Value="0,0,2,0" />
             <Setter Property="FontWeight" Value="Normal" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
                         <Border x:Name="Segment" Background="{TemplateBinding Background}" CornerRadius="6"
-                                BorderThickness="1" BorderBrush="Transparent">
+                                BorderThickness="1" BorderBrush="{DynamicResource Brush.Transparent}">
                             <ContentPresenter ContentSource="Header" Margin="11,0,4,0" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#8CFFFFFF" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+                                <Setter Property="Background" Value="{DynamicResource Brush.Configuration.TabHover}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+                                <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
-                                <Setter TargetName="Segment" Property="Effect">
-                                    <Setter.Value>
-                                        <DropShadowEffect BlurRadius="3" ShadowDepth="1" Direction="270"
-                                                          Opacity="0.14" Color="#182230" />
-                                    </Setter.Value>
-                                </Setter>
+                                <Setter TargetName="Segment" Property="Effect"
+                                        Value="{DynamicResource Effect.Configuration.SelectedTab}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="Segment" Property="BorderBrush"
-                                        Value="{StaticResource Brush.Primary}" />
+                                        Value="{DynamicResource Brush.Primary}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -98,7 +80,7 @@
             <Setter Property="MinWidth" Value="28" />
             <Setter Property="Margin" Value="2,0,0,0" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -110,19 +92,19 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Primary}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Primary}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Disabled}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="Configuration.Delete" TargetType="Button">
             <Setter Property="Width" Value="18" />
             <Setter Property="Height" Value="18" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Muted}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
             <Setter Property="Opacity" Value="0.55" />
             <Setter Property="Visibility" Value="Hidden" />
             <Setter Property="Template">
@@ -145,12 +127,12 @@
                 </DataTrigger>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Opacity" Value="1" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
-                    <Setter Property="Background" Value="{StaticResource Brush.Error.Surface}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Error.Surface}" />
                 </Trigger>
                 <Trigger Property="IsKeyboardFocused" Value="True">
                     <Setter Property="Opacity" Value="1" />
-                    <Setter Property="Background" Value="{StaticResource Brush.Error.Surface}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Error.Surface}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
                     <Setter Property="Visibility" Value="Hidden" />
@@ -248,9 +230,9 @@
                         <Setter Property="Height" Value="30" />
                         <Setter Property="Margin" Value="0,3,6,3" />
                         <Setter Property="Padding" Value="12,0" />
-                        <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-                        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
-                        <Setter Property="Foreground" Value="{StaticResource Brush.Text.Body}" />
+                        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+                        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+                        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
                         <Setter Property="Cursor" Value="Hand" />
                         <Setter Property="ToolTip" Value="{Binding Description}" />
                         <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
@@ -272,13 +254,13 @@
                                 <Setter Property="ToolTip" Value="{x:Null}" />
                             </DataTrigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource Brush.Surface.Subdued}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Strong}" />
+                                <Setter Property="Background" Value="{DynamicResource Brush.Surface.Subdued}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="{StaticResource Brush.Primary}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource Brush.Primary}" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.Text.Inverse}" />
+                                <Setter Property="Background" Value="{DynamicResource Brush.Primary}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Primary}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Inverse}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                             </Trigger>
                             <MultiTrigger>
@@ -286,8 +268,8 @@
                                     <Condition Property="IsSelected" Value="True" />
                                     <Condition Property="IsMouseOver" Value="True" />
                                 </MultiTrigger.Conditions>
-                                <Setter Property="Background" Value="{StaticResource Brush.Primary.Hover}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource Brush.Primary.Hover}" />
+                                <Setter Property="Background" Value="{DynamicResource Brush.Primary.Hover}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Primary.Hover}" />
                             </MultiTrigger>
                         </Style.Triggers>
                     </Style>
@@ -335,7 +317,7 @@
                         <ui:SymbolIcon Symbol="ChevronDown16" FontSize="15" />
                     </Button>
                     <TabControl x:Name="ConfigurationTabs" BorderThickness="0" Padding="0"
-                                Background="Transparent"
+                                Background="{DynamicResource Brush.Transparent}"
                                 SelectionChanged="ConfigurationTabs_SelectionChanged"
                                 PreviewKeyDown="ConfigurationTabs_PreviewKeyDown"
                                 IsVisibleChanged="ConfigurationTabs_IsVisibleChanged"
@@ -362,11 +344,11 @@
             </Border>
             <Border x:Name="ConfigurationLockBadge" Grid.Column="2" Padding="8,3,10,3"
                     VerticalAlignment="Center" CornerRadius="11" Visibility="Collapsed"
-                    Background="{StaticResource Brush.Surface.Disabled}">
+                    Background="{DynamicResource Brush.Surface.Disabled}">
                 <StackPanel Orientation="Horizontal">
                     <ui:SymbolIcon Symbol="LockClosed16" FontSize="14" Margin="0,0,6,0"
                                    VerticalAlignment="Center"
-                                   Foreground="{StaticResource Brush.Text.Secondary}" />
+                                   Foreground="{DynamicResource Brush.Text.Secondary}" />
                     <TextBlock x:Name="ConfigurationLockText" VerticalAlignment="Center"
                                Style="{StaticResource SecondaryTextStyle}"
                                AutomationProperties.LiveSetting="Polite" />
@@ -378,14 +360,14 @@
                 Grid.Row="1"
                 Margin="0,12,0,0"
                 Padding="12,8"
-                Background="{StaticResource Brush.Error.Surface}"
-                BorderBrush="{StaticResource Brush.Error.Border}"
+                Background="{DynamicResource Brush.Error.Surface}"
+                BorderBrush="{DynamicResource Brush.Error.Border}"
                 BorderThickness="1"
                 CornerRadius="{StaticResource Radius.Control}"
                 Visibility="Collapsed">
             <TextBlock x:Name="ProjectValidationText"
                        TextWrapping="Wrap"
-                       Foreground="{StaticResource Brush.Error.Foreground}"
+                       Foreground="{DynamicResource Brush.Error.Foreground}"
                        Style="{StaticResource SecondaryTextStyle}"
                        AutomationProperties.Name="任务配置校验结果"
                        AutomationProperties.LiveSetting="Polite" />
@@ -471,7 +453,7 @@
                                        VerticalAlignment="Center"
                                        Style="{StaticResource MutedTextStyle}" />
                             <StackPanel x:Name="AddedTasksBadge" Orientation="Horizontal"
-                                        Margin="12,0,0,0" Background="Transparent"
+                                        Margin="12,0,0,0" Background="{DynamicResource Brush.Transparent}"
                                         Visibility="Collapsed">
                                 <ui:SymbolIcon Symbol="Checkmark16" FontSize="13" Margin="0,0,4,0"
                                                VerticalAlignment="Center"

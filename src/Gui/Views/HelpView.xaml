@@ -41,28 +41,28 @@
             <Setter Property="Padding" Value="6,1" />
             <Setter Property="Margin" Value="1,0" />
             <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
         </Style>
         <!-- The 17 px line matches the browser's content box, so a chip is 19 px tall like the approved design. -->
         <Style x:Key="Help.ChipText" TargetType="TextBlock">
             <Setter Property="LineHeight" Value="17" />
             <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
         </Style>
         <Style x:Key="Help.ChipSeparator" TargetType="TextBlock">
             <Setter Property="LineHeight" Value="17" />
             <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
             <Setter Property="Margin" Value="4,0" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Muted}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
         </Style>
         <Style x:Key="Help.Key" TargetType="Border">
             <Setter Property="MinWidth" Value="22" />
             <Setter Property="Padding" Value="6,0" />
             <Setter Property="BorderThickness" Value="1,1,1,2" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
         </Style>
         <Style x:Key="Help.KeyText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11" />
@@ -70,7 +70,7 @@
             <Setter Property="LineHeight" Value="18" />
             <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
             <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
         </Style>
 
         <!-- Answer blocks open with a paragraph; every later block and list item keeps a fixed gap above it. -->
@@ -99,7 +99,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Style="{StaticResource Help.Text}"
-                                       Foreground="{StaticResource Brush.Text.Primary}" />
+                                       Foreground="{DynamicResource Brush.Text.Primary}" />
                             <TextBlock Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource Help.Text}"
                                        views:HelpMarkup.Text="{Binding Text}" />
                         </Grid>
@@ -110,17 +110,17 @@
         <DataTemplate DataType="{x:Type views:HelpSteps}">
             <StackPanel Margin="0,10,0,0">
                 <TextBlock x:Name="StepsTitle" Margin="0,4,0,8" Style="{StaticResource Help.Heading}"
-                           Foreground="{StaticResource Brush.Text.Primary}" views:HelpMarkup.Text="{Binding Title}" />
+                           Foreground="{DynamicResource Brush.Text.Primary}" views:HelpMarkup.Text="{Binding Title}" />
                 <ItemsControl ItemsSource="{Binding Items}" AlternationCount="2147483647"
                               ItemContainerStyle="{StaticResource Help.StepGap}" Focusable="False">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Grid>
                                 <Border Width="21" Height="21" CornerRadius="10.5" HorizontalAlignment="Left"
-                                        VerticalAlignment="Top" Background="{StaticResource Brush.Primary.Surface}">
+                                        VerticalAlignment="Top" Background="{DynamicResource Brush.Primary.Surface}">
                                     <TextBlock Text="{Binding Number}" FontSize="11" FontWeight="SemiBold"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               Foreground="{StaticResource Brush.Primary}" />
+                                               Foreground="{DynamicResource Brush.Primary}" />
                                 </Border>
                                 <TextBlock Margin="32,0,0,0" Style="{StaticResource Help.Text}"
                                            views:HelpMarkup.Text="{Binding Text}" />
@@ -137,10 +137,10 @@
         </DataTemplate>
         <DataTemplate DataType="{x:Type views:HelpTip}">
             <Border Margin="0,12,0,0" Padding="12,8" CornerRadius="6"
-                    Background="{StaticResource Brush.Primary.Surface}">
+                    Background="{DynamicResource Brush.Primary.Surface}">
                 <DockPanel>
                     <ui:SymbolIcon Symbol="Lightbulb16" FontSize="16" Margin="0,2,8,0" VerticalAlignment="Top"
-                                   Foreground="{StaticResource Brush.Primary}" />
+                                   Foreground="{DynamicResource Brush.Primary}" />
                     <TextBlock LineHeight="20" Style="{StaticResource Help.Text}"
                                views:HelpMarkup.Text="{Binding Text}" />
                 </DockPanel>
@@ -152,14 +152,14 @@
             <Setter Property="Control.Template">
                 <Setter.Value>
                     <ControlTemplate>
-                        <Border BorderBrush="{StaticResource Brush.Primary}" BorderThickness="2"
+                        <Border BorderBrush="{DynamicResource Brush.Primary}" BorderThickness="2"
                                 SnapsToDevicePixels="True" />
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
         <Style x:Key="Help.QuestionHeader" TargetType="ToggleButton">
-            <Setter Property="Background" Value="{StaticResource Brush.Transparent}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
             <Setter Property="Padding" Value="16,12,12,12" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource Help.HeaderFocus}" />
@@ -174,23 +174,23 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Subdued}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Subdued}" />
                 </Trigger>
                 <Trigger Property="IsChecked" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Subdued}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Subdued}" />
                 </Trigger>
                 <MultiTrigger>
                     <MultiTrigger.Conditions>
                         <Condition Property="IsChecked" Value="True" />
                         <Condition Property="IsMouseOver" Value="True" />
                     </MultiTrigger.Conditions>
-                    <Setter Property="Background" Value="{StaticResource Brush.Surface.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
                 </MultiTrigger>
             </Style.Triggers>
         </Style>
         <!-- Rows after the first are separated by a hairline, as in Settings. -->
         <Style x:Key="Help.Row" TargetType="Border">
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border.Subtle}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
             <Setter Property="BorderThickness" Value="0,1,0,0" />
             <Style.Triggers>
                 <DataTrigger Value="0" Binding="{Binding (ItemsControl.AlternationIndex),
@@ -210,7 +210,7 @@
                                 <ui:SymbolIcon x:Name="Chevron" Symbol="ChevronDown16" FontSize="16"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                RenderTransformOrigin="0.5,0.5"
-                                               Foreground="{StaticResource Brush.Text.Secondary}">
+                                               Foreground="{DynamicResource Brush.Text.Secondary}">
                                     <ui:SymbolIcon.RenderTransform>
                                         <RotateTransform />
                                     </ui:SymbolIcon.RenderTransform>
@@ -221,15 +221,15 @@
                                            Style="{StaticResource Help.Heading}" />
                                 <TextBlock x:Name="Summary" Margin="0,2,0,0" FontSize="12" LineHeight="18"
                                            TextTrimming="CharacterEllipsis"
-                                           Foreground="{StaticResource Brush.Text.Secondary}"
+                                           Foreground="{DynamicResource Brush.Text.Secondary}"
                                            views:HelpMarkup.Text="{Binding Summary}" />
                             </StackPanel>
                         </DockPanel>
                     </ToggleButton>
                     <views:RevealDecorator x:Name="Answer">
                         <Border Padding="16,14,56,18" BorderThickness="0,1,0,0"
-                                BorderBrush="{StaticResource Brush.Border.Subtle}"
-                                Background="{StaticResource Brush.Surface}">
+                                BorderBrush="{DynamicResource Brush.Border.Subtle}"
+                                Background="{DynamicResource Brush.Surface}">
                             <ItemsControl ItemsSource="{Binding Blocks}" Focusable="False" />
                         </Border>
                     </views:RevealDecorator>
@@ -237,7 +237,7 @@
             </Border>
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding IsExpanded}" Value="True">
-                    <Setter TargetName="Question" Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+                    <Setter TargetName="Question" Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                     <Setter TargetName="Summary" Property="Visibility" Value="Collapsed" />
                     <DataTrigger.EnterActions>
                         <BeginStoryboard Storyboard="{StaticResource Help.Open}" />
@@ -260,8 +260,8 @@
                     <DataTemplate>
                         <StackPanel Margin="0,20,0,0">
                             <TextBlock Text="{Binding Title}" Style="{StaticResource SectionTitleTextStyle}" />
-                            <views:ClippingBorder Margin="0,8,0,0" Background="{StaticResource Brush.Surface}"
-                                                  BorderBrush="{StaticResource Brush.Border.Subtle}"
+                            <views:ClippingBorder Margin="0,8,0,0" Background="{DynamicResource Brush.Surface}"
+                                                  BorderBrush="{DynamicResource Brush.Border.Subtle}"
                                                   BorderThickness="1" CornerRadius="{StaticResource Radius.Section}">
                                 <ItemsControl ItemsSource="{Binding Questions}" AlternationCount="2147483647"
                                               ItemTemplate="{StaticResource Help.Question}" Focusable="False" />
