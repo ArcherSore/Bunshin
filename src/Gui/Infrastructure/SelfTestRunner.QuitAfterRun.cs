@@ -85,7 +85,7 @@ internal static partial class SelfTestRunner
         var exitRequests = 0;
         var window = new MainWindow(logger, session, coordinator, new RuntimeEnvironment(logger, session, coordinator),
             () => Task.CompletedTask, () => Task.CompletedTask, _ => Task.CompletedTask, projectRoot,
-            prepareEnvironment: Prepare, autostart: InertAutostart(), launchCommand: command, quitAfterRun: () => exitRequests++);
+            checkForUpdate: OfflineUpdateCheck, prepareEnvironment: Prepare, autostart: InertAutostart(), launchCommand: command, quitAfterRun: () => exitRequests++);
         Task<WireEnvelope> ReadStart() => WorkerCoordinatorSelfTest.ReadRequestAsync(
             pipe, ProtocolOperations.RunStart, token);
         Task Accept(WireEnvelope request) => pipe.WriteAsync(WireEnvelope.Response(request.Operation,

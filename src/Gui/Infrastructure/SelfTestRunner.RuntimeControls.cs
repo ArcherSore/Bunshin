@@ -414,7 +414,8 @@ internal static partial class SelfTestRunner
         var window = new MainWindow(logger, windowSession, windowCoordinator,
             environment ?? WindowEnvironment(logger, windowSession, windowCoordinator, runOperation),
             () => Task.CompletedTask, endEnvironment ?? (() => Task.CompletedTask), _ => Task.CompletedTask,
-            projectDirectory, prepareEnvironment: prepareEnvironment, autostart: InertAutostart(),
+            projectDirectory, checkForUpdate: OfflineUpdateCheck, prepareEnvironment: prepareEnvironment,
+            autostart: InertAutostart(),
             scheduleClock: scheduleClock, launchCommand: launchCommand, scheduleTimer: scheduleTimer,
             quitAfterRun: quitAfterRun, presentation: presentation);
         var application = System.Windows.Application.Current;
