@@ -77,6 +77,9 @@ function Build-ManagedProject
 {
     param([string]$Name, [string]$Project)
 
+    if ($Project -eq 'Gui') {
+        Invoke-VerificationStep 'theme-sources' 'dotnet' @('run', '--project', 'tools/ThemeSourceCheck', '-c', $Configuration)
+    }
     if ($NoBuild) { return }
     # Keep incremental restore enabled: dependency changes and a clean checkout must also work.
     Invoke-VerificationStep "$Name-build" 'dotnet' @(

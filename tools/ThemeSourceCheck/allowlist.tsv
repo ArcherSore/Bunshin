@@ -1,0 +1,392 @@
+# Path, owning element/member and property, violation, reason (tab-separated, one row per occurrence).
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.Focus/BorderBrush	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Foreground	StaticResource Brush.Text.Body	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Background	StaticResource Brush.TitleBar.Hover	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Background	StaticResource Brush.TitleBar.Pressed	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Background	StaticResource Brush.Warning.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Foreground	StaticResource Brush.Warning.Foreground	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Background	StaticResource Brush.Warning.SurfaceHover	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	Viewer.TitleButton/Foreground	StaticResource Brush.Text.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	ViewerRoot/Background	StaticResource Brush.Canvas	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	ViewerTitleBar/Background	StaticResource Brush.Canvas	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	StatusDot/Fill	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	ViewerTitleBar/Foreground	StaticResource Brush.Text.Body	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	StatusText/Foreground	StaticResource Brush.Text.Muted	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/ChildSession/RdpPreviewWindow.xaml	PictureFrame/BorderBrush	StaticResource Brush.Canvas	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.Chip/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.ChipText/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.ChipSeparator/Foreground	StaticResource Brush.Text.Muted	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.Key/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.Key/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.KeyText/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	TextBlock/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	StepsTitle/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Border/Background	StaticResource Brush.Primary.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	TextBlock/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Border/Background	StaticResource Brush.Primary.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	SymbolIcon/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.HeaderFocus/BorderBrush	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.QuestionHeader/Background	StaticResource Brush.Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.QuestionHeader/Background	StaticResource Brush.Surface.Subdued	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.QuestionHeader/Background	StaticResource Brush.Surface.Subdued	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.QuestionHeader/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.Row/BorderBrush	StaticResource Brush.Border.Subtle	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Chevron/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Summary/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Answer/BorderBrush	StaticResource Brush.Border.Subtle	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Answer/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	Help.Question/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	ClippingBorder/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/HelpView.xaml	ClippingBorder/BorderBrush	StaticResource Brush.Border.Subtle	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/MainWindow.xaml	FluentWindow/Foreground	StaticResource Brush.Text.Body	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Rail.Item/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Rail.Item/Foreground	StaticResource Brush.Text.Secondary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Indicator/Background	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Rail.Item/Background	StaticResource Brush.Rail.Hover	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Rail.Item/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Rail.Item/Background	StaticResource Brush.Rail.Active	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Rail.Item/Foreground	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Activity.ClearButton/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Activity.ClearButton/Foreground	StaticResource Brush.Text.Muted	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Activity.ClearButton/Background	StaticResource Brush.Surface.Disabled	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Activity.ClearButton/Background	StaticResource Brush.Border.Subtle	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Activity.ClearButton/Foreground	literal #A6B6CD	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Preview.Border/Color	literal #DCE6F5	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Preview.IconFocus/BorderBrush	StaticResource Brush.Border.Strong	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Preview.IconButton/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Preview.IconButton/Foreground	StaticResource Brush.Text.Secondary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Preview.IconButton/Background	StaticResource Brush.Surface.Disabled	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Preview.IconButton/Background	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Hidden/To	StaticResource Color.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Hidden/To	StaticResource Color.Primary.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Hover/To	StaticResource Color.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Hover/To	StaticResource Color.Primary.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Dragging/To	StaticResource Color.Primary.SurfaceHover	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Dragging/To	StaticResource Color.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Keyboard/To	StaticResource Color.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Keyboard/To	StaticResource Color.Primary.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Tether/Color	literal #008FA8DA	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Tether/Color	literal #8FA8DA	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Tether/Color	literal #008FA8DA	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	TetherStrong/Color	literal #003156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	TetherStrong/Color	StaticResource Color.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	TetherStrong/Color	literal #003156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	FocusRing/Stroke	literal #993156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	FocusRing/Stroke	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	DiscFill/Color	StaticResource Color.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	DiscStroke/Color	StaticResource Color.Primary.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	DiscShadow/Color	StaticResource Color.Splitter.Shadow	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Handle/Stroke	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.Card/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.Card/BorderBrush	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.Card/Color	literal #182230	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.Section/BorderBrush	StaticResource Brush.Border.Subtle	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SectionTitle/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.NeutralButton/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.NeutralButton/BorderBrush	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.NeutralButton/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.NeutralButton/Background	StaticResource Brush.Surface.Subdued	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.NeutralButton/BorderBrush	StaticResource Brush.Border.Strong	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.DangerButton/Foreground	StaticResource Brush.Error.Foreground	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.DangerButton/BorderBrush	StaticResource Brush.Error.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.DangerButton/Background	StaticResource Brush.Error.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.DangerButton/BorderBrush	StaticResource Brush.Error	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/BorderBrush	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Foreground	StaticResource Brush.Text.Body	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Background	StaticResource Brush.Surface.Subdued	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/BorderBrush	StaticResource Brush.Border.Strong	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Background	StaticResource Brush.Primary.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/BorderBrush	StaticResource Brush.Primary.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Foreground	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Background	StaticResource Brush.Primary.SurfaceHover	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Background	StaticResource Brush.Warning.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/BorderBrush	StaticResource Brush.Warning.SurfaceHover	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Foreground	StaticResource Brush.Warning.Foreground	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Background	StaticResource Brush.Warning.SurfaceHover	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/BorderBrush	StaticResource Brush.Border.Subtle	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Console.SessionToggle/Foreground	StaticResource Brush.Text.Disabled	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Update.SecondaryButton/Background	StaticResource Brush.Primary.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Update.SecondaryButton/BorderBrush	StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Update.SecondaryButton/BorderBrush	missing StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	AppTitleBar/Background	StaticResource Brush.Canvas	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	MainNavigation/Background	StaticResource Brush.Canvas	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateNavigationBadge/Fill	literal #E03131	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateNavigationBadge/Stroke	StaticResource Brush.Canvas	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateNavigationLoading/Foreground	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	MainWindowContent/Background	StaticResource Brush.Canvas	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebarSplitter/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Button/Background	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Button/Foreground	literal #182230	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Button/BorderBrush	literal #D6DEE8	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Background	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/BorderBrush	literal #D6DEE8	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Foreground	literal #182230	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Background	literal #F6F8FB	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/BorderBrush	literal #7B899B	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Foreground	literal #182230	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Background	literal #EEF2F6	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/BorderBrush	literal #7B899B	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Foreground	literal #182230	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Background	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/BorderBrush	literal #E4EAF0	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Window/Foreground	literal #718096	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Background	literal #3156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/BorderBrush	literal #3156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Foreground	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Background	literal #284A91	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/BorderBrush	literal #284A91	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Foreground	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Background	literal #203F7E	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/BorderBrush	literal #203F7E	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Foreground	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Background	literal #EDF3FF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/BorderBrush	literal #B8CCF4	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Primary/Foreground	literal #3156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Background	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/BorderBrush	literal #E7AAB0	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Foreground	literal #9E1C2A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Background	literal #FDEBED	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/BorderBrush	literal #B4232F	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Foreground	literal #9E1C2A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Background	literal #FDEBED	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/BorderBrush	literal #B4232F	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Foreground	literal #9E1C2A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Background	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/BorderBrush	literal #E7AAB0	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Panel.Stop/Foreground	literal #9E1C2A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeControlCard/Foreground	literal #182230	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeStatusPill/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	SessionStatusDot/Fill	literal #26734D	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Background	literal #FFFFFF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/BorderBrush	literal #D6DEE8	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Foreground	literal #26313F	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Background	literal #E4EAF0	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Foreground	literal #26313F	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Row/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	CheckBox/BorderBrush	literal #7B899B	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Check/Stroke	literal White	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	Note/Foreground	literal #5F6E80	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Background	literal #EEF2F6	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Background	literal #FDEBED	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Background	literal #3156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/BorderBrush	literal #3156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Foreground	literal #718096	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeMoreMenu/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	StartSessionMenuItem/Stroke	literal #26313F	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	EndEnvironmentMenuItem/Foreground	literal #9E1C2A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	EndEnvironmentMenuItem/Stroke	literal #9E1C2A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeHeaderProgressRing/Background	literal #EDF3FF	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeHeaderProgressRing/BorderBrush	literal #B8CCF4	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeProgressText/Foreground	literal #3156A3	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RunSummaryCard/Background	StaticResource Brush.Surface.Subdued	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RunSummaryCard/BorderBrush	literal #E4EAF0	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeStatusTitle/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeStatusDetail/Foreground	StaticResource Brush.Text.Secondary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RunProgressCaption/Foreground	StaticResource Brush.Text.Muted	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RunProgressElapsed/Foreground	StaticResource Brush.Text.Muted	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RunLogCountText/Foreground	StaticResource Brush.Text.Muted	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/Background	StaticResource Brush.Primary.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/Foreground	StaticResource Brush.Text.Muted	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/Background	StaticResource Brush.Border.Subtle	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/BorderBrush	literal #EDF2F8	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/Foreground	literal #667FA5	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	HomeLogListBox/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebar/Fill	literal #F1F6FD	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebar/Background	literal #C4D6EE	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebar/Stroke	literal White	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebar/Fill	literal #CBDDF5	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebar/Fill	literal #CBDDF5	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	RuntimeSidebar/Foreground	literal #667FA5	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	TaskDescriptionOverlay/Background	StaticResource Brush.Overlay.Dim	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	TaskDescriptionOverlay/Background	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateOverlay/Background	literal #59111927	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateDialog/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateDialog/BorderBrush	StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateDialog/BorderBrush	missing StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateDialog/Color	literal #0F172A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateCheckingPanel/CoverRingStroke	StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateCheckingPanel/CoverRingStroke	missing StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateCheckingPanel/Foreground	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateStateIconBackground/Background	StaticResource Brush.Success	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateStateIcon/Foreground	literal White	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateVersionBadge/Background	StaticResource Brush.Primary.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateVersionBadge/Foreground	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	UpdateNotesPanel/Background	StaticResource Brush.Surface.Option	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	WelcomeScrim/Background	StaticResource Brush.Overlay.Modal	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	WelcomeDialog/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	WelcomeDialog/BorderBrush	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	WelcomeIcon/Foreground	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	WelcomeTitle/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	WelcomeDialog/BorderBrush	StaticResource Brush.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingOverlay/Background	literal Transparent	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingDim/Fill	literal #42000000	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingOutline/Stroke	StaticResource Brush.Primary.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingPulse/BorderBrush	StaticResource Brush.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingArrow/Fill	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingPopover/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingPopover/Shadow	StaticResource Effect.Surface.Light	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingDescription/Foreground	StaticResource Brush.Text.Secondary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	OnboardingSkip/Foreground	StaticResource Brush.Text.Secondary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/Background	StaticResource Brush.Overlay.Modal	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/Background	StaticResource Brush.Surface	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/BorderBrush	StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/BorderBrush	missing StaticResource Preview.Border	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/Color	literal #0F172A	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/Foreground	StaticResource Brush.Text.Primary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartText/Foreground	StaticResource Brush.Text.Secondary	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/Background	StaticResource Brush.Progress.Track	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/MainWindow.xaml	ForcedStartOverlay/Background	StaticResource Brush.Warning	保留主窗口现有浅色外观，随 #167 迁移。
+src/Gui/Views/ProjectAboutView.xaml	ContactRow/BorderBrush	StaticResource Brush.Border.Subtle	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ProjectAboutView.xaml	ContactRow/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ProjectAboutView.xaml	ContactRow/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Card/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Card/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Preset/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Preset/Foreground	StaticResource Brush.Text.Body	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Preset/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Preset/Background	StaticResource Brush.Primary.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Preset/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Day/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Day/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Day/Foreground	StaticResource Brush.Text.Body	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Day/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.ChipRemove/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.ChipRemove/Background	literal #1F182230	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.AddTime/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.AddTime/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.TimeEditor/Foreground	literal White	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.TimeEditor/CaretBrush	literal White	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.TimeEditor/SelectionBrush	literal White	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.ScopeItem/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Row/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Note/Foreground	StaticResource Brush.Text.Muted	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.ScopeItem/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Delete/Background	StaticResource Brush.Error.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Delete/BorderBrush	StaticResource Brush.Error.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Delete/Foreground	StaticResource Brush.Error	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Delete/Background	StaticResource Brush.Error.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Delete/BorderBrush	StaticResource Brush.Error	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Schedule.Delete/Foreground	StaticResource Brush.Error	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	StatusCapsule/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	StatusCapsule/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	StatusText/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	StatusView/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	EditorScroll/Fill	literal #A3AFBF	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	EditorScroll/Stroke	literal #A3AFBF	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	EditorScroll/Fill	literal #D08A16	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	EditorScroll/Foreground	literal White	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	EditorScroll/Fill	literal #E03131	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	Inspector/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	ShareHint/Background	StaticResource Brush.Surface.Subdued	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/ScheduleView.xaml	ShareHint/Foreground	StaticResource Brush.Text.Muted	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemHeading/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemDescription/Foreground	StaticResource Brush.Text.Muted	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemIcon/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemButton/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemButton/Foreground	StaticResource Brush.Text.Body	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemButton/Background	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemButton/Background	StaticResource Brush.Border.Strong	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemButton/Foreground	StaticResource Brush.Text.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ItemButton/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	NavigationItem/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	NavigationItem/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	NavigationItem/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	NavigationItem/Background	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	NavigationItem/Foreground	StaticResource Brush.Text.Inverse	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	ProjectAboutName/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	RowBorder/BorderBrush	StaticResource Brush.Border.Subtle	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	Border/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	Border/BorderBrush	StaticResource Brush.Border.Subtle	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	SectionList/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	SectionList/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	SectionList/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/SettingsView.xaml	SectionList/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.BarColor/Color	literal #E9EDF3	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.BarColor.Clear/Color	literal #00E9EDF3	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeLeft/Color	StaticResource Configuration.BarColor	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeLeft/Color	missing StaticResource Configuration.BarColor	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeLeft/Color	StaticResource Configuration.BarColor.Clear	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeLeft/Color	missing StaticResource Configuration.BarColor.Clear	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeRight/Color	StaticResource Configuration.BarColor.Clear	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeRight/Color	missing StaticResource Configuration.BarColor.Clear	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeRight/Color	StaticResource Configuration.BarColor	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.FadeRight/Color	missing StaticResource Configuration.BarColor	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	LeftFade/Background	StaticResource Configuration.FadeLeft	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	LeftFade/Background	missing StaticResource Configuration.FadeLeft	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	RightFade/Background	StaticResource Configuration.FadeRight	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	RightFade/Background	missing StaticResource Configuration.FadeRight	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Bar/Color	StaticResource Configuration.BarColor	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Bar/Color	missing StaticResource Configuration.BarColor	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Segment/BorderBrush	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Background	literal #8CFFFFFF	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Foreground	StaticResource Brush.Text.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/Color	literal #182230	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Tab/BorderBrush	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Add/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Add/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Add/Foreground	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Add/Foreground	StaticResource Brush.Text.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Delete/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Delete/Foreground	StaticResource Brush.Text.Muted	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Delete/Foreground	StaticResource Brush.Error	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Delete/Background	StaticResource Brush.Error.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Configuration.Delete/Background	StaticResource Brush.Error.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/Background	StaticResource Brush.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/BorderBrush	StaticResource Brush.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/Foreground	StaticResource Brush.Text.Body	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/Background	StaticResource Brush.Surface.Subdued	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/BorderBrush	StaticResource Brush.Border.Strong	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/Background	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/BorderBrush	StaticResource Brush.Primary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/Foreground	StaticResource Brush.Text.Inverse	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/Background	StaticResource Brush.Primary.Hover	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	Option.Segments/BorderBrush	StaticResource Brush.Primary.Hover	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	ConfigurationTabs/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	ConfigurationLockBadge/Background	StaticResource Brush.Surface.Disabled	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	ConfigurationLockBadge/Foreground	StaticResource Brush.Text.Secondary	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	ProjectValidationBorder/Background	StaticResource Brush.Error.Surface	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	ProjectValidationBorder/BorderBrush	StaticResource Brush.Error.Border	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	ProjectValidationText/Foreground	StaticResource Brush.Error.Foreground	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Views/TaskPlanEditor.xaml	AddedTasksBadge/Background	literal Transparent	保留视图现有浅色外观，随 #168 迁移。
+src/Gui/Infrastructure/SelfTestRunner.Theme.cs	CreateTestPalette	Color.FromRgb(0x52, ++index, 0x81)	切换自测需要逐键生成可区分的替代色。
+src/Gui/Views/MainWindow.xaml.cs	ApplyPanelSummary	System.Windows.Media.ColorConverter.ConvertFromString(progress.Failed > 0 ? "#FEF4F5" : "#F6F8FB")	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/MainWindow.xaml.cs	ApplyPanelSummary	System.Windows.Media.ColorConverter.ConvertFromString(progress.Failed > 0 ? "#F2D0D4" : "#E4EAF0")	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	GridPen	WpfColor.FromRgb(0xE9, 0xEE, 0xF4)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	GridStrongPen	WpfColor.FromRgb(0xDC, 0xE3, 0xEC)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	HatchPen	WpfColor.FromArgb(0x18, 0x18, 0x22, 0x30)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	NightBrush	WpfColor.FromRgb(0xF1, 0xF4, 0xF8)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	TrackBrush	WpfColor.FromRgb(0xFB, 0xFC, 0xFE)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	NowColor	WpfColor.FromRgb(0xE0, 0x31, 0x31)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	WarnColor	WpfColor.FromRgb(0xD0, 0x8A, 0x16)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	MutedColor	WpfColor.FromRgb(0x5F, 0x6E, 0x80)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	DisabledColor	WpfColor.FromRgb(0xA3, 0xAF, 0xBF)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	ActiveColor	WpfColor.FromRgb(0x31, 0x56, 0xA3)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	OnRender	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	OnRender	WpfColors.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	OnRender	WpfColors.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	DrawPin	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	DrawPin	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	DrawPin	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	DrawPinMarks	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleTimeline.cs	DrawPinMarks	WpfColors.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	Palette	WpfColor.FromRgb(0x31, 0x56, 0xA3)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	Palette	WpfColor.FromRgb(0x26, 0x73, 0x4D)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	Palette	WpfColor.FromRgb(0xB2, 0x6A, 0x00)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	Palette	WpfColor.FromRgb(0x0E, 0x7C, 0x86)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	Palette	WpfColor.FromRgb(0x7A, 0x3E, 0x9D)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	Palette	WpfColor.FromRgb(0xB4, 0x23, 0x2F)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	RenderBanner	WpfColor.FromRgb(0x20, 0x3F, 0x7E)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	RenderBanner	WpfColor.FromRgb(0x4D, 0x72, 0xBF)	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	RenderBanner	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	RenderDays	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	RenderTimes	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ScheduleView.xaml.cs	RenderTimes	WpfBrushes.White	现有代码构造的界面配色，随 #169 迁入字典。
+src/Gui/Views/ShadowBorder.cs	DrawShadow	Colors.White	现有代码构造的界面配色，随 #169 迁入字典。
