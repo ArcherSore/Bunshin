@@ -11,6 +11,7 @@
     <Color x:Key="Color.Black.Alpha26">#1A000000</Color>
     <Color x:Key="Color.Black.Alpha32">#20000000</Color>
     <Color x:Key="Color.Black.Alpha38">#26000000</Color>
+    <Color x:Key="Color.Black.Alpha66">#42000000</Color>
     <Color x:Key="Color.Black.Alpha128">#80000000</Color>
     <Color x:Key="Color.Green.50">#E7F5EC</Color>
     <Color x:Key="Color.Green.200">#A9D7BF</Color>
@@ -21,6 +22,17 @@
     <Color x:Key="Color.Indigo.75">#E6EDFA</Color>
     <Color x:Key="Color.Indigo.700">#284A91</Color>
     <Color x:Key="Color.Indigo.800">#203F7E</Color>
+    <Color x:Key="Color.BlueGray.25">#F1F6FD</Color>
+    <Color x:Key="Color.BlueGray.50">#EDF2F8</Color>
+    <Color x:Key="Color.BlueGray.100">#DCE6F5</Color>
+    <Color x:Key="Color.BlueGray.150">#CBDDF5</Color>
+    <Color x:Key="Color.BlueGray.200">#C4D6EE</Color>
+    <Color x:Key="Color.BlueGray.300">#A6B6CD</Color>
+    <Color x:Key="Color.BlueGray.400">#8FA8DA</Color>
+    <Color x:Key="Color.BlueGray.400.Clear">#008FA8DA</Color>
+    <Color x:Key="Color.BlueGray.600">#667FA5</Color>
+    <Color x:Key="Color.Indigo.600.Clear">#003156A3</Color>
+    <Color x:Key="Color.Indigo.600.Alpha153">#993156A3</Color>
     <Color x:Key="Color.Neutral.10">#FBFCFE</Color>
     <Color x:Key="Color.Neutral.25">#F8FAFD</Color>
     <Color x:Key="Color.Neutral.50">#F6F8FB</Color>
@@ -41,6 +53,8 @@
     <Color x:Key="Color.Neutral.900">#182230</Color>
     <Color x:Key="Color.Neutral.900.Alpha13">#0D182230</Color>
     <Color x:Key="Color.Neutral.900.Alpha31">#1F182230</Color>
+    <Color x:Key="Color.Slate.900">#0F172A</Color>
+    <Color x:Key="Color.Slate.950.Alpha89">#59111927</Color>
     <Color x:Key="Color.Red.50">#FDEBED</Color>
     <Color x:Key="Color.Red.200">#E7AAB0</Color>
     <Color x:Key="Color.Red.500">#E03131</Color>
@@ -66,6 +80,8 @@
     <SolidColorBrush x:Key="Brush.Border.Strong" Color="{StaticResource Color.Neutral.400}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Dim" Color="{StaticResource Color.Black.Alpha32}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="{StaticResource Color.Black.Alpha128}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Overlay.Update" Color="{StaticResource Color.Slate.950.Alpha89}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="{StaticResource Color.Black.Alpha66}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Primary" Color="{StaticResource Color.Neutral.900}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Body" Color="{StaticResource Color.Neutral.800}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Secondary" Color="{StaticResource Color.Neutral.600}" po:Freeze="True" />
@@ -104,6 +120,17 @@
     <SolidColorBrush x:Key="Brush.Rail.Border" Color="{StaticResource Color.Neutral.160}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Hover" Color="{StaticResource Color.Neutral.900.Alpha13}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Active" Color="{StaticResource Color.Indigo.75}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Rail.UpdateBadge" Color="{StaticResource Color.Red.500}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Border" Color="{StaticResource Color.BlueGray.100}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Console.MenuText" Color="{StaticResource Color.Neutral.800}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Activity.ClearDisabled" Color="{StaticResource Color.BlueGray.300}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Activity.Divider" Color="{StaticResource Color.BlueGray.50}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Activity.Caption" Color="{StaticResource Color.BlueGray.600}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Illustration.Background" Color="{StaticResource Color.BlueGray.25}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Illustration.Document" Color="{StaticResource Color.BlueGray.200}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Illustration.Detail" Color="{StaticResource Color.BlueGray.150}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Illustration.Ink" Color="{StaticResource Color.Surface}" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Splitter.FocusRing" Color="{StaticResource Color.Indigo.600.Alpha153}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Progress.Track" Color="{StaticResource Color.Neutral.160}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Warning.Surface" Color="{StaticResource Color.Amber.50}" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Warning.SurfaceHover" Color="{StaticResource Color.Amber.100}" po:Freeze="True" />
@@ -137,9 +164,25 @@
         <GradientStop Offset="0" Color="{StaticResource Color.Neutral.50.Clear}" />
         <GradientStop Offset="1" Color="{StaticResource Color.Neutral.50}" />
     </LinearGradientBrush>
+    <LinearGradientBrush x:Key="Brush.Splitter.Tether" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
+        <GradientStop Offset="0" Color="{StaticResource Color.BlueGray.400.Clear}" />
+        <GradientStop Offset="0.5" Color="{StaticResource Color.BlueGray.400}" />
+        <GradientStop Offset="1" Color="{StaticResource Color.BlueGray.400.Clear}" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="Brush.Splitter.Tether.Dragging" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
+        <GradientStop Offset="0" Color="{StaticResource Color.Indigo.600.Clear}" />
+        <GradientStop Offset="0.5" Color="{StaticResource Color.Primary}" />
+        <GradientStop Offset="1" Color="{StaticResource Color.Indigo.600.Clear}" />
+    </LinearGradientBrush>
 
     <DropShadowEffect x:Key="Effect.Configuration.SelectedTab" Color="{StaticResource Color.Neutral.900}"
                       BlurRadius="3" ShadowDepth="1" Direction="270" Opacity="0.14" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Console.Card" BlurRadius="18" ShadowDepth="4" Direction="270"
+                      Opacity="0.06" Color="{StaticResource Color.Neutral.900}" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Dialog" BlurRadius="24" ShadowDepth="8" Opacity="0.2"
+                      Color="{StaticResource Color.Slate.900}" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Dialog.Welcome" BlurRadius="50" ShadowDepth="25" Direction="270"
+                      Opacity="0.25" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light"
                       BlurRadius="8"
                       Direction="270"
