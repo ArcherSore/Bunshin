@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using Gui.Themes;
@@ -11,14 +13,18 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern nint SendMessageW(nint hwnd, int message, nint wParam, string? lParam);
+
     private static void VerifyThemeSwitch(AppLogger logger, string directory)
     {
         var app = (App)System.Windows.Application.Current;
         var light = app.Resources.MergedDictionaries.Single(dictionary => dictionary.Contains("Brush.Canvas"));
         var alternate = CreateTestPalette(light);
+        var systemTheme = ApplicationTheme.Dark;
         var service = new ThemeService(app.Resources, new Dictionary<ApplicationTheme, ResourceDictionary> {
             [ApplicationTheme.Light] = light, [ApplicationTheme.Dark] = alternate
-        });
+        }, () => systemTheme);
         RunOnboardingScenario(logger, directory, (window, _) => {
             var button = new Button { Style = (Style)window.FindResource("PrimaryButtonStyle") };
             ((System.Windows.Controls.Panel)window.Content).Children.Add(button);
@@ -44,17 +50,39 @@ internal static partial class SelfTestRunner
 
             try {
                 Check(light, ApplicationTheme.Light);
-                service.Apply(ApplicationTheme.Dark);
+                service.Apply(AppThemeMode.Dark);
                 Check(alternate, ApplicationTheme.Dark);
-                service.Apply(ApplicationTheme.Light);
+                service.Apply(AppThemeMode.Light);
                 Check(light, ApplicationTheme.Light);
                 Require(notifications == 2, "每次应用配色后应通知订阅者。");
-                app.Themes.Apply(ApplicationTheme.Dark);
+
+                var hwnd = new WindowInteropHelper(window).Handle;
+                const int wmSettingChange = 0x001A;
+                const int wmThemeChanged = 0x031A;
+                service.Apply(AppThemeMode.FollowSystem);
+                Check(alternate, ApplicationTheme.Dark);
+                systemTheme = ApplicationTheme.Light;
+                SendMessageW(hwnd, wmThemeChanged, 0, null);
                 Check(light, ApplicationTheme.Light);
+                systemTheme = ApplicationTheme.Dark;
+                SendMessageW(hwnd, wmSettingChange, 0, "ImmersiveColorSet");
+                Check(alternate, ApplicationTheme.Dark);
+
+                service.Apply(AppThemeMode.Light);
+                var beforeMessage = notifications;
+                SendMessageW(hwnd, wmSettingChange, 0, "ImmersiveColorSet");
+                Check(light, ApplicationTheme.Light);
+                Require(notifications == beforeMessage, "固定浅色时，系统主题消息不应重新应用配色。");
+
+                var production = new ThemeService(app.Resources, readSystemTheme: () => systemTheme);
+                foreach (var mode in Enum.GetValues<AppThemeMode>()) {
+                    production.Apply(mode);
+                    Check(light, ApplicationTheme.Light);
+                }
             } finally {
-                service.Apply(ApplicationTheme.Light);
+                service.Apply(AppThemeMode.Light);
             }
-        });
+        }, themeService: service);
     }
 
     private static ResourceDictionary CreateTestPalette(ResourceDictionary light)

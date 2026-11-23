@@ -31,7 +31,7 @@ public partial class App : System.Windows.Application
     private void ApplyStartupTheme()
     {
         Themes = new ThemeService(Resources);
-        Themes.Apply(Wpf.Ui.Appearance.ApplicationTheme.Light);
+        Themes.Apply(AppThemeMode.Light);
     }
 
     protected override void OnStartup(StartupEventArgs e)
