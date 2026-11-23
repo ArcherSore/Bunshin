@@ -43,6 +43,7 @@ internal static class WorkerSelfTestRunner
         (nameof(VerifyAgentExecutableResolution), VerifyAgentExecutableResolution),
         (nameof(VerifyLanguageIndependentReadiness), VerifyLanguageIndependentReadiness),
         (nameof(VerifyStopCleanupRaceAsync), () => VerifyStopCleanupRaceAsync().GetAwaiter().GetResult()),
+        (nameof(VerifyStopBeforeTaskSubmissionAsync), () => VerifyStopBeforeTaskSubmissionAsync().GetAwaiter().GetResult()),
         (nameof(VerifyTaskerTaskCallbackCompletion), VerifyTaskerTaskCallbackCompletion),
         (nameof(NativeTaskCleanupSelfTests), () => NativeTaskCleanupSelfTests.RunAsync().GetAwaiter().GetResult()),
         (nameof(FrameworkOptionsSelfTests), FrameworkOptionsSelfTests.Run),
@@ -358,6 +359,50 @@ internal static class WorkerSelfTestRunner
         var executionResult = await execution.ExecuteAsync(timeout.Token);
         if (executionResult.Outcome != RuntimeExecutionOutcome.StopTimedOut) {
             throw new InvalidOperationException("Stop 未确认时不得被清理结果覆盖为普通终态。 ");
+        }
+    }
+
+    // #161: a stop that arrives while the Agent is linking must prevent submission, and a stop racing the
+    // submission must land after it so the following tasker.Stop() targets the submitted job.
+    private static async Task VerifyStopBeforeTaskSubmissionAsync()
+    {
+        const System.Reflection.BindingFlags flags =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var execution = new WorkerRuntimeExecution(
+            null!, Guid.NewGuid(), null!, 0, (_, _, _) => { }, () => { });
+        execution.RequestStop();
+        var submitted = false;
+        if (execution.TrySubmitUnlessStopped(() => submitted = true) || submitted) {
+            throw new InvalidOperationException("Agent 连接期间已请求停止时不得提交 MaaFramework task。 ");
+        }
+        // StopAsync confirms the idle Tasker; the skipped Run then settles as Cancelled without a job status.
+        ((TaskCompletionSource<bool>)typeof(WorkerRuntimeExecution).GetField("_stopConfirmed", flags)!
+            .GetValue(execution)!).SetResult(true);
+        var finish = (Task<RuntimeExecutionResult>)typeof(WorkerRuntimeExecution)
+            .GetMethod("FinishStoppedAsync", flags)!.Invoke(execution, [null, CancellationToken.None])!;
+        var result = await finish.WaitAsync(timeout.Token);
+        if (result.Outcome != RuntimeExecutionOutcome.Cancelled || result.Result is not null) {
+            throw new InvalidOperationException($"未提交任务的停止应以 Cancelled 结束，实际为 {result.Outcome}。 ");
+        }
+
+        execution = new WorkerRuntimeExecution(
+            null!, Guid.NewGuid(), null!, 0, (_, _, _) => { }, () => { });
+        var stopField = typeof(WorkerRuntimeExecution).GetField("_stopRequested", flags)!;
+        Thread? stopper = null;
+        var stopSetDuringSubmit = true;
+        submitted = execution.TrySubmitUnlessStopped(() =>
+        {
+            stopper = new Thread(execution.RequestStop) { IsBackground = true };
+            stopper.Start();
+            SpinWait.SpinUntil(() => stopper.ThreadState.HasFlag(ThreadState.WaitSleepJoin), TimeSpan.FromSeconds(5));
+            stopSetDuringSubmit = (bool)stopField.GetValue(execution)!;
+        });
+        if (!submitted || stopSetDuringSubmit) {
+            throw new InvalidOperationException("提交期间到达的停止请求必须等提交完成后才生效。 ");
+        }
+        if (!stopper!.Join(TimeSpan.FromSeconds(5)) || !(bool)stopField.GetValue(execution)!) {
+            throw new InvalidOperationException("提交完成后停止请求应生效。 ");
         }
     }
 

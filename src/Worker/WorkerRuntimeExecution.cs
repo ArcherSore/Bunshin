@@ -123,30 +123,20 @@ internal sealed class WorkerRuntimeExecution : IPlanItemExecution
             }
             _log("INFO", "runtime.agent", $"Agent 已连接，identifier={_agentClient.Id}。 ");
 
-            var job = _tasker.AppendTask(_item.Entry, _item.PipelineOverride.GetRawText());
-            _nativeTaskCompletion = Task.Run(job.Wait);
-            _log("INFO", "runtime.task", $"已提交 MaaFramework task：{_item.Entry}，jobId={job.Id}。 ");
+            var submitted = TrySubmitUnlessStopped(() =>
+            {
+                var job = _tasker.AppendTask(_item.Entry, _item.PipelineOverride.GetRawText());
+                _nativeTaskCompletion = Task.Run(job.Wait);
+                _log("INFO", "runtime.task", $"已提交 MaaFramework task：{_item.Entry}，jobId={job.Id}。 ");
+            });
+            if (!submitted) {
+                _log("INFO", "runtime.task", "Agent 连接期间已请求停止，不提交 MaaFramework task。 ");
+                return await FinishStoppedAsync(null, cancellationToken);
+            }
             var status = await _taskCompleted.Task.WaitAsync(cancellationToken);
 
             if (IsStopRequested()) {
-                try {
-                    await _stopConfirmed.Task.WaitAsync(StopTimeout, cancellationToken);
-                } catch (Exception exception) when (exception is TimeoutException or StopConfirmationException) {
-                    _preserveContext = true;
-                    return new RuntimeExecutionResult(
-                        RuntimeExecutionOutcome.StopTimedOut, null,
-                        new StructuredReason("StopTimeout", exception.GetBaseException().Message));
-                }
-
-                var cleanup = await CleanupAsync(cancellationToken);
-                return cleanup.Success
-                    ? new RuntimeExecutionResult(
-                        RuntimeExecutionOutcome.Cancelled,
-                        ProtocolJson.ToElement(new { maaJobStatus = status.ToString() }), null)
-                    : new RuntimeExecutionResult(
-                        RuntimeExecutionOutcome.CleanupFailed,
-                        ProtocolJson.ToElement(new { maaJobStatus = status.ToString() }),
-                        new StructuredReason("AgentCleanupFailed", cleanup.Error!));
+                return await FinishStoppedAsync(status, cancellationToken);
             }
 
             var normalCleanup = await CleanupAsync(cancellationToken);
@@ -181,6 +171,43 @@ internal sealed class WorkerRuntimeExecution : IPlanItemExecution
                 cleanup.Success ? RuntimeExecutionOutcome.Failed : RuntimeExecutionOutcome.CleanupFailed,
                 null, reason);
         }
+    }
+
+    // Shares _gate with RequestStop: a stop either prevents submission, or is set after it,
+    // so the tasker.Stop() that StopAsync issues afterwards targets the submitted job.
+    internal bool TrySubmitUnlessStopped(Action submit)
+    {
+        lock (_gate) {
+            if (_stopRequested) {
+                return false;
+            }
+            submit();
+            return true;
+        }
+    }
+
+    // A null status means the stop arrived before any MaaFramework task was submitted.
+    private async Task<RuntimeExecutionResult> FinishStoppedAsync(
+        MaaJobStatus? status, CancellationToken cancellationToken)
+    {
+        try {
+            await _stopConfirmed.Task.WaitAsync(StopTimeout, cancellationToken);
+        } catch (Exception exception) when (exception is TimeoutException or StopConfirmationException) {
+            _preserveContext = true;
+            return new RuntimeExecutionResult(
+                RuntimeExecutionOutcome.StopTimedOut, null,
+                new StructuredReason("StopTimeout", exception.GetBaseException().Message));
+        }
+
+        var result = status is { } jobStatus
+            ? ProtocolJson.ToElement(new { maaJobStatus = jobStatus.ToString() })
+            : (JsonElement?)null;
+        var cleanup = await CleanupAsync(cancellationToken);
+        return cleanup.Success
+            ? new RuntimeExecutionResult(RuntimeExecutionOutcome.Cancelled, result, null)
+            : new RuntimeExecutionResult(
+                RuntimeExecutionOutcome.CleanupFailed, result,
+                new StructuredReason("AgentCleanupFailed", cleanup.Error!));
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
