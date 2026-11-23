@@ -2,7 +2,7 @@ use crate::{MAX_MESSAGE_BYTES, error, files};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -69,30 +69,24 @@ fn run(
         return error("install_preflight", &message);
     }
     let root = Path::new(&request.installation);
-    let work = root.join("cache/updater");
+    // Joined per component so paths in failure messages use one separator.
+    let work = root.join("cache").join("updater");
     let old = work.join("old");
     let payload = work.join("payload");
-    let replace = (|| -> Result<(), String> {
-        files::installation(root)?;
-        files::tree(&payload)?;
-        fs::create_dir(&old).map_err(|e| e.to_string())?;
-        fs::remove_file(work.join("prepared")).map_err(|e| e.to_string())?;
-        for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            if !files::preserved(&entry.file_name().to_string_lossy()) {
-                fs::rename(entry.path(), old.join(entry.file_name())).map_err(|e| e.to_string())?;
-            }
+    let mut journal = Vec::new();
+    if let Err(detail) = replace(root, &work, &mut journal) {
+        log(&format!("安装失败，开始回滚：{detail}"));
+        let unrestored = rollback(&journal, log);
+        if !unrestored.is_empty() {
+            return error("install_failed", &format!("安装失败：{detail}。回滚未完成，以下条目没有恢复：{}。\
+                请从项目 GitHub 重新下载完整包；保留 config/logs/debug/cache 四个目录，清除其余程序内容后重新解压。\
+                不要从 old 恢复。", unrestored.join("、")));
         }
-        // Every old managed entry has left the root before the first new entry is installed.
-        for entry in fs::read_dir(&payload).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            fs::rename(entry.path(), root.join(entry.file_name())).map_err(|e| e.to_string())?;
+        if old.exists() && let Err(e) = fs::remove_dir(&old) {
+            log(&format!("回滚后删除 {} 失败：{e}", old.display()));
         }
-        Ok(())
-    })();
-    if let Err(message) = replace {
-        return error("install_failed", &format!("安装失败：{message}。请从项目 GitHub 重新下载完整包；\
-            保留 config/logs/debug/cache 四个目录，清除其余程序内容后重新解压。不要从 old 恢复。"));
+        return error("install_failed", &format!("安装失败：{detail}。已恢复到更新前的版本，请重新启动程序。\
+            如有资源管理器、终端等窗口停在安装目录内，请关闭后再更新。"));
     }
     for path in [&old, &payload] {
         if let Err(message) = cleanup(path) { log(&format!("安装后清理失败：{message}")); }
@@ -102,6 +96,88 @@ fn run(
         return error("relaunch_failed", &format!("文件安装完成但启动失败：{message}。请手动启动程序。"));
     }
     json!({"protocolVersion":1,"type":"result","operation":"install"})
+}
+
+/// Moves every managed root entry to `old`, then every Payload entry to the root. Each completed move is appended
+/// to `journal`, so a failure part way can be walked back.
+fn replace(root: &Path, work: &Path, journal: &mut Vec<(PathBuf, PathBuf)>) -> Result<(), String>
+{
+    let old = work.join("old");
+    let payload = work.join("payload");
+    files::installation(root)?;
+    files::tree(&payload)?;
+    fs::create_dir(&old).map_err(|e| format!("创建 {} 失败：{e}", old.display()))?;
+    let prepared = work.join("prepared");
+    fs::remove_file(&prepared).map_err(|e| format!("删除 {} 失败：{e}", prepared.display()))?;
+    for (stage, from, to) in [("阶段 1 移走旧版", root, old.as_path()), ("阶段 2 放入新版", payload.as_path(), root)] {
+        // Every old managed entry has left the root before the first new entry is installed.
+        let entries = fs::read_dir(from).map_err(|e| format!("{stage}：读取 {} 失败：{e}", from.display()))?;
+        for entry in entries {
+            let name = entry.map_err(|e| format!("{stage}：读取 {} 失败：{e}", from.display()))?.file_name();
+            if from == root && files::preserved(&name.to_string_lossy()) { continue; }
+            let (source, target) = (from.join(&name), to.join(&name));
+            retry(|| fs::rename(&source, &target)).map_err(|e| {
+                format!("{stage}：移动 {} 到 {} 失败：{e}", source.display(), target.display())
+            })?;
+            journal.push((source, target));
+        }
+    }
+    Ok(())
+}
+
+/// Moves journaled entries back in reverse order and returns the original paths that could not be restored.
+fn rollback(journal: &[(PathBuf, PathBuf)], log: &mut dyn FnMut(&str)) -> Vec<String>
+{
+    let mut unrestored = Vec::new();
+    for (original, moved) in journal.iter().rev() {
+        let result = if original.symlink_metadata().is_ok() {
+            Err("原位置已被占用".to_owned())
+        } else {
+            retry(|| fs::rename(moved, original)).map_err(|e| e.to_string())
+        };
+        if let Err(e) = result {
+            log(&format!("回滚：将 {} 移回 {} 失败：{e}", moved.display(), original.display()));
+            unrestored.push(original.display().to_string());
+        }
+    }
+    log(&format!("回滚结束：{} 项已恢复，{} 项未恢复。", journal.len() - unrestored.len(), unrestored.len()));
+    unrestored
+}
+
+/// Retries a file operation with backoff, for short locks such as antivirus scans of a just-moved file.
+fn retry<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T>
+{
+    let mut delay = 200;
+    for _ in 1..RETRY_ATTEMPTS {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(delay)),
+        }
+        delay *= 2;
+    }
+    operation()
+}
+
+const RETRY_ATTEMPTS: u32 = 5;
+
+#[cfg(test)]
+#[test]
+fn rollback_reports_entries_whose_original_place_is_taken()
+{
+    let root = std::env::temp_dir().join(format!("rollback-occupied-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("old")).unwrap();
+    fs::write(root.join("old/a"), "old a").unwrap();
+    fs::write(root.join("old/b"), "old b").unwrap();
+    fs::write(root.join("b"), "new b").unwrap();
+    let journal = vec![(root.join("a"), root.join("old/a")), (root.join("b"), root.join("old/b"))];
+    let mut logged = Vec::new();
+    let unrestored = rollback(&journal, &mut |message| logged.push(message.to_owned()));
+    assert_eq!(unrestored, vec![root.join("b").display().to_string()]);
+    assert_eq!(fs::read_to_string(root.join("a")).unwrap(), "old a");
+    assert_eq!(fs::read_to_string(root.join("b")).unwrap(), "new b");
+    assert!(logged.iter().any(|line| line.contains("原位置已被占用")), "{logged:?}");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(test)]
