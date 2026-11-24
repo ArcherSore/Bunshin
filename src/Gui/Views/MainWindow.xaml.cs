@@ -918,7 +918,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     internal static string? GetWindowsHelloGuidance(string operation, Exception exception, bool windowsHelloOnly)
     {
-        if (!windowsHelloOnly || exception.GetBaseException() is not ChildSessionConnectionException
+        if (!windowsHelloOnly || exception.GetBaseException() is not ChildSessionConnectionException { ConnectionNotEstablished: false }
             || !operation.Contains("运行环境", StringComparison.Ordinal)) {
             return null;
         }
