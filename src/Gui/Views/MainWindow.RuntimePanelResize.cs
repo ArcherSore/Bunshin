@@ -202,4 +202,3 @@ public partial class MainWindow
     internal static double SidebarWidth(double homeWidth) =>
         Math.Clamp(Math.Round(homeWidth * 0.35), MinimumRuntimeSidebarWidth, MaximumRuntimeSidebarWidth);
 }
-
