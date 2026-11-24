@@ -26,10 +26,11 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
 
     internal void AllowConfigurationMenu(bool allowed) => ConfigurationMenuButton.IsEnabled = allowed;
 
-    internal void ShowPage(string title, bool showHomeActions, bool showConfigurationMenu)
+    internal void ShowPage(string title, bool showHomeActions, bool showConfigurationMenu, bool showPageHeading = true)
     {
         PageTitle.Text = title;
-        PageTitle.Visibility = showConfigurationMenu ? Visibility.Collapsed : Visibility.Visible;
+        PageTitle.Visibility = showPageHeading && !showConfigurationMenu ? Visibility.Visible : Visibility.Collapsed;
+        HeadingDivider.Visibility = showPageHeading ? Visibility.Visible : Visibility.Collapsed;
         ConfigurationTitle.Text = title;
         ConfigurationMenuButton.Visibility = showConfigurationMenu ? Visibility.Visible : Visibility.Collapsed;
         ConfigurationMenuButton.ToolTip = title;

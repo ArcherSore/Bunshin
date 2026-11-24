@@ -102,7 +102,7 @@ public partial class MainWindow
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
         var home = _section == MainSection.Home;
-        Header.ShowPage(title, home, home && configuration is not null);
+        Header.ShowPage(title, home, home && configuration is not null, showPageHeading: _section != MainSection.Help);
         RefreshSidebarSchedule();
     }
 

@@ -13,6 +13,8 @@
     <SolidColorBrush x:Key="Brush.Surface.Subdued" Color="#FAFAFA" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Option" Color="#F9F9F9" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Disabled" Color="#F7F7F7" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Help.Card" Color="#09000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Help.InlineFill" Color="#0D000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Border" Color="#1F000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Border.Subtle" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Border.Strong" Color="#77000000" po:Freeze="True" />
