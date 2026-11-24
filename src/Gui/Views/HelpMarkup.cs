@@ -2,8 +2,6 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-using WpfBinding = System.Windows.Data.Binding;
-using WpfOrientation = System.Windows.Controls.Orientation;
 
 namespace Gui.Views;
 
@@ -31,7 +29,7 @@ public static partial class HelpMarkup
             if (match.Index > position) {
                 inlines.Add(new Run(text[position..match.Index]));
             }
-            inlines.Add(match.Groups[1].Success ? Chip(match.Groups[1].Value, host)
+            inlines.Add(match.Groups[1].Success ? Chip(match.Groups[1].Value)
                 : match.Groups[2].Success ? Key(match.Groups[2].Value) : Strong(match.Groups[3].Value));
             position = match.Index + match.Length;
         }
@@ -40,32 +38,15 @@ public static partial class HelpMarkup
         }
     }
 
-    // Chip text follows the host's size, so a chip in a 12 px summary stays 12 px.
-    private static Inline Chip(string label, TextBlock host)
-    {
-        var parts = new StackPanel { Orientation = WpfOrientation.Horizontal };
-        foreach (var part in label.Split('→', StringSplitOptions.TrimEntries)) {
-            if (parts.Children.Count > 0) {
-                parts.Children.Add(ChipText("›", "Help.ChipSeparator", host));
-            }
-            parts.Children.Add(ChipText(part, "Help.ChipText", host));
-        }
-        return Container(Styled(new Border { Child = parts }, "Help.Chip"));
-    }
-
-    private static TextBlock ChipText(string text, string style, TextBlock host)
-    {
-        var block = Styled(new TextBlock { Text = text }, style);
-        block.SetBinding(TextBlock.FontSizeProperty, new WpfBinding(nameof(TextBlock.FontSize)) { Source = host });
-        return block;
-    }
+    private static Inline Chip(string label) =>
+        Container(Styled(new Border { Child = Styled(new TextBlock { Text = label }, "Help.ChipText") }, "Help.Chip"));
 
     private static Inline Key(string key) =>
         Container(Styled(new Border { Child = Styled(new TextBlock { Text = key }, "Help.KeyText") }, "Help.Key"));
 
     private static Inline Strong(string text)
     {
-        var run = new Run(text) { FontWeight = FontWeights.SemiBold };
+        var run = new Run(text) { FontWeight = FontWeights.Medium };
         run.SetResourceReference(TextElement.ForegroundProperty, "Brush.Text.Primary");
         return run;
     }

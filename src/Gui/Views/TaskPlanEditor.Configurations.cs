@@ -156,7 +156,7 @@ public sealed partial class TaskPlanEditor
             textBox.Tag = tag with { Value = text, Submitted = true };
             PlanEdited?.Invoke(this, EventArgs.Empty);
             ShowOptionInputError(textBox, null);
-            RefreshAfterOptionSaved(rebuildCards: false);
+            RefreshAfterOptionSaved();
             return true;
         } catch (Exception exception) when (!unattended) {
             SetInputText(textBox, tag.Value);

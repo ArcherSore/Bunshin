@@ -793,66 +793,7 @@
     </Style>
 
     <Style x:Key="ParameterEditorStyle" TargetType="{x:Type Border}">
-        <Setter Property="Padding" Value="50,2,12,12" />
-    </Style>
-
-    <Style x:Key="Inspector.Table" TargetType="{x:Type Border}">
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource Radius.Control}" />
-        <Setter Property="Padding" Value="0,0,0,1" />
-    </Style>
-
-    <Style x:Key="Inspector.Row" TargetType="{x:Type Panel}">
-        <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
-        <Style.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="{DynamicResource Brush.Parameter.Nested}" />
-            </Trigger>
-        </Style.Triggers>
-    </Style>
-
-    <Style x:Key="Inspector.Label" TargetType="{x:Type TextBlock}">
-        <Setter Property="FontSize" Value="12.5" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style x:Key="Inspector.Note" TargetType="{x:Type TextBlock}">
-        <Setter Property="Margin" Value="0,3,0,0" />
-        <Setter Property="FontSize" Value="11.5" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style x:Key="Inspector.Description" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Margin" Value="0,2,0,0" />
-    </Style>
-
-    <Style x:Key="Inspector.DraftNote" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-    </Style>
-
-    <Style x:Key="Inspector.Error" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Margin" Value="0,4,0,0" />
-        <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
-    </Style>
-
-    <Style x:Key="Inspector.Shared" TargetType="{x:Type TextBlock}">
-        <Setter Property="FontSize" Value="11" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-        <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-
-    <Style x:Key="Inspector.InputLabel" TargetType="{x:Type TextBlock}">
-        <Setter Property="FontSize" Value="11.5" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-        <Setter Property="VerticalAlignment" Value="Center" />
-        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        <Setter Property="Padding" Value="50,0,16,14" />
     </Style>
 
     <Style x:Key="TaskDescriptionDrawerStyle" TargetType="{x:Type Border}">
