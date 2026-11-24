@@ -168,7 +168,7 @@ internal sealed class ApplicationSettings
         try {
             var path = AppearancePath(applicationDirectory);
             return File.Exists(path) ? ParseAppearance(File.ReadAllText(path).Trim()) : AppThemeMode.FollowSystem;
-        } catch (IOException) {
+        } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
             return AppThemeMode.FollowSystem;
         }
     }

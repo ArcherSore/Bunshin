@@ -229,6 +229,14 @@ internal static partial class SelfTestRunner
                 LastRun = run with { State = RunState.Succeeded, Items = [Item(PlanItemState.Succeeded, started)] }
             });
             CheckSummary("Brush.Surface.Subdued", "Brush.Border.Subtle");
+            RequireReadableText(window.RunProgressCaption, window.RunSummaryCard);
+            var shippedThemes = ((App)System.Windows.Application.Current).Themes;
+            try {
+                shippedThemes.Apply(AppThemeMode.Dark);
+                RequireReadableText(window.RunProgressCaption, window.RunSummaryCard);
+            } finally {
+                shippedThemes.Apply(AppThemeMode.Light);
+            }
             Require(CardText() == idleCardText && !timer.IsEnabled, "Run 结束后卡片不展示结果，控制台计时停止。");
             window.ApplyRuntimeControls(new(new RuntimeAction.Prepare(true), true, null,
                 new DesktopToggle(DesktopAction.Show, false, DesktopStatus.NotRunning), true));

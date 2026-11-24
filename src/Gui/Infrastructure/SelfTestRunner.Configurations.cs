@@ -177,11 +177,12 @@ internal static partial class SelfTestRunner
         if (tabs.SelectedIndex != 1 || text.Text != "已添加 2 项" || second.Length != 2) {
             throw new InvalidOperationException("在第二份配置中连续添加应统计 2 项。");
         }
+        var shelf = (System.Windows.Controls.Border)window.TaskPlanEditor.FindName("TaskShelfContent");
+        RequireReadableText(text, shelf);
         var first = project.Configurations[0].SelectedTasks.ToArray();
         tabs.SelectedIndex = 0;
         if (badge.Visibility != System.Windows.Visibility.Collapsed
-            || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskShelfContent")).Visibility
-                != System.Windows.Visibility.Visible
+            || shelf.Visibility != System.Windows.Visibility.Visible
             || !project.Configurations[1].SelectedTasks.SequenceEqual(second)
             || !project.Configurations[0].SelectedTasks.SequenceEqual(first)) {
             throw new InvalidOperationException("切换配置应清零已添加统计、保持面板打开，且不改动任一配置的任务。");

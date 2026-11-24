@@ -460,7 +460,7 @@
                                                Foreground="{DynamicResource Brush.Tasks.Accent}" />
                                 <TextBlock x:Name="AddedTasksText" FontSize="12"
                                            VerticalAlignment="Center"
-                                           Foreground="{DynamicResource Brush.Tasks.Accent}" />
+                                           Foreground="{DynamicResource Brush.Success.Foreground}" />
                             </StackPanel>
                         </StackPanel>
                         <ui:TextBox x:Name="TaskSearchBox" Grid.Column="2" Width="180" MinHeight="32"

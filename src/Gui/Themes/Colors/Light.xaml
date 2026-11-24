@@ -32,6 +32,7 @@
     <SolidColorBrush x:Key="Brush.Primary.SurfaceHover" Color="#24257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Border" Color="#4D257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Success" Color="#10A122" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Success.Foreground" Color="#006C10" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Tasks.Accent" Color="#10A122" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Tasks.Accent.Surface" Color="#1A10A122" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Tasks.Accent.Border" Color="#5910A122" po:Freeze="True" />
