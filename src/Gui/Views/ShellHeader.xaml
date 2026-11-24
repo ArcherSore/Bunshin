@@ -33,7 +33,7 @@
     </UserControl.Resources>
     <!-- WPF-UI handles the window's native caption hit testing. -->
     <Grid Height="44" Background="{DynamicResource Brush.Canvas}">
-        <ui:TitleBar x:Name="TitleBar" Height="44" Padding="12,0,0,0" FontSize="13" FontWeight="Medium"
+        <ui:TitleBar x:Name="TitleBar" Height="44" Padding="20,0,0,0" FontSize="14" FontWeight="Medium"
                      Foreground="{DynamicResource Brush.Text.Primary}" Background="{DynamicResource Brush.Transparent}"
                      ButtonsForeground="{DynamicResource Brush.Text.Primary}"
                      ButtonsBackground="{DynamicResource Brush.Rail.Hover}">

@@ -22,6 +22,11 @@ internal static partial class SelfTestRunner
             var titleBar = Named<Wpf.Ui.Controls.TitleBar>(header, "TitleBar");
             Require(Math.Abs(sidebar.ActualWidth - 288) < PixelTolerance
                 && Math.Abs(header.ActualHeight - 44) < PixelTolerance, "默认应显示完整侧栏和 44 DIP 页眉。");
+            var captionButtons = SettingsVisualDescendants(titleBar).OfType<Wpf.Ui.Controls.TitleBarButton>()
+                .Where(button => button.IsVisible).ToArray();
+            Require(captionButtons.Length == 3 && captionButtons.All(button =>
+                Math.Abs(button.ActualWidth - 46) < PixelTolerance && Math.Abs(button.ActualHeight - 44) < PixelTolerance),
+                "页眉应显示三个完整尺寸的系统按钮。");
 
             var project = ProjectOf(window);
             var id = project.ActiveConfigurationId;
