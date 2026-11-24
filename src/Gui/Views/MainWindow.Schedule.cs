@@ -26,16 +26,16 @@ public partial class MainWindow
     private string? ConfigurationName(Guid id) =>
         _projectPlan?.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
 
-    // The capsule repeats the home page's run status in four words; the console itself stays on the home page.
-    private void ApplyScheduleCapsule(StatusTone tone)
+    private void ApplyScheduleHeaderStatus(StatusTone tone, string runStatus)
     {
         var name = ActiveConfigurationName;
-        var (text, scheduleTone) = tone switch {
-            StatusTone.Busy => ($"{RuntimeStatusText.Text} · {name}", ScheduleRuntimeTone.Busy),
-            StatusTone.Run => ($"运行中 · {name}", ScheduleRuntimeTone.Run),
-            StatusTone.Bad => ($"失败 · {name}", ScheduleRuntimeTone.Failed),
-            _ => ("空闲", ScheduleRuntimeTone.Idle)
+        (string Text, string? Brush) status = tone switch {
+            StatusTone.Busy => ($"桌面分身{runStatus} · {name}", "Brush.Warning"),
+            StatusTone.Run => ($"桌面分身运行中 · {name}", "Brush.Success"),
+            StatusTone.Bad => ($"桌面分身{runStatus} · {name}", "Brush.Error"),
+            StatusTone.Ok => ("桌面分身已就绪", "Brush.Success"),
+            _ => ("桌面分身未启动", null)
         };
-        ScheduleView.SetRuntimeStatus(text, scheduleTone);
+        Header.SetScheduleStatus(status.Text, status.Brush);
     }
 }

@@ -25,6 +25,7 @@ public sealed partial class ProjectPlanModule
     private readonly ConfigurationSetStore _configStore;
     private ConfigurationSet _config;
     private string? _initializationWarning;
+    private IReadOnlyDictionary<string, IReadOnlyList<string>>? _optionOwners;
 
     private ProjectPlanModule(ProjectDefinition project, ConfigurationSetStore configStore)
     {
@@ -265,6 +266,15 @@ public sealed partial class ProjectPlanModule
         return kind == PlanItemKind.Pretask ? BuildPretaskConfiguration(config, FindPretask(taskName))
             : BuildConfiguration(config, taskName);
     }
+
+    // A configuration stores one value per option name, including references from cases and tasks added later.
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> OptionOwners => _optionOwners ??= Tasks.Concat(Pretasks)
+        .SelectMany(task => ProjectInterfaceLoader.CollectOptionNames(
+            task.Kind == PlanItemKind.Pretask ? FindPretask(task.Name).Options : FindTask(task.Name).Options,
+            _project.Options).Select(option => (Option: option, task.Label)))
+        .GroupBy(reference => reference.Option, StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => (IReadOnlyList<string>)group.Select(item => item.Label).ToArray(),
+            StringComparer.Ordinal);
 
     // Checks only the edited value, so a typo can be shown at its field instead of as a whole-config failure.
     public string? CheckInputValue(string optionName, string inputName, string value)
@@ -525,7 +535,8 @@ public sealed partial class ProjectPlanModule
                 // Saved values passed verify when they were set; only an untouched default can still fail it.
                 Error = explicitInputs.ContainsKey(input.Name) || ProjectInputValue.Matches(input, input.Default,
                     $"option {optionName} input {input.Name}") ? null : input.PatternMessage ?? "未通过校验",
-                InputType = input.InputType
+                InputType = input.InputType,
+                IsInteger = input.PipelineKind == PipelineValueKind.Int
             }).ToArray();
             return new ProjectOptionEditor(
                 option.Name, option.Label, option.Description, ProjectOptionKind.Input,
@@ -534,7 +545,9 @@ public sealed partial class ProjectPlanModule
 
         var active = ExplicitOptionIntent.ReadActiveCases(option, config);
         var checkbox = option.Kind == OptionDefinitionKind.Checkbox;
-        var children = BuildEditors(active.SelectMany(item => item.Options).ToArray(), config);
+        var cases = option.Cases.Select(item => new ProjectCaseEditor(item.Name, item.Label, item.Description) {
+            ActiveOptions = active.Contains(item) ? BuildEditors(item.Options, config) : []
+        }).ToArray();
         return new ProjectOptionEditor(
             option.Name, option.Label, option.Description,
             option.Kind switch {
@@ -543,10 +556,7 @@ public sealed partial class ProjectPlanModule
                 _ => ProjectOptionKind.Select
             },
             config.ExplicitOptions.ContainsKey(option.Name), checkbox ? null : active[0].Name, option.DefaultCase,
-            option.Cases.Select(item => new ProjectCaseEditor(
-                item.Name, item.Label, item.Description)).ToArray(),
-            [],
-            children) {
+            cases, [], cases.SelectMany(item => item.ActiveOptions).ToArray()) {
             SelectedCases = active.Select(item => item.Name).ToArray(),
             MinCount = option.MinCount, MaxCount = option.MaxCount
         };

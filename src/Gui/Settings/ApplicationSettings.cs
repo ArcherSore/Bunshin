@@ -14,6 +14,7 @@ internal sealed class ApplicationSettings
     private readonly string _autoRunConfigurationPath;
     private readonly AutostartTask _autostart;
     private readonly AppLogger _logger;
+    private readonly RuntimePanelPreferences _runtimePanelPreferences;
     private string? _autoRunConfigurationId;
 
     internal ApplicationSettings(string applicationDirectory, AppLogger logger,
@@ -27,8 +28,12 @@ internal sealed class ApplicationSettings
         _autoRunConfigurationPath = Path.Combine(applicationDirectory, "config", "autorun-configuration.txt");
         _autostart = autostart ?? AutostartTask.ForCurrentProcess();
         _logger = logger;
+        _runtimePanelPreferences = new(Path.Combine(applicationDirectory, "config", "runtime-panel-sections.json"), logger);
         SidebarCollapsed = CreatePersistedToggle(Path.Combine(applicationDirectory, "config", "sidebar-collapsed.txt"),
             "application.sidebarCollapsed", "侧栏收起", false, null);
+        RuntimePanelCollapsed = CreatePersistedToggle(
+            Path.Combine(applicationDirectory, "config", "runtime-panel-collapsed.txt"),
+            "application.runtimePanelCollapsed", "运行面板收起", false, null);
         CloseToTray = new SettingsToggle(SaveClosePreference);
         try {
             CloseToTray.Initialize(!File.Exists(_closePreferencePath)
@@ -135,6 +140,10 @@ internal sealed class ApplicationSettings
     internal SettingsChoice AutoRunConfiguration { get; }
     internal SettingsChoice Appearance { get; }
     internal SettingsToggle SidebarCollapsed { get; }
+    internal SettingsToggle RuntimePanelCollapsed { get; }
+    internal IReadOnlyList<RuntimePanelSectionState> ReadRuntimePanelSections() => _runtimePanelPreferences.Read();
+    internal bool TrySaveRuntimePanelSections(IReadOnlyList<RuntimePanelSectionState> layout) =>
+        _runtimePanelPreferences.TrySave(layout);
     internal SettingsToggle AutoRunOnManualLaunch { get; }
     internal SettingsToggle ForceScheduledStart { get; }
     internal SettingsToggle SaveOnError { get; }

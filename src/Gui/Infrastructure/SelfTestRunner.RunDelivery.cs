@@ -112,7 +112,7 @@ internal static partial class SelfTestRunner
                         Volatile.Write(ref listed, false);
                         pipe.Close();
                         Task.Run(() => worker.ChildSessionEndedAsync(record)).GetAwaiter().GetResult();
-                        Click(window, "StartTaskHeaderButton");
+                        Click(window, "StartPlanButton");
                         PumpUntil(() => duringDialog != null, "正文前失败应打开手动启动错误框。");
                         var result = await duringDialog!.WaitAsync(token);
                         if (peer?.IsFaulted == true) await peer;
@@ -127,7 +127,7 @@ internal static partial class SelfTestRunner
                         }
                         return;
                     }
-                    Click(window, "StartTaskHeaderButton");
+                    Click(window, "StartPlanButton");
                     var start = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.RunStart, token);
                     var request = ProtocolJson.Deserialize<RunStartRequest>(start.Data);
                     var snapshot = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0);
@@ -137,7 +137,7 @@ internal static partial class SelfTestRunner
                         await pipe.WriteAsync(StateEvent(snapshot), token);
                         await pipe.WriteAsync(WireEnvelope.Response(start.Operation, start.RequestId!.Value,
                             new RunStartResponse("accepted")), token);
-                        PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "应先显示运行中的手动 Run。");
+                        PumpUntil(() => HeaderShows(window, "StopPlanButton", enabled: true), "应先显示运行中的手动 Run。");
                         window.Activate();
                         PumpUntilFocus(() => window.IsActive, "模拟前台窗口应已激活。");
                         await pipe.WriteAsync(StateEvent(snapshot with { StateRevision = 3, WorkerState = WorkerState.Faulted }), token);
@@ -414,7 +414,7 @@ internal static partial class SelfTestRunner
                 && probe.Dialogs.Count == 0, "开机拒绝只通过托盘呈现原始异常。");
             rejected = new(TaskCreationOptions.RunContinuationsAsynchronously);
             window.Show();
-            Click(window, "StartTaskHeaderButton");
+            Click(window, "StartPlanButton");
             var start = await WorkerCoordinatorSelfTest.ReadRequestAsync(pipe, ProtocolOperations.RunStart, token);
             Require(start.Data.GetRawText() == boot.Data.GetRawText(), "手动重试应提交同一份冻结计划。");
             if (scenario == "hidden-retry") {

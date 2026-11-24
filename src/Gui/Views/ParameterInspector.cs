@@ -17,11 +17,14 @@ internal sealed record InspectorInput(
     internal string Show(string value) => Input.IsPassword && value.Length != 0 ? ProjectInputEditor.PasswordMask : value;
 }
 
-// One inspector row per option: a select, switch or checkbox, or an input option with all of its inputs side by side.
+internal sealed record InspectorBranch(string Path, IReadOnlyList<InspectorRow> Rows);
+
+// One inspector row per option, with a branch for each active case that declares children.
 internal sealed record InspectorRow(
     ProjectOptionEditor Option, string Label, int Depth, bool IsGlobal, string Description,
     string? CaseDescription, IReadOnlyList<string> SharedWith, IReadOnlyList<InspectorInput> Inputs)
 {
+    internal IReadOnlyList<InspectorBranch> Branches { get; init; } = [];
     internal ProjectOptionKind Kind => Option.Kind;
     internal bool IsInvalid => Option.StartBlocker is not null || Inputs.Any(input => input.Draft is not null);
     internal ProjectCaseEditor? SelectedCase => Option.Cases.SingleOrDefault(item => item.Name == Option.SelectedCase);
@@ -29,23 +32,28 @@ internal sealed record InspectorRow(
 
 internal static class ParameterInspector
 {
-    // Global options first, then task options, each in declared order; a selected case's sub-options follow their
-    // parent one level deeper. Drafts are keyed by (option, input) of the configuration being shown.
+    // Drafts are keyed by (option, input) of the configuration being shown.
     internal static IReadOnlyList<InspectorRow> Derive(
         ProjectConfigurationView configuration, IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts,
-        IReadOnlyList<(string Label, ProjectConfigurationView Configuration)> otherTasks)
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? owners = null)
     {
-        var otherOptions = otherTasks
-            .Select(task => (task.Label, Names: Flatten(task.Configuration.TaskOptions, 0)
-                .Select(item => item.Option.Name).ToHashSet(StringComparer.Ordinal)))
-            .ToArray();
-        return Flatten(configuration.GlobalOptions, 0).Select(item => (item.Option, item.Depth, Global: true))
-            .Concat(Flatten(configuration.TaskOptions, 0).Select(item => (item.Option, item.Depth, Global: false)))
-            .Select(item => CreateRow(item.Option, item.Depth, item.Global, drafts, item.Global ? []
-                : otherOptions.Where(other => other.Names.Contains(item.Option.Name))
-                    .Select(other => other.Label).Distinct(StringComparer.Ordinal).ToArray()))
-            .ToArray();
+        IReadOnlyList<InspectorRow> Rows(IReadOnlyList<ProjectOptionEditor> options, string path, int depth, bool global) =>
+            options.Select((option, index) => {
+                var row = CreateRow(option, depth, global, drafts, owners?.GetValueOrDefault(option.Name) ?? []);
+                var branches = option.Cases.Select((item, caseIndex) => (Item: item, Index: caseIndex))
+                    .Where(item => item.Item.ActiveOptions.Count > 0)
+                    .Select(item => {
+                        var childPath = $"{path}/{index}:{item.Index}";
+                        return new InspectorBranch(childPath, Rows(item.Item.ActiveOptions, childPath, depth + 1, global));
+                    }).ToArray();
+                return row with { Branches = branches };
+            }).ToArray();
+        return Rows(configuration.GlobalOptions, "global", 0, true)
+            .Concat(Rows(configuration.TaskOptions, "task", 0, false)).ToArray();
     }
+
+    internal static IEnumerable<InspectorRow> Flatten(IEnumerable<InspectorRow> rows) =>
+        rows.SelectMany(row => Flatten(row.Branches.SelectMany(group => group.Rows)).Prepend(row));
 
     // An empty value is spelled out so a note never ends in nothing.
     internal static string ShowValue(string value) => value.Length == 0 ? "空" : value;
@@ -57,17 +65,6 @@ internal static class ParameterInspector
         var (min, max) when min == max => $"选择 {min} 项",
         var (min, max) => $"至少 {min} 项，最多 {max} 项"
     };
-
-    private static IEnumerable<(ProjectOptionEditor Option, int Depth)> Flatten(
-        IEnumerable<ProjectOptionEditor> options, int depth)
-    {
-        foreach (var option in options) {
-            yield return (option, depth);
-            foreach (var child in Flatten(option.ActiveChildren, depth + 1)) {
-                yield return child;
-            }
-        }
-    }
 
     internal static string GetOptionLabel(ProjectOptionEditor option) =>
         FirstNonBlank(option.Label, option.Inputs.FirstOrDefault()?.Label) ?? option.Name;
