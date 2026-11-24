@@ -318,8 +318,20 @@
                         <DockPanel MinHeight="28">
                             <Button x:Name="DesktopViewButton" DockPanel.Dock="Right" Padding="4,2,0,2"
                                     Style="{StaticResource Panel.QuietButton}" ToolTipService.ShowOnDisabled="True">
-                                <TextBlock x:Name="DesktopViewText" Text="显示窗口" TextDecorations="Underline"
-                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                <TextBlock x:Name="DesktopViewText" Text="显示窗口" TextDecorations="Underline">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                            <Setter Property="Foreground"
+                                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                             Value="Onboarding">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </Button>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <ui:SymbolIcon Symbol="Desktop20" FontSize="16" Margin="0,0,11,0"

@@ -76,7 +76,7 @@ internal static partial class SelfTestRunner
             var root = (FrameworkElement)window.FindName("WindowOverlayRoot");
             var workspace = (FrameworkElement)window.TaskPlanEditor.FindName("TaskWorkspacePanel");
             var viewport = workspace.TransformToAncestor(root).TransformBounds(new Rect(workspace.RenderSize));
-            var outline = (System.Windows.Shapes.Path)window.FindName("OnboardingOutline");
+            var outline = OnboardingControl<System.Windows.Shapes.Path>(window, "OnboardingOutline");
             PumpUntil(() => outline.Data.Bounds.Top >= viewport.Top - PixelTolerance
                 && outline.Data.Bounds.Bottom <= viewport.Bottom + PixelTolerance,
                 "超高任务卡的高亮外扩不能越过滚动视口。");
@@ -91,16 +91,21 @@ internal static partial class SelfTestRunner
             WaitForOnboardingStep(window, 2, "查看说明并设置参数");
             ClickOnboarding(window, "OnboardingNext");
             WaitForOnboardingStep(window, 3, "启动自动化");
+            Require(!window.RuntimeSidebar.IsVisible, "运行步骤应遵循用户收起运行面板的偏好。");
             Require(info.ReadLocalValue(UIElement.VisibilityProperty) == DependencyProperty.UnsetValue,
                 "离开说明步骤后必须恢复信息按钮的正常交互显示规则。");
             ClickOnboarding(window, "OnboardingNext");
             WaitForOnboardingStep(window, 4, "观看桌面分身");
+            Require(window.RuntimeSidebar.DesktopViewButton.IsVisible, "显示窗口步骤应临时展开运行面板和桌面分身区块。");
             ClickOnboarding(window, "OnboardingPrevious");
             WaitForOnboardingStep(window, 3, "启动自动化");
+            Require(!window.RuntimeSidebar.IsVisible, "回到运行步骤时应恢复用户收起运行面板的偏好。");
             ClickOnboarding(window, "OnboardingNext");
+            WaitForOnboardingStep(window, 4, "观看桌面分身");
             ClickOnboarding(window, "OnboardingNext");
             if (((UIElement)window.FindName("OnboardingOverlay")).Visibility != Visibility.Collapsed
                 || ((UIElement)window.FindName("HomeView")).Visibility != Visibility.Visible
+                || window.RuntimeSidebar.IsVisible
                 || !before.SequenceEqual(File.ReadAllBytes(path)) || File.ReadAllText(versionPath) != "9"
                 || !pending.SequenceEqual(File.ReadAllBytes(pendingPath))) {
                 throw new InvalidOperationException("Replay 必须回到首页且保持配置、完成版本和资格不变。");
@@ -114,13 +119,18 @@ internal static partial class SelfTestRunner
             PumpOnboarding();
             ClickOnboarding(window, "OnboardingNext");
             WaitForOnboardingStep(window, 2, "查看说明并设置参数");
-            if (!((TextBlock)window.FindName("OnboardingDescription")).Text.StartsWith("添加任务后")) {
+            if (!OnboardingControl<TextBlock>(window, "OnboardingDescription").Text.StartsWith("添加任务后")) {
                 throw new InvalidOperationException("空计划 replay 必须介绍添加后的卡片，不得插入任务。");
             }
             ClickOnboarding(window, "OnboardingSkip");
             if (!before.SequenceEqual(File.ReadAllBytes(path))) {
                 throw new InvalidOperationException("空计划 replay 不得写入配置。");
             }
+        }, directory => {
+            var config = Path.Combine(directory, "config");
+            Directory.CreateDirectory(config);
+            File.WriteAllText(Path.Combine(config, "runtime-panel-collapsed.txt"), "true");
+            File.WriteAllText(Path.Combine(config, "runtime-panel-sections.json"), """[{"Id":0,"Collapsed":true}]""");
         });
         VerifyOnboardingEligibility(logger, testDirectory);
     }
@@ -191,7 +201,9 @@ internal static partial class SelfTestRunner
         });
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "missing-target"), (window, directory) => {
             StartAutomaticOnboarding(window);
-            window.RuntimeSidebar.RuntimeControlCard.Visibility = Visibility.Collapsed;
+            ClickOnboarding(window, "OnboardingNext");
+            WaitForOnboardingStep(window, 2, "查看说明并设置参数");
+            window.TaskPlanEditor.StartPlanButton.Visibility = Visibility.Collapsed;
             ClickOnboarding(window, "OnboardingNext");
             if (((UIElement)window.FindName("OnboardingOverlay")).Visibility != Visibility.Collapsed
                 || File.Exists(Path.Combine(directory, "config", "onboarding.txt"))) {
@@ -235,8 +247,8 @@ internal static partial class SelfTestRunner
     private static void WaitForOnboardingStep(MainWindow window, int step, string title)
     {
         PumpUntil(() => ((UIElement)window.FindName("OnboardingOverlay")).Visibility == Visibility.Visible
-            && ((TextBlock)window.FindName("OnboardingTitle")).Text == title
-            && ((TextBlock)window.FindName("OnboardingCounter")).Text == $"{step} / 4",
+            && OnboardingControl<TextBlock>(window, "OnboardingTitle").Text == title
+            && OnboardingControl<TextBlock>(window, "OnboardingCounter").Text == $"新手指引 · {step} / 4",
             $"新手指引第 {step} 步必须显示正确标题和计数。");
         AssertOnboardingStep(window, step, title);
     }
@@ -315,7 +327,7 @@ internal static partial class SelfTestRunner
 
     private static void ClickOnboarding(MainWindow window, string name)
     {
-        var element = Named<UIElement>(window, name);
+        var element = (window.OnboardingOverlay.FindName(name) as UIElement) ?? Named<UIElement>(window, name);
         element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
         PumpOnboarding();
     }
@@ -354,17 +366,32 @@ internal static partial class SelfTestRunner
     private static void SetExpandedTask(MainWindow window, string? taskName) => EditorField("_expandedTask")
         .SetValue(window.TaskPlanEditor, taskName is null ? null : (Protocol.PlanItemKind.MaaTask, taskName));
 
+    private static T OnboardingControl<T>(MainWindow window, string name) where T : class =>
+        Named<T>(window.OnboardingOverlay, name);
+
     private static void AssertOnboardingStep(MainWindow window, int step, string title)
     {
         if (((UIElement)window.FindName("OnboardingOverlay")).Visibility != Visibility.Visible
-            || ((TextBlock)window.FindName("OnboardingTitle")).Text != title
-            || ((TextBlock)window.FindName("OnboardingCounter")).Text != $"{step} / 4") {
+            || OnboardingControl<TextBlock>(window, "OnboardingTitle").Text != title
+            || OnboardingControl<TextBlock>(window, "OnboardingCounter").Text != $"新手指引 · {step} / 4") {
             throw new InvalidOperationException($"新手指引第 {step} 步必须显示正确标题和计数。");
         }
         AssertOnboardingPlacement(window);
         var overlay = (FrameworkElement)window.FindName("OnboardingOverlay");
         var rootForHitTest = (FrameworkElement)window.FindName("WindowOverlayRoot");
-        var outline = (System.Windows.Shapes.Path)window.FindName("OnboardingOutline");
+        var outline = OnboardingControl<System.Windows.Shapes.Path>(window, "OnboardingOutline");
+        var target = step switch {
+            1 => window.TaskPlanEditor.TaskShelfHeaderButton,
+            2 when window.TaskPlanEditor.TaskForOnboarding() is { } task =>
+                window.TaskPlanEditor.PlanItemCard(task)!,
+            2 => window.TaskPlanEditor.TaskShelf,
+            3 => window.TaskPlanEditor.StartPlanButton,
+            _ => window.RuntimeSidebar.DesktopViewButton
+        };
+        var targetBounds = target.TransformToAncestor(rootForHitTest).TransformBounds(new Rect(target.RenderSize));
+        PumpUntil(() => outline.Data.Bounds.Contains(targetBounds.TopLeft + new Vector(PixelTolerance, PixelTolerance))
+            && outline.Data.Bounds.Right >= targetBounds.Right - PixelTolerance,
+            "圈选框必须跟随对应按钮或任务行的位置。");
         var hole = outline.Data.Bounds;
         var center = new System.Windows.Point(hole.X + hole.Width / 2, hole.Y + hole.Height / 2);
         var hit = rootForHitTest.InputHitTest(center) as DependencyObject;
@@ -406,7 +433,7 @@ internal static partial class SelfTestRunner
     private static void AssertOnboardingPlacement(MainWindow window)
     {
         var root = (FrameworkElement)window.FindName("WindowOverlayRoot");
-        var popover = (FrameworkElement)window.FindName("OnboardingPopover");
+        var popover = OnboardingControl<FrameworkElement>(window, "OnboardingPopover");
         var bounds = popover.TransformToAncestor(root).TransformBounds(new Rect(popover.RenderSize));
         var content = Named<FrameworkElement>(window, "ShellContent");
         var contentTop = content.TransformToAncestor(root).Transform(new System.Windows.Point()).Y;

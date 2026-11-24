@@ -51,7 +51,8 @@ public partial class MainWindow
     }
 
     private bool RuntimePanelCollapsed => _runtimeSidebarDrag?.Collapsed ?? _settings.RuntimePanelCollapsed.Value;
-    private bool OnboardingNeedsRuntimePanel => _onboardingActive && _onboardingStep >= 2;
+    private bool OnboardingNeedsRuntimePanel => _onboardingActive && !_onboardingPaused
+        && _onboardingStep == OnboardingStep.ShowDesktop;
     private bool RuntimePanelHidden => RuntimePanelCollapsed && !OnboardingNeedsRuntimePanel;
     private System.Windows.Controls.Button RuntimePanelToggleButton => (System.Windows.Controls.Button)Header.Actions!;
 

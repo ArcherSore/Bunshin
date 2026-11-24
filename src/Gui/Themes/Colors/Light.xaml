@@ -16,6 +16,11 @@
     <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="#66000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Update" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="#66000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.Action" Color="#191919" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.ActionHover" Color="#3C3C3C" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.ActionText" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.Dot" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.Border" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Primary" Color="#E6000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Body" Color="#E6000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#B8000000" po:Freeze="True" />
@@ -109,6 +114,7 @@
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.06" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog" Color="#000000" BlurRadius="24" ShadowDepth="8" Direction="270" Opacity="0.2" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog.Welcome" Color="#000000" BlurRadius="50" ShadowDepth="25" Direction="270" Opacity="0.25" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Onboarding.Card" Color="#000000" BlurRadius="32" ShadowDepth="12" Direction="270" Opacity="0.18" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light" Color="#000000" BlurRadius="8" ShadowDepth="1" Direction="270" Opacity="0.08" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Popover" Color="#000000" BlurRadius="24" ShadowDepth="7" Direction="270" Opacity="0.16" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Drag" Color="#000000" BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.14" po:Freeze="True" />

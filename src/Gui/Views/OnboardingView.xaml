@@ -1,0 +1,109 @@
+<UserControl x:Class="Gui.Views.OnboardingView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:Gui.Views"
+             Focusable="True" KeyboardNavigation.TabNavigation="Cycle"
+             KeyboardNavigation.ControlTabNavigation="Cycle" AllowDrop="True"
+             PreviewDrop="BlockDrop" PreviewDragOver="BlockDrop"
+             AutomationProperties.Name="新手指引">
+    <UserControl.Resources>
+        <Style x:Key="TourButton" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                            <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" Padding="{TemplateBinding Padding}"
+                                       VerticalAlignment="Center" FontSize="{TemplateBinding FontSize}"
+                                       Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="TourPrimaryButton" TargetType="Button" BasedOn="{StaticResource TourButton}">
+            <Setter Property="Background" Value="{DynamicResource Brush.Onboarding.Action}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Onboarding.ActionText}" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Onboarding.ActionHover}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Onboarding.ActionText}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="TourDot" TargetType="Ellipse">
+            <Setter Property="Width" Value="6" />
+            <Setter Property="Height" Value="6" />
+            <Setter Property="Fill" Value="{DynamicResource Brush.Onboarding.Dot}" />
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="Current">
+                    <Setter Property="Fill" Value="{DynamicResource Brush.Text.Primary}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+    <Grid Background="{DynamicResource Brush.Transparent}">
+        <Path x:Name="OnboardingDim" Fill="{DynamicResource Brush.Overlay.Onboarding}" IsHitTestVisible="False" />
+        <Path x:Name="OnboardingOutline" Stroke="{DynamicResource Brush.Primary}" StrokeThickness="1"
+              IsHitTestVisible="False" />
+        <Canvas IsHitTestVisible="False">
+            <Border x:Name="OnboardingPulse" Visibility="Collapsed" CornerRadius="12" Width="24" Height="24"
+                    BorderBrush="{DynamicResource Brush.Primary}" BorderThickness="1.25"
+                    RenderTransformOrigin="0.5,0.5">
+                <Border.RenderTransform><ScaleTransform /></Border.RenderTransform>
+            </Border>
+        </Canvas>
+        <views:ShadowBorder x:Name="OnboardingPopover" Width="300" HorizontalAlignment="Left" VerticalAlignment="Top"
+                            Padding="15,15,15,11" CornerRadius="14" BorderThickness="1"
+                            Background="{DynamicResource Brush.Surface.Popover}"
+                            BorderBrush="{DynamicResource Brush.Onboarding.Border}"
+                            Shadow="{DynamicResource Effect.Onboarding.Card}"
+                            KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="OnboardingCounter" Style="{StaticResource MutedTextStyle}" />
+                <TextBlock x:Name="OnboardingTitle" Grid.Row="1" Margin="0,4,0,6" FontSize="15" FontWeight="Medium"
+                           TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                    <TextBlock x:Name="OnboardingDescription" FontSize="14" TextWrapping="Wrap"
+                               LineHeight="22.4" LineStackingStrategy="BlockLineHeight"
+                               TextOptions.TextFormattingMode="Ideal"
+                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                </ScrollViewer>
+                <DockPanel Grid.Row="3" Margin="0,14,0,0">
+                    <StackPanel x:Name="ProgressDots" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Style="{StaticResource TourDot}" Margin="0,0,4,0" />
+                        <Ellipse Style="{StaticResource TourDot}" Margin="0,0,4,0" />
+                        <Ellipse Style="{StaticResource TourDot}" Margin="0,0,4,0" />
+                        <Ellipse Style="{StaticResource TourDot}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="OnboardingSkip" Content="跳过" Style="{StaticResource TourButton}"
+                                AutomationProperties.Name="跳过新手指引" />
+                        <Button x:Name="OnboardingPrevious" Content="上一步" Margin="6,0,0,0"
+                                Style="{StaticResource TourButton}" />
+                        <Button x:Name="OnboardingNext" Margin="6,0,0,0" Style="{StaticResource TourPrimaryButton}" />
+                    </StackPanel>
+                </DockPanel>
+            </Grid>
+        </views:ShadowBorder>
+    </Grid>
+</UserControl>

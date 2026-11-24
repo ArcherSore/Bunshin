@@ -15,7 +15,12 @@
     <SolidColorBrush x:Key="Brush.Overlay.Dim" Color="#80000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="#80000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Update" Color="#80000000" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="#80000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="#66000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.Action" Color="#EFEFEF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.ActionHover" Color="#D7D7D7" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.ActionText" Color="#191919" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.Dot" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Onboarding.Border" Color="#1AFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Primary" Color="#EDFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Body" Color="#EDFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Secondary" Color="#BFFFFFFF" po:Freeze="True" />
@@ -109,6 +114,7 @@
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog" Color="#000000" BlurRadius="24" ShadowDepth="8" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog.Welcome" Color="#000000" BlurRadius="50" ShadowDepth="25" Direction="270" Opacity="0.5" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Onboarding.Card" Color="#000000" BlurRadius="32" ShadowDepth="12" Direction="270" Opacity="0.18" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light" Color="#000000" BlurRadius="8" ShadowDepth="1" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Popover" Color="#000000" BlurRadius="24" ShadowDepth="7" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Drag" Color="#000000" BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.4" po:Freeze="True" />
