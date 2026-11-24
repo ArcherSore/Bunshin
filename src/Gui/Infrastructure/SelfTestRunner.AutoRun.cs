@@ -233,9 +233,9 @@ internal static partial class SelfTestRunner
                 var recorded = File.Exists(Path.Combine(directory, "config", "welcome-shown.txt"))
                     || File.Exists(Path.Combine(directory, "config", "onboarding.txt"));
                 Require(unattended
-                    ? OverlayOf(window, "WelcomeOverlay") == Visibility.Collapsed
+                    ? OverlayOf(window, "ProjectReader") == Visibility.Collapsed
                         && OverlayOf(window, "OnboardingOverlay") == Visibility.Collapsed && !recorded
-                    : OverlayOf(window, "WelcomeOverlay") == Visibility.Visible,
+                    : OverlayOf(window, "ProjectReader") == Visibility.Visible,
                     unattended ? "开机自启时不得弹出公告或新手指引，也不得记为已读。" : "手动启动仍须弹出公告。");
             }, beforeLoad: Welcome, launchCommand: command);
         }

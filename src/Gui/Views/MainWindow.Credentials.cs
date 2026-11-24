@@ -18,8 +18,8 @@ public partial class MainWindow
             SaveChildSessionCredentials(credential);
         } catch (Exception exception) {
             _logger.Warn("打开或保存 Windows 登录凭据失败。", exception);
-            ShowActionableError("无法保存 Windows 登录凭据", exception,
-                "请重新填写 Windows 账户和账户密码（不是 PIN）。", offerLogDirectory: false);
+            return ShowErrorPromptAsync("无法保存 Windows 登录凭据",
+                "请重新填写 Windows 账户和账户密码（不是 PIN）。", exception, offerLogs: true);
         }
         return Task.CompletedTask;
     }

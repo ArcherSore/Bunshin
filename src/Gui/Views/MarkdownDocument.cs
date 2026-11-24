@@ -15,7 +15,8 @@ namespace Gui.Views;
 // StrongBrushKey colours headings and bold text; without it they keep the body colour.
 internal sealed record MarkdownStyle(
     double FontSize, double LineHeight, double Heading1Size, double HeadingLineHeight, string BrushKey,
-    string? StrongBrushKey = null);
+    string? StrongBrushKey = null, double ParagraphSpacing = 8, string LinkBrushKey = "Brush.Primary",
+    FontWeight? StrongWeight = null, bool CompactLists = false);
 
 // Render Markdown as native document elements: no HTML, scripts or remote image loading.
 internal static class MarkdownDocument
@@ -55,6 +56,8 @@ internal static class MarkdownDocument
     private static WpfBlock RenderBlock(Markdig.Syntax.Block block, Action<Uri> openLink, MarkdownStyle style)
     {
         if (block is ListBlock list) {
+            var compact = style.CompactLists && !list.IsLoose;
+            var itemStyle = compact ? style with { ParagraphSpacing = 0 } : style;
             var result = new System.Windows.Documents.List {
                 MarkerStyle = list.IsOrdered ? TextMarkerStyle.Decimal : TextMarkerStyle.Disc,
                 Padding = new Thickness(18, 0, 0, 0), Margin = new Thickness(0, 0, 0, 8)
@@ -63,9 +66,9 @@ internal static class MarkdownDocument
                 result.StartIndex = start;
             }
             foreach (var item in list.OfType<ListItemBlock>()) {
-                var entry = new ListItem { Margin = new Thickness(0, 0, 0, 3) };
+                var entry = new ListItem { Margin = new Thickness(0, 0, 0, compact ? 0 : 3) };
                 foreach (var child in item) {
-                    entry.Blocks.Add(RenderBlock(child, openLink, style));
+                    entry.Blocks.Add(RenderBlock(child, openLink, itemStyle));
                 }
                 result.ListItems.Add(entry);
             }
@@ -102,7 +105,7 @@ internal static class MarkdownDocument
             }
             return section;
         }
-        var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 8), LineHeight = style.LineHeight };
+        var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, style.ParagraphSpacing), LineHeight = style.LineHeight };
         if (block is CodeBlock code) {
             paragraph.Inlines.Add(new Run(code.Lines.ToString()));
             paragraph.FontSize = 12;
@@ -152,12 +155,12 @@ internal static class MarkdownDocument
                     rendered = new Run(task.Checked ? "☑ " : "☐ ");
                     break;
                 case AutolinkInline auto:
-                    rendered = Link(auto.Url, new Run(auto.Url), openLink);
+                    rendered = Link(auto.Url, new Run(auto.Url), openLink, style.LinkBrushKey);
                     break;
                 case LinkInline link:
                     var label = new Span();
                     AddInlines(label.Inlines, link, openLink, style);
-                    rendered = Link(link.Url, label, openLink);
+                    rendered = Link(link.Url, label, openLink, style.LinkBrushKey);
                     break;
                 case EmphasisInline emphasis:
                     var styled = new Span();
@@ -165,7 +168,7 @@ internal static class MarkdownDocument
                     if (emphasis.DelimiterChar == '~') {
                         styled.TextDecorations = TextDecorations.Strikethrough;
                     } else if (emphasis.DelimiterCount == 2) {
-                        styled.FontWeight = FontWeights.Bold;
+                        styled.FontWeight = style.StrongWeight ?? FontWeights.Bold;
                         if (style.StrongBrushKey is { } strong) {
                             styled.SetResourceReference(TextElement.ForegroundProperty, strong);
                         }
@@ -186,13 +189,13 @@ internal static class MarkdownDocument
         }
     }
 
-    private static WpfInline Link(string? url, WpfInline label, Action<Uri> openLink)
+    private static WpfInline Link(string? url, WpfInline label, Action<Uri> openLink, string brushKey)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http")) {
             return label;
         }
         var link = new Hyperlink(label) { NavigateUri = uri, ToolTip = uri.AbsoluteUri };
-        link.SetResourceReference(TextElement.ForegroundProperty, "Brush.Primary");
+        link.SetResourceReference(TextElement.ForegroundProperty, brushKey);
         link.RequestNavigate += (_, args) =>
         {
             openLink(uri);

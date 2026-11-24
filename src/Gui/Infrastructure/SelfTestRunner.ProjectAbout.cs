@@ -123,15 +123,16 @@ internal static partial class SelfTestRunner
             PumpUntil(() => scroller.VerticalOffset < offset, "鼠标在简介上滚动时必须滚动设置页。");
 
             license.ExecuteAsync().GetAwaiter().GetResult();
-            PumpUntil(() => Named<UIElement>(window, "WelcomeOverlay").IsVisible, "点击许可证必须打开阅读窗口。");
-            var reader = Named<FlowDocumentScrollViewer>(window, "WelcomeViewer");
-            Require(Named<TextBlock>(window, "WelcomeTitle").Text == "许可证"
+            var readerView = ReaderOf(window);
+            PumpUntil(() => readerView.IsVisible, "点击许可证必须打开阅读窗口。");
+            var reader = Named<FlowDocumentScrollViewer>(readerView, "ReaderViewer");
+            Require(Named<TextBlock>(readerView, "ReaderTitle").Text == "许可证"
                 && TextOf(reader.Document).Contains("许可证正文"), "阅读窗口必须显示完整许可证。");
             PumpUntil(() => SettingsVisualDescendants(reader).OfType<ScrollViewer>().Any(s => s.ScrollableHeight > 0),
                 "长许可证必须可以滚动。");
             CaptureAbout(window, "license");
-            ClickOnboarding(window, "WelcomeDismissButton");
-            PumpUntil(() => !Named<UIElement>(window, "WelcomeOverlay").IsVisible, "阅读窗口必须可以关闭。");
+            ClickOnboarding(readerView, "ReaderDismissButton");
+            PumpUntil(() => !readerView.IsVisible, "阅读窗口必须可以关闭。");
 
             SetAbout(directory, "http://example.com/description", "https://example.com/contact",
                 "https://example.com/license", "invalid");
@@ -160,7 +161,7 @@ internal static partial class SelfTestRunner
     {
         ClickOnboarding(window, "SettingsNavigationItem");
         var settings = Named<SettingsView>(window, "SettingsView");
-        var navigation = Named<System.Windows.Controls.ListBox>(settings, "SectionNavigation");
+        var navigation = window.Sidebar.SectionNavigation;
         navigation.SelectedIndex = navigation.Items.Count - 1;
         return settings;
     }

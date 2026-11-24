@@ -61,7 +61,7 @@ internal static partial class SelfTestRunner
                 Require(window.Foreground is SolidColorBrush body && body.Color == Expected("Brush.Text.Body")
                     && Named<System.Windows.Shapes.Ellipse>(window, "UpdateNavigationBadge").Fill is SolidColorBrush badge
                     && badge.Color == Expected("Brush.Rail.UpdateBadge")
-                    && window.UpdateDialog.Shadow?.Color == ((DropShadowEffect)palette["Effect.Dialog"]).Color,
+                    && window.UpdateDialog.Card.Shadow?.Color == ((DropShadowEffect)palette["Effect.Dialog.Update"]).Color,
                     "主窗口正文、更新提示点和对话框阴影应跟随配色切换。");
                 RequireThemeBrush(window.RuntimeSidebarSplitter.BorderBrush, palette, "Brush.Rail.Border", "运行面板边缘");
                 Require(ApplicationThemeManager.GetAppTheme() == mode
@@ -160,7 +160,7 @@ internal static partial class SelfTestRunner
 
         var settings = OpenAboutSection(window);
         window.UpdateLayout();
-        var navigation = settings.SectionNavigation;
+        var navigation = window.Sidebar.SectionNavigation;
         var about = SettingsVisualDescendants(settings).OfType<ProjectAboutView>().Single();
         PumpUntil(() => about.TranslatePoint(default, settings).Y is >= 0 and var top && top < settings.ActualHeight,
             "设置页应已滚动到关于项目。");
@@ -168,8 +168,8 @@ internal static partial class SelfTestRunner
             var selected = (ListBoxItem)navigation.ItemContainerGenerator.ContainerFromItem(navigation.SelectedItem);
             var description = (FlowDocumentScrollViewer)about.Description.Content;
             Require(description.IsVisible, "关于页应已显示项目简介。");
-            RequireThemeBrush(selected.Background, palette, "Brush.Primary", "设置页选中的目录项");
-            RequireThemeBrush(description.Document.Foreground, palette, "Brush.Text.Secondary", "关于页项目简介");
+            RequireThemeBrush(selected.Background, palette, "Brush.Rail.Active", "设置页选中的目录项");
+            RequireThemeBrush(description.Document.Foreground, palette, "Brush.Text.Muted", "关于页项目简介");
         });
     }
 
@@ -209,31 +209,22 @@ internal static partial class SelfTestRunner
 
     private static void CheckScheduleColors(ScheduleView page, ResourceDictionary palette)
     {
-        var category = ((SolidColorBrush)palette["Brush.Chart.Category1"]).Color;
         var drawing = VisualTreeHelper.GetDrawing(page.Timeline);
         var shapes = Shapes(drawing).ToArray();
-        var pin = shapes.First(d => d.Geometry is EllipseGeometry && d.Brush is SolidColorBrush);
-        var swatch = ConfigurationDescendants(page.ConfigurationList).OfType<System.Windows.Shapes.Rectangle>().First();
-        Require(pin.Brush is SolidColorBrush point && point.Color == category
-            && page.KeyCurrent.Fill is SolidColorBrush legend && legend.Color == category
-            && swatch.Fill is SolidColorBrush fill && fill.Color == category,
-            "已有时间线标记、图例和配置列表应同时显示当前配置色。");
-        Require(shapes.Any(d => d.Geometry is RectangleGeometry && d.Brush is SolidColorBrush day
-                && day.Color == category)
-            && shapes.Any(d => d.Brush is SolidColorBrush track
-                && track.Color == ((SolidColorBrush)palette["Brush.Timeline.Track"]).Color),
-            "活动星期指示条和时间线轨道应使用当前配色。");
-        Require(shapes.Any(d => d.Geometry is LineGeometry && d.Pen?.Brush is SolidColorBrush marker
+        var selected = ((SolidColorBrush)palette["Brush.Timeline.Selected"]).Color;
+        Require(shapes.Any(d => d.Brush is SolidColorBrush pin && pin.Color == selected),
+            "时间线的选中标记应使用当前配色。");
+        RequireThemeBrush(page.KeyCurrent.Fill, palette, "Brush.Timeline.Selected", "选中的定时图例");
+        Require(shapes.Any(d => d.Brush is SolidColorBrush track
+            && track.Color == ((SolidColorBrush)palette["Brush.Timeline.Track"]).Color),
+            "选中定时覆盖的星期应使用当前配色。");
+        Require(shapes.Any(d => d.Brush is SolidColorBrush marker
             && marker.Color == ((SolidColorBrush)palette["Brush.Timeline.Now"]).Color),
             "时间线的当前时刻指示线应使用当前配色。");
-        var expected = (LinearGradientBrush)palette["Brush.Schedule.NextRun"];
-        Require(page.NextRunBanner.Background is LinearGradientBrush banner
-            && banner.GradientStops.Select(s => s.Color).SequenceEqual(expected.GradientStops.Select(s => s.Color)),
-            "已有下次运行横幅的渐变应随配色切换。");
+        RequireThemeBrush(page.NextRunDetail.Foreground, palette, "Brush.Text.Primary", "下次运行");
+        RequireThemeBrush(page.Inspector.Background, palette, "Brush.Schedule.Card", "展开的定时");
         var chip = page.TimeChips.Children.OfType<Border>().First();
-        Require(chip.Background is SolidColorBrush tint
-            && tint.Color == Color.FromArgb(0x1A, category.R, category.G, category.B),
-            "已有时间标签的半透明背景应从当前配置色派生。");
+        RequireThemeBrush(chip.Background, palette, "Brush.Schedule.Field", "时间标签");
 
         static IEnumerable<GeometryDrawing> Shapes(DrawingGroup group)
         {

@@ -155,7 +155,8 @@ internal sealed class SettingsRegistry
         SettingsItemKind.Action => new(item, Action: Resolve(Actions, item.ActionId!, item.Id)),
         SettingsItemKind.Info => new(item,
             Value: item.ValueKey is null ? null : Resolve(Values, item.ValueKey, item.Id)),
-        SettingsItemKind.About => new(item, About: About),
+        SettingsItemKind.About => new(item, About: About,
+            Value: item.ValueKey is null ? null : Resolve(Values, item.ValueKey, item.Id)),
         _ => throw new InvalidDataException($"未知 Settings item type：{item.Type}。")
     };
 

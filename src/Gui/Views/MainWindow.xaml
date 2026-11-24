@@ -80,42 +80,6 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-        <DataTemplate x:Key="Update.ButtonLabel">
-            <TextBlock Text="{Binding}" FontWeight="SemiBold"
-                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-        </DataTemplate>
-        <ControlTemplate x:Key="Welcome.ButtonTemplate" TargetType="Button">
-            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{StaticResource Radius.Section}"
-                    SnapsToDevicePixels="True">
-                <ContentPresenter Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
-                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
-            </Border>
-        </ControlTemplate>
-        <Style x:Key="Welcome.CloseButton" TargetType="Button" BasedOn="{StaticResource Preview.IconButton}">
-            <Setter Property="Width" Value="36" />
-            <Setter Property="Height" Value="36" />
-            <Setter Property="Padding" Value="8" />
-            <Setter Property="Template" Value="{StaticResource Welcome.ButtonTemplate}" />
-        </Style>
-        <DataTemplate x:Key="Welcome.DismissLabel">
-            <TextBlock Text="{Binding}" FontSize="{StaticResource FontSize.SectionTitle}" FontWeight="Medium"
-                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-        </DataTemplate>
-        <Style x:Key="Welcome.DismissButton" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
-            <Setter Property="Height" Value="44" />
-            <Setter Property="ContentTemplate" Value="{StaticResource Welcome.DismissLabel}" />
-            <Setter Property="Template" Value="{StaticResource Welcome.ButtonTemplate}" />
-        </Style>
-        <Style x:Key="Update.PrimaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
-            <Setter Property="ContentTemplate" Value="{StaticResource Update.ButtonLabel}" />
-        </Style>
-        <Style x:Key="Update.SecondaryButton" TargetType="Button" BasedOn="{StaticResource SecondaryButtonStyle}">
-            <Setter Property="ContentTemplate" Value="{StaticResource Update.ButtonLabel}" />
-            <Setter Property="Background" Value="{DynamicResource Brush.Primary.Surface}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Dialog.Border}" />
-        </Style>
     </ui:FluentWindow.Resources>
     <Grid x:Name="WindowOverlayRoot">
     <Grid x:Name="MainWindowContent">
@@ -124,19 +88,9 @@
                 <Style.Triggers>
                     <DataTrigger Binding="{Binding Visibility, ElementName=UpdateOverlay}" Value="Visible">
                         <Setter Property="IsEnabled" Value="False" />
-                        <Setter Property="Effect">
-                            <Setter.Value>
-                                <BlurEffect Radius="8" KernelType="Gaussian" RenderingBias="Performance" />
-                            </Setter.Value>
-                        </Setter>
                     </DataTrigger>
-                    <DataTrigger Binding="{Binding Visibility, ElementName=WelcomeOverlay}" Value="Visible">
+                    <DataTrigger Binding="{Binding Visibility, ElementName=ProjectReader}" Value="Visible">
                         <Setter Property="IsEnabled" Value="False" />
-                        <Setter Property="Effect">
-                            <Setter.Value>
-                                <BlurEffect Radius="8" KernelType="Gaussian" RenderingBias="Performance" />
-                            </Setter.Value>
-                        </Setter>
                     </DataTrigger>
                 </Style.Triggers>
             </Style>
@@ -257,206 +211,23 @@
                     </ControlTemplate>
                 </Button.Template>
             </Button>
-            <views:ShadowBorder x:Name="UpdateDialog" Width="440" MaxHeight="600" Margin="24"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24"
-                    Background="{DynamicResource Brush.Surface}" BorderBrush="{DynamicResource Brush.Dialog.Border}"
-                    BorderThickness="1" CornerRadius="{StaticResource Radius.Section}"
-                    Shadow="{DynamicResource Effect.Dialog}">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <DockPanel Margin="0,-8,-8,16">
-                        <Button x:Name="CloseUpdateButton" DockPanel.Dock="Right"
-                                Style="{StaticResource Preview.IconButton}" Click="CloseUpdate_Click"
-                                ToolTip="关闭（Esc）" AutomationProperties.Name="关闭软件更新">
-                            <ui:SymbolIcon Symbol="Dismiss24" FontSize="16" />
-                        </Button>
-                        <TextBlock Text="软件更新" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-                    </DockPanel>
-                    <ScrollViewer x:Name="UpdateBodyScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel>
-                            <StackPanel x:Name="UpdateCheckingPanel" Margin="0,20,0,24" Visibility="Collapsed">
-                                <ui:ProgressRing Width="44" Height="44" IsIndeterminate="True"
-                                                 CoverRingVisibility="Visible"
-                                                 CoverRingStroke="{DynamicResource Brush.Dialog.Border}"
-                                                 Foreground="{DynamicResource Brush.Primary}" />
-                                <TextBlock Text="正在检查更新…" FontSize="16" FontWeight="SemiBold"
-                                           HorizontalAlignment="Center" Margin="0,24,0,8" />
-                                <TextBlock Text="请稍候…" HorizontalAlignment="Center"
-                                           Style="{StaticResource SecondaryTextStyle}" />
-                            </StackPanel>
-                            <StackPanel x:Name="UpdateResultPanel">
-                                <Grid Margin="0,8,0,20">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="48" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Image x:Name="UpdateAppIcon" Source="pack://application:,,,/Assets/app.png"
-                                           Width="44" Height="44" />
-                                    <Border x:Name="UpdateStateIconBackground" Width="44" Height="44"
-                                            CornerRadius="22" Background="{DynamicResource Brush.Success}">
-                                        <ui:SymbolIcon x:Name="UpdateStateIcon" Symbol="Checkmark24"
-                                                       Foreground="{DynamicResource Brush.Text.Inverse}"
-                                                       FontSize="24" />
-                                    </Border>
-                                    <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
-                                        <TextBlock x:Name="UpdateStateTitle" FontSize="14" FontWeight="SemiBold"
-                                                   TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-                                        <WrapPanel VerticalAlignment="Center">
-                                            <TextBlock x:Name="UpdateVersionText" FontSize="25" FontWeight="SemiBold"
-                                                       TextWrapping="Wrap"
-                                                       MaxWidth="{Binding ActualWidth,
-                                                           RelativeSource={RelativeSource AncestorType=StackPanel}}" />
-                                            <Border x:Name="UpdateVersionBadge" CornerRadius="4" Padding="7,3"
-                                                    Margin="10,0,0,0" VerticalAlignment="Center"
-                                                    Background="{DynamicResource Brush.Primary.Surface}"
-                                                    Visibility="Collapsed">
-                                                <TextBlock Text="发现新版本" FontSize="11"
-                                                           Foreground="{DynamicResource Brush.Primary}" />
-                                            </Border>
-                                        </WrapPanel>
-                                        <TextBlock x:Name="UpdateInstalledVersionText" Margin="0,4,0,0"
-                                                   Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </Grid>
-                                <TextBlock x:Name="UpdateResultMessage" TextWrapping="Wrap" Margin="0,0,0,16"
-                                           Style="{StaticResource SecondaryTextStyle}" />
-                                <Border x:Name="UpdateNotesPanel" Background="{DynamicResource Brush.Surface.Option}"
-                                        Padding="16,14,10,14" CornerRadius="{StaticResource Radius.Control}">
-                                    <StackPanel>
-                                        <TextBlock Text="更新内容" FontWeight="SemiBold" Margin="0,0,0,8" />
-                                        <FlowDocumentScrollViewer x:Name="UpdateNotesViewer" MaxHeight="260"
-                                                                  VerticalScrollBarVisibility="Auto"
-                                                                  HorizontalScrollBarVisibility="Disabled"
-                                                                  IsToolBarVisible="False" Zoom="100" />
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-                        </StackPanel>
-                    </ScrollViewer>
-                    <StackPanel Grid.Row="2" Margin="0,16,0,0">
-                        <TextBlock x:Name="UpdateDownloadStatus" TextWrapping="Wrap" Margin="0,0,0,8"
-                                   Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
-                        <ProgressBar x:Name="UpdateProgressBar" Minimum="0" Maximum="100" Height="4"
-                                     Visibility="Collapsed" Margin="0,0,0,12" />
-                        <Button x:Name="DialogCheckUpdateButton" Content="检查更新" Click="CheckUpdate_Click"
-                                Style="{StaticResource Update.SecondaryButton}" Height="36" />
-                        <Grid x:Name="UpdateAvailableActions">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="12" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Button x:Name="ReleaseNotesButton" Content="查看更新说明" Click="ReleaseNotes_Click"
-                                    Style="{StaticResource Update.SecondaryButton}" Height="36" Padding="8,0" />
-                            <Button x:Name="LaterUpdateButton" Content="稍后" Click="CloseUpdate_Click"
-                                    Visibility="Collapsed" Style="{StaticResource Update.SecondaryButton}"
-                                    Height="36" Padding="8,0" />
-                            <Button x:Name="CancelDownloadButton" Content="取消下载" Visibility="Collapsed"
-                                    Click="CancelDownload_Click" Style="{StaticResource Update.SecondaryButton}"
-                                    Height="36" Padding="8,0" />
-                            <Button x:Name="DownloadUpdateButton" Grid.Column="2" Content="立即更新"
-                                    Click="DownloadUpdate_Click" Style="{StaticResource Update.PrimaryButton}"
-                                    Height="36" Padding="8,0" />
-                            <Button x:Name="InstallUpdateButton" Grid.Column="2" Content="安装并重启"
-                                    Visibility="Collapsed" Click="InstallUpdate_Click"
-                                    Style="{StaticResource Update.PrimaryButton}" Height="36" Padding="8,0" />
-                        </Grid>
-                    </StackPanel>
-                </Grid>
-            </views:ShadowBorder>
+            <views:SoftwareUpdateDialog x:Name="UpdateDialog" Width="400" MaxHeight="600" Margin="24"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
-        <Grid x:Name="WelcomeOverlay" Panel.ZIndex="210" Visibility="Collapsed" Focusable="True"
-              KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
-              SizeChanged="WelcomeOverlay_SizeChanged" AutomationProperties.Name="欢迎信息">
-            <Button x:Name="WelcomeScrim" Background="{DynamicResource Brush.Overlay.Modal}" BorderThickness="0"
-                    Focusable="False" IsTabStop="False" Click="CloseWelcome_Click"
-                    AutomationProperties.Name="关闭欢迎信息遮罩">
-                <Button.Template>
-                    <ControlTemplate TargetType="{x:Type Button}">
-                        <Border Background="{TemplateBinding Background}" />
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
-            <Grid x:Name="WelcomeDialog" Width="512" HorizontalAlignment="Center" VerticalAlignment="Center"
-                  RenderTransformOrigin="0.5,0.5">
-                <Grid.RenderTransform>
-                    <ScaleTransform x:Name="WelcomeDialogScale" />
-                </Grid.RenderTransform>
-                <!-- The shadow is drawn behind the opaque background without a full-dialog effect texture. -->
-                <views:ShadowBorder Background="{DynamicResource Brush.Surface}" CornerRadius="16"
-                                    Shadow="{DynamicResource Effect.Dialog.Welcome}" />
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Border Padding="24,16" BorderBrush="{DynamicResource Brush.Border}" BorderThickness="0,0,0,1">
-                        <DockPanel>
-                            <Button x:Name="WelcomeCloseButton" DockPanel.Dock="Right" Click="CloseWelcome_Click"
-                                    Style="{StaticResource Welcome.CloseButton}" ToolTip="关闭（Esc）"
-                                    AutomationProperties.Name="关闭欢迎信息">
-                                <ui:SymbolIcon Symbol="Dismiss24" FontSize="20" />
-                            </Button>
-                            <ui:SymbolIcon x:Name="WelcomeIcon" Symbol="Sparkle24" FontSize="20" Margin="0,0,8,0"
-                                           VerticalAlignment="Center"
-                                           Foreground="{DynamicResource Brush.Primary}" />
-                            <TextBlock x:Name="WelcomeTitle" FontSize="18" FontWeight="SemiBold" LineHeight="28"
-                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                                       Foreground="{DynamicResource Brush.Text.Primary}" />
-                        </DockPanel>
-                    </Border>
-                    <FlowDocumentScrollViewer x:Name="WelcomeViewer" Grid.Row="1" Margin="24,16,12,16" Zoom="100"
-                                              VerticalScrollBarVisibility="Auto" IsToolBarVisible="False"
-                                              HorizontalScrollBarVisibility="Disabled" />
-                    <Border Grid.Row="2" Padding="24,16" BorderBrush="{DynamicResource Brush.Border}"
-                            BorderThickness="0,1,0,0">
-                        <Button x:Name="WelcomeDismissButton" Content="我知道了" Click="CloseWelcome_Click"
-                                Style="{StaticResource Welcome.DismissButton}" />
-                    </Border>
-                </Grid>
-            </Grid>
-        </Grid>
+        <views:ProjectReaderView x:Name="ProjectReader" Panel.ZIndex="210" Visibility="Collapsed"
+                                 DismissRequested="CloseProjectReader_Requested" />
 
         <views:OnboardingView x:Name="OnboardingOverlay" Panel.ZIndex="220" Visibility="Collapsed" />
 
-        <Grid x:Name="ForcedStartOverlay" Panel.ZIndex="230" Visibility="Collapsed" Focusable="True"
-              KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
+        <Grid x:Name="ForcedStartOverlay" Panel.ZIndex="230" Visibility="Collapsed"
               Background="{DynamicResource Brush.Overlay.Modal}" AutomationProperties.Name="强制定时启动">
-            <views:ShadowBorder Width="400" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Padding="24" Background="{DynamicResource Brush.Surface}"
-                    BorderBrush="{DynamicResource Brush.Dialog.Border}" BorderThickness="1"
-                    CornerRadius="{StaticResource Radius.Section}" Shadow="{DynamicResource Effect.Dialog}">
-                <StackPanel>
-                    <TextBlock Text="强制定时启动" FontSize="16" FontWeight="SemiBold"
-                               Foreground="{DynamicResource Brush.Text.Primary}" />
-                    <TextBlock x:Name="ForcedStartText" Margin="0,8,0,14" TextWrapping="Wrap" LineHeight="22"
-                               Foreground="{DynamicResource Brush.Text.Secondary}" />
-                    <Grid Height="4" Background="{DynamicResource Brush.Progress.Track}">
-                        <Border Background="{DynamicResource Brush.Warning}">
-                            <Border.RenderTransform>
-                                <ScaleTransform x:Name="ForcedStartFillScale" />
-                            </Border.RenderTransform>
-                        </Border>
-                    </Grid>
-                    <Grid Margin="0,16,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="取消后，当前任务继续运行" VerticalAlignment="Center"
-                                   Style="{StaticResource MutedTextStyle}" />
-                        <Button x:Name="ForcedStartCancelButton" Grid.Column="1" Content="取消" MinWidth="88"
-                                Height="36" Style="{StaticResource Update.PrimaryButton}"
-                                Click="ForcedStartCancel_Click" AutomationProperties.Name="取消强制定时启动" />
-                    </Grid>
-                </StackPanel>
-            </views:ShadowBorder>
+            <views:WindowDialog x:Name="ForcedStartDialog" Width="400" MaxHeight="560" Margin="24"
+                                HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Grid>
+        <Grid x:Name="PromptOverlay" Panel.ZIndex="240" Visibility="Collapsed"
+              Background="{DynamicResource Brush.Overlay.Modal}">
+            <views:WindowDialog x:Name="PromptDialog" Width="420" MaxHeight="560" Margin="24"
+                                HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
     </Grid>
 </ui:FluentWindow>

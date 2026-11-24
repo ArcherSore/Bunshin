@@ -70,7 +70,7 @@ internal sealed record SettingsDefinition
                     || item.Type != SettingsItemKind.Choice && item.ChoiceKey is not null
                     || item.Type != SettingsItemKind.Action
                         && (item.ActionId is not null || item.ButtonText is not null)
-                    || item.Type != SettingsItemKind.Info && item.ValueKey is not null) {
+                    || item.Type is not (SettingsItemKind.Info or SettingsItemKind.About) && item.ValueKey is not null) {
                     throw new InvalidDataException($"Settings item {item.Id} 包含不属于 {item.Type} 的绑定字段。");
                 }
             }

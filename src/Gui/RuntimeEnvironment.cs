@@ -42,7 +42,7 @@ internal sealed class RuntimeEnvironment
     {
         get;
         set {
-            // A cancelled exit also invalidates answers still on the modal dispatcher stack.
+            // A cancelled exit also invalidates answers to confirmations that were already pending.
             if (value && !field) _closingGeneration++;
             field = value;
         }
@@ -150,10 +150,14 @@ internal sealed class RuntimeEnvironment
 
     // User exit asks before announcing that it is closing. Once accepted, teardown or install handoff stays
     // inside the gate so no queued operation can start between ending the environment and closing the GUI.
-    internal async Task<EnvironmentEndResult> EndAsync(
-        Func<bool>? confirm = null, Func<EnvironmentEndResult, Task>? inGate = null, Action? onAccepted = null)
+    internal Task<EnvironmentEndResult> EndAsync(
+        Func<bool>? confirm = null, Func<EnvironmentEndResult, Task>? inGate = null, Action? onAccepted = null) =>
+        EndWithConfirmationAsync(confirm is null ? null : () => Task.FromResult(confirm()), inGate, onAccepted);
+
+    internal async Task<EnvironmentEndResult> EndWithConfirmationAsync(
+        Func<Task<bool>>? confirm, Func<EnvironmentEndResult, Task>? inGate = null, Action? onAccepted = null)
     {
-        if (confirm is not null && ConfirmEnd(confirm) is { } refused) return refused;
+        if (confirm is not null && await ConfirmEndAsync(confirm) is { } refused) return refused;
         onAccepted?.Invoke();
         var result = EnvironmentEndResult.Ended;
         await RunGatedAsync(async () => {
@@ -166,7 +170,10 @@ internal sealed class RuntimeEnvironment
     }
 
     // The tray and main window share one request through both the question and the wait for the gate.
-    internal Task<EnvironmentEndResult>? RequestEnd(Func<bool> confirm)
+    internal Task<EnvironmentEndResult>? RequestEnd(Func<bool> confirm) =>
+        RequestEndWithConfirmation(() => Task.FromResult(confirm()));
+
+    internal Task<EnvironmentEndResult>? RequestEndWithConfirmation(Func<Task<bool>> confirm)
     {
         if (_manualEnd != ManualEndStage.None) {
             _logger.Info("结束桌面分身：已有结束请求，忽略重复请求。");
@@ -176,12 +183,12 @@ internal sealed class RuntimeEnvironment
         return RequestedEndAsync(confirm);
     }
 
-    private async Task<EnvironmentEndResult> RequestedEndAsync(Func<bool> confirm)
+    private async Task<EnvironmentEndResult> RequestedEndAsync(Func<Task<bool>> confirm)
     {
         try {
             ThrowIfRefused(refuseWhileClosing: true);
             var generation = _closingGeneration;
-            if (ConfirmEnd(confirm) is { } refused) return refused;
+            if (await ConfirmEndAsync(confirm) is { } refused) return refused;
             _manualEnd = ManualEndStage.Accepted;
             var result = EnvironmentEndResult.Ended;
             await RunExclusiveAsync(async () => {
@@ -195,7 +202,7 @@ internal sealed class RuntimeEnvironment
     }
 
     // An in-flight preparation may still create an environment before this request gets the gate.
-    private EnvironmentEndResult? ConfirmEnd(Func<bool> confirm)
+    private async Task<EnvironmentEndResult?> ConfirmEndAsync(Func<Task<bool>> confirm)
     {
         try {
             if (_gate.CurrentCount != 0 && !HasEnvironment()) return null;
@@ -203,7 +210,7 @@ internal sealed class RuntimeEnvironment
             return Unconfirmed("无法确认桌面分身状态。", exception);
         }
         var generation = _closingGeneration;
-        var accepted = confirm();
+        var accepted = await confirm();
         if (generation != _closingGeneration) return EnvironmentEndResult.Declined;
         if (accepted) return null;
         _logger.Info("结束桌面分身：用户取消。");

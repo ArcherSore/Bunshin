@@ -18,10 +18,9 @@ internal static partial class SelfTestRunner
         internal int HelloReads;
         internal RunPresentation Presentation => new() {
             RequiresWindowsHello = () => { HelloReads++; return true; },
-            ShowError = (_, operation, error, message, _) => {
+            ShowError = (operation, error, message) => {
                 Dialogs.Add((operation, error, message));
                 DuringDialog?.Invoke();
-                return MessageBoxResult.No;
             },
             ShowBalloon = notice => { Balloons.Add(notice); return true; }
         };

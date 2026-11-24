@@ -124,7 +124,7 @@ internal static partial class SelfTestRunner
         var items = page.Sections.SelectMany(section => section.Items).ToArray();
         if (items.Single(item => item.Definition.SettingKey == "update.checkOnStartup").Toggle
                 != settings.CheckOnStartup
-            || items.Single(item => item.Definition.ValueKey == "update.currentVersion").Value
+            || items.Single(item => item.Definition.Id == "current-version").Value
                 != settings.CurrentVersion) {
             throw new InvalidOperationException("内置 Settings Definition 的 section/item/key 映射不完整。");
         }
@@ -240,7 +240,7 @@ internal static partial class SelfTestRunner
             var view = (SettingsView)window.FindName("SettingsView");
             var page = SettingsPageFor(window);
             var version = page.Sections.SelectMany(section => section.Items)
-                .Single(item => item.Definition.ValueKey == "update.currentVersion").Value!;
+                .Single(item => item.Definition.Id == "current-version").Value!;
             var toggle = SettingsVisualDescendants(view).OfType<Wpf.Ui.Controls.ToggleSwitch>()
                 .Single(control => System.Windows.Automation.AutomationProperties.GetAutomationId(control)
                     == "startup-update-check");
@@ -326,7 +326,7 @@ internal static partial class SelfTestRunner
             window.Height = window.MinHeight;
             ClickOnboarding(window, "SettingsNavigationItem");
             var view = (SettingsView)window.FindName("SettingsView");
-            var list = (System.Windows.Controls.ListBox)view.FindName("SectionNavigation");
+            var list = window.Sidebar.SectionNavigation;
             var scroller = (ScrollViewer)view.FindName("SectionScroller");
             var sections = SettingsPageFor(window).Sections;
             Require(list.SelectedIndex == 0, "进入设置时目录应选中第一个分类。");
@@ -404,7 +404,7 @@ internal static partial class SelfTestRunner
             PumpOnboarding();
             Expect("准备失败应写目标版本、下载量和诊断", "准备更新 [target=8.0.0] | enter",
                 "准备更新失败 [target=8.0.0] [downloaded=10/20] [engine=exit=1 code=network_error]");
-            Require(((TextBlock)window.FindName("UpdateDownloadStatus")).Text == "界面文字", "诊断不应出现在下载状态中。");
+            Require(Named<TextBlock>(window.UpdateDialog, "UpdateDownloadStatus").Text == "界面文字", "诊断不应出现在下载状态中。");
 
             // Progress<T> posts its callback, so a prepare that ends at once finishes before that callback has run.
             prepare = new TaskCompletionSource<string>();

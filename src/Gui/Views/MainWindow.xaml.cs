@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -19,7 +19,6 @@ using Updates;
 using Gui.Worker;
 using WpfSymbol = Wpf.Ui.Controls.SymbolRegular;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
-using WpfMessageBox = System.Windows.MessageBox;
 using FluentWindow = Wpf.Ui.Controls.FluentWindow;
 
 namespace Gui.Views;
@@ -99,7 +98,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
-        ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
             HandleOperationError);
         TaskPlanEditor.PlanEdited += (_, _) => {
@@ -155,6 +153,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        InitializeWindowPrompts();
         InitializeForcedStartDialog();
         KeyDown += MainWindow_KeyDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
@@ -182,6 +181,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
             _exitGeneration++;
+            CancelEnvironmentConfirmation();
             _forcedStartCountdown?.TrySetResult(false);
             _workerReadyWait?.Cancel();
             EndOnboarding(handled: false);
@@ -197,6 +197,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     internal void CommitExit()
     {
         if (_closingId is Guid id) _lifecycle.Apply(new LifecycleEvent.ClosingCommitted(id));
+        DispatchUnshownErrorsToTray();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -284,6 +285,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
         if (_allowClose) {
             _lifecycle.Dispose();
+            CloseWindowPrompts();
             _environment.PendingLifecycleStart = null;
             _onboardingClosed = true;
             EndOnboarding(handled: false);
@@ -318,6 +320,9 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private void SwitchSection(MainSection section)
     {
         CancelRuntimeSidebarDrag();
+        if (section == MainSection.Settings && _section != MainSection.Settings) {
+            _sectionBeforeSettings = _section;
+        }
         _section = section;
         CloseTaskDescriptionDrawer();
         HomeView.Visibility = section == MainSection.Home
@@ -623,6 +628,10 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void MainWindow_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (PromptOverlay.Visibility == Visibility.Visible) {
+            e.Handled = HandleWindowPromptKey(e);
+            return;
+        }
         if (!IsOnboardingVisible && !IsGlobalModalOpen && TaskDescriptionOverlay.Visibility != Visibility.Visible
             && HandleSidebarShortcut(e)) {
             e.Handled = true;
@@ -647,8 +656,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Escape && WelcomeOverlay.Visibility == Visibility.Visible) {
-            CloseWelcome();
+        if (e.Key == Key.Escape && ProjectReader.Visibility == Visibility.Visible) {
+            CloseProjectReader();
             e.Handled = true;
             return;
         }
@@ -708,8 +717,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         } catch (Exception exception) {
             _settings.OpenAfdian.Status = "无法打开爱发电，请检查默认浏览器设置。";
             _logger.Warn("打开爱发电赞助页面失败。", exception);
-            WpfMessageBox.Show(this, $"请手动访问：{address}\n\n按 Ctrl+C 可复制此提示中的网址。",
-                "无法打开爱发电", MessageBoxButton.OK, MessageBoxImage.Information);
+            return QueueWindowPrompt(new("无法打开爱发电",
+                $"请手动访问：{address}\n\n按 Ctrl+C 可复制此提示中的网址。", CopyText: address));
         }
         return Task.CompletedTask;
     }
@@ -776,7 +785,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         } catch (Exception exception) when (unattended) {
             ReportUnattendedFailure($"{OperationLabel(pending)}失败", exception);
         } catch (Exception exception) {
-            HandleOperationError($"{OperationLabel(pending)}失败", exception);
+            await PresentOperationErrorAsync($"{OperationLabel(pending)}失败", exception);
         } finally {
             SetPendingOperation(PendingOperation.None);
         }
@@ -793,18 +802,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     };
 
     private void HandleOperationError(string operation, Exception exception) =>
-        PresentOperationError(operation, exception);
+        _ = PresentOperationErrorAsync(operation, exception);
 
-    private void PresentOperationError(string operation, Exception exception, string? detail = null)
+    private Task<bool> PresentOperationErrorAsync(string operation, Exception exception, string? detail = null)
     {
         _logger.Error($"{operation}。", exception);
-        var helloGuidance = GetWindowsHelloGuidance(
-            operation, exception, _presentation.RequiresWindowsHello());
-        if (helloGuidance is not null) {
-            _presentation.ShowError(this, operation, exception, helloGuidance, MessageBoxButton.OK);
-            return;
-        }
-        ShowActionableError(operation, exception, GetRecoveryGuidance(operation), offerLogDirectory: true, detail);
+        var helloGuidance = CanShowWindowPrompt
+            ? GetWindowsHelloGuidance(operation, exception, _presentation.RequiresWindowsHello()) : null;
+        var message = helloGuidance ?? $"{detail ?? exception.GetBaseException().Message}\n\n{GetRecoveryGuidance(operation)}";
+        return ShowErrorPromptAsync(operation, message, exception, offerLogs: true);
     }
 
     internal static string? GetWindowsHelloGuidance(string operation, Exception exception, bool windowsHelloOnly)
@@ -962,16 +968,22 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
+        RefreshWindowPrompts();
         ReevaluateOnboarding();
         if (IsVisible) {
             _ = CheckScheduledRunsAsync();
         }
     }
 
-    private void MainWindow_StateChanged(object? sender, EventArgs e) => ReevaluateOnboarding();
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        RefreshWindowPrompts();
+        ReevaluateOnboarding();
+    }
 
     private bool IsGlobalModalOpen => UpdateOverlay.Visibility == Visibility.Visible
-        || WelcomeOverlay.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible;
+        || ProjectReader.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible
+        || PromptOverlay.Visibility == Visibility.Visible;
 
     private void EnsureModalWindowHook()
     {
@@ -1117,20 +1129,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private string ActiveConfigurationName => _projectPlan is { } project
         ? project.Configurations.Single(item => item.Id == project.ActiveConfigurationId).Name : string.Empty;
 
-    private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory, string? detail = null)
-    {
-        var message = $"{detail ?? exception.GetBaseException().Message}\n\n{recovery}";
-        if (!offerLogDirectory) {
-            _presentation.ShowError(null, title, exception, message, MessageBoxButton.OK);
-            return;
-        }
-
-        var answer = _presentation.ShowError(null, title, exception, $"{message}\n\n是否打开日志目录查看详细信息？",
-            MessageBoxButton.YesNo);
-        if (answer == MessageBoxResult.Yes) {
-            TryOpenLogsDirectory();
-        }
-    }
+    private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory) =>
+        _ = ShowErrorPromptAsync(title, $"{exception.GetBaseException().Message}\n\n{recovery}", exception, offerLogDirectory);
 
     private static T? FindVisualChild<T>(DependencyObject parent)
         where T : DependencyObject
