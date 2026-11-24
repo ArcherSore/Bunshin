@@ -78,7 +78,8 @@ internal static partial class SelfTestRunner
             EndTour(window);
             var home = Named<Grid>(window, "HomeView");
             var column = Named<ColumnDefinition>(window, "RuntimeSidebarColumn");
-            var splitter = Named<GridSplitter>(window, "RuntimeSidebarSplitter");
+            var splitter = Named<Thumb>(window, "RuntimeSidebarSplitter");
+            double pointerX = 0;
             var console = Named<FrameworkElement>(window, "RuntimeSidebar");
             var control = Named<FrameworkElement>(window, "RuntimeControlCard");
             var log = Named<FrameworkElement>(window, "HomeLogListBox");
@@ -88,7 +89,7 @@ internal static partial class SelfTestRunner
             double? Saved() => File.Exists(preference) ? double.Parse(File.ReadAllText(preference),
                 System.Globalization.CultureInfo.InvariantCulture) : null;
             Require(Saved() is null && Math.Abs(column.Width.Value - Math.Min(
-                    MainWindow.SidebarWidth(LayoutInformation.GetLayoutSlot(home).Width) + console.Margin.Right,
+                    MainWindow.SidebarWidth(LayoutInformation.GetLayoutSlot(home).Width),
                     column.MaxWidth)) < 1, "首次使用应保持默认侧栏宽度，且不写入偏好。");
 
             // Small screens start the sidebar at its minimum; widen it first so it can move both ways.
@@ -109,7 +110,7 @@ internal static partial class SelfTestRunner
             // Window resizing must clamp the displayed width without discarding the user's wider preference.
             Drag(-10000);
             var widest = console.ActualWidth;
-            Require(Math.Abs(widest - Math.Min(540, column.MaxWidth - console.Margin.Right)) < 1,
+            Require(Math.Abs(widest - Math.Min(540, column.MaxWidth)) < 1,
                 "右侧栏应有最大宽度边界。");
             window.Width = 920;
             window.Height = 640;
@@ -139,9 +140,32 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "HomeNavigationItem");
             Require(Math.Abs(console.ActualWidth - widest) < 1, "返回首页且空间恢复后应恢复用户宽度。");
 
-            Drag(10000);
-            Require(Math.Abs(console.ActualWidth - 340) < 1, "右侧栏应有最小宽度边界。");
+            Drag(widest - 340 + 35);
+            Require(Math.Abs(console.ActualWidth - 340) < PixelTolerance, "运行面板应有最小宽度边界。");
             AssertLayout();
+
+            StartDrag();
+            MoveDrag(78);
+            Require(console.IsVisible && Math.Abs(console.ActualWidth - 340) < PixelTolerance,
+                "到达折叠阈值之前，应保持最小宽度。");
+            MoveDrag(4);
+            Require(!console.IsVisible && splitter.IsVisible, "越过折叠阈值后应隐藏面板并保留拖宽边缘。");
+            MoveDrag(-78);
+            Require(!console.IsVisible, "反向拖动未达到展开阈值时，应保持折叠。");
+            MoveDrag(-4);
+            Require(console.IsVisible && Math.Abs(console.ActualWidth - 340) < PixelTolerance,
+                "在同一次拖动中反向越过阈值，应展开到最小宽度。");
+            EndDrag();
+
+            ClickOnboarding(window, "RuntimePanelToggleButton");
+            Require(!console.IsVisible && splitter.IsVisible, "页眉收起面板后应保留拖宽边缘。");
+            Drag(-82);
+            Require(console.IsVisible && Math.Abs(console.ActualWidth - 340) < PixelTolerance,
+                "从右侧边缘向左拖动应展开页眉收起的面板。");
+            Drag(82);
+            Require(!console.IsVisible, "松手后应保留拖动折叠状态。");
+            ClickOnboarding(window, "RuntimePanelToggleButton");
+            Require(console.IsVisible, "页眉按钮应可展开拖动折叠的面板。");
             Drag(-80);
             var preferred = console.ActualWidth;
             foreach (var width in new[] { 920, 1180, 1440 }) {
@@ -156,8 +180,8 @@ internal static partial class SelfTestRunner
             }
 
             KeyDown(System.Windows.Input.Key.Left);
-            Require(Math.Abs(console.ActualWidth - (preferred + splitter.KeyboardIncrement)) < 1,
-                "原生方向键应可调整侧栏宽度。");
+            Require(Math.Abs(console.ActualWidth - (preferred + 10)) < 1,
+                "左右方向键应可调整运行面板宽度。");
             Require(Saved() != column.Width.Value, "方向键调整过程中不应写入侧栏宽度。");
             splitter.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, splitter, null) {
                 RoutedEvent = Keyboard.LostKeyboardFocusEvent
@@ -176,13 +200,17 @@ internal static partial class SelfTestRunner
             AssertLayout();
             persisted = Saved()!.Value;
 
-            void StartDrag() => splitter.RaiseEvent(new DragStartedEventArgs(0, 0) {
-                RoutedEvent = Thumb.DragStartedEvent
-            });
+            void StartDrag()
+            {
+                pointerX = splitter.TranslatePoint(new Point(), window).X;
+                splitter.RaiseEvent(new DragStartedEventArgs(0, 0) { RoutedEvent = Thumb.DragStartedEvent });
+            }
 
             void MoveDrag(double change)
             {
-                splitter.RaiseEvent(new DragDeltaEventArgs(change, 0) { RoutedEvent = Thumb.DragDeltaEvent });
+                pointerX += change;
+                var offset = pointerX - splitter.TranslatePoint(new Point(), window).X;
+                splitter.RaiseEvent(new DragDeltaEventArgs(offset, 0) { RoutedEvent = Thumb.DragDeltaEvent });
                 PumpOnboarding();
             }
 
@@ -230,9 +258,8 @@ internal static partial class SelfTestRunner
             RunOnboardingScenario(logger, Path.Combine(testDirectory, $"sidebar-{name}"), (window, directory) => {
                 var home = Named<Grid>(window, "HomeView");
                 var column = Named<ColumnDefinition>(window, "RuntimeSidebarColumn");
-                var margin = Named<FrameworkElement>(window, "RuntimeSidebar").Margin.Right;
                 var expected = name == "restore-invalid"
-                    ? Math.Min(MainWindow.SidebarWidth(LayoutInformation.GetLayoutSlot(home).Width) + margin,
+                    ? Math.Min(MainWindow.SidebarWidth(LayoutInformation.GetLayoutSlot(home).Width),
                         column.MaxWidth)
                     : Math.Clamp(double.Parse(content, System.Globalization.CultureInfo.InvariantCulture),
                         column.MinWidth, column.MaxWidth);

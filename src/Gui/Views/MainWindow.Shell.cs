@@ -32,8 +32,7 @@ public partial class MainWindow
         RegisterName("RuntimePanelToggleButton", Header.Actions);
         _settings.RuntimePanelCollapsed.PropertyChanged += (_, e) => {
             if (e.PropertyName == nameof(_settings.RuntimePanelCollapsed.Value)) {
-                RuntimeSidebarVisibility(_section);
-                UpdateSidebarMode(MainWindowContent.ActualWidth);
+                UpdateRuntimePanelLayout();
             }
         };
         MainWindowContent.SizeChanged += (_, e) => UpdateSidebarMode(e.NewSize.Width);
@@ -44,7 +43,7 @@ public partial class MainWindow
     private void UpdateSidebarMode(double width)
     {
         var minimumContentWidth = HomeView.ColumnDefinitions[0].MinWidth
-            + (RuntimePanelHidden ? 0 : MinimumRuntimeSidebarWidth + RuntimeSidebar.Margin.Right);
+            + (RuntimePanelHidden ? 0 : MinimumRuntimeSidebarWidth);
         var overlay = width < minimumContentWidth + ShellSidebar.ExpandedWidth;
         if (overlay == _sidebarOverlayMode) {
             return;
@@ -55,13 +54,16 @@ public partial class MainWindow
         ShowSidebar(overlay || _settings.SidebarCollapsed.Value);
     }
 
-    private bool RuntimePanelCollapsed => _settings.RuntimePanelCollapsed.Value;
+    private bool RuntimePanelCollapsed => _runtimeSidebarDrag?.Collapsed ?? _settings.RuntimePanelCollapsed.Value;
     private bool OnboardingNeedsRuntimePanel => _onboardingActive && _onboardingStep >= 2;
     private bool RuntimePanelHidden => RuntimePanelCollapsed && !OnboardingNeedsRuntimePanel;
     private System.Windows.Controls.Button RuntimePanelToggleButton => (System.Windows.Controls.Button)Header.Actions!;
 
-    private void RuntimePanelToggleButton_Click(object sender, RoutedEventArgs e) =>
+    private void RuntimePanelToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        CancelRuntimeSidebarDrag();
         _settings.RuntimePanelCollapsed.Value = !RuntimePanelCollapsed;
+    }
 
     private void ShowRuntimePanelToggle(bool home)
     {
