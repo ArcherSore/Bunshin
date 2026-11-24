@@ -35,11 +35,15 @@ internal static partial class SelfTestRunner
             menu.PlacementTarget = (UIElement)window.Content;
             menu.IsOpen = true;
             PumpUntil(() => menu.IsOpen && danger.IsLoaded, "托盘菜单应能打开。");
-            Require(first.Foreground is SolidColorBrush normal
-                    && danger.Foreground is SolidColorBrush red
+            var normalText = SettingsVisualDescendants(first).OfType<TextBlock>().Single();
+            var dangerText = SettingsVisualDescendants(danger).OfType<TextBlock>().Single();
+            Require(normalText.Foreground is SolidColorBrush normal
+                    && dangerText.Foreground is SolidColorBrush red
                     && normal.Color == ((SolidColorBrush)app.Resources["Brush.Text.Primary"]).Color
                     && red.Color == ((SolidColorBrush)app.Resources["Brush.Error.Foreground"]).Color,
-                "普通项和危险项应取主题里的文字色。");
+                "普通项和危险项实际显示的文字应使用主题里的对应颜色。");
+            Require(normalText.FontSize == 14 && dangerText.FontSize == 14,
+                "托盘菜单的普通项和危险项应与画板使用相同的 14 DIP 字号。");
             danger.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Require(invoked.SequenceEqual(["乙"]) && logged.SequenceEqual(["乙"]), "点击菜单项应执行对应动作并记录。");
         } finally {
