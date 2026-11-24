@@ -4,15 +4,12 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using Shape = System.Windows.Shapes.Shape;
-using Ellipse = System.Windows.Shapes.Ellipse;
 using System.Windows.Threading;
 using Gui.Infrastructure;
 using ProjectModel;
 using Protocol;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
-using WpfComboBox = System.Windows.Controls.ComboBox;
 using WpfCursors = System.Windows.Input.Cursors;
 using WpfDataObject = System.Windows.DataObject;
 using WpfDragEventArgs = System.Windows.DragEventArgs;
@@ -49,11 +46,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     private readonly List<Border> _dropIndicators = [];
     private readonly Dictionary<(PlanItemKind Kind, string Name), Border> _planItemContainers = [];
     private readonly Dictionary<(PlanItemKind Kind, string Name), FrameworkElement> _taskDescriptionButtons = [];
-    private readonly List<(StackPanel Preview, ProjectTaskChoice Task)> _planItemPreviews = [];
+    private readonly List<(TextBlock Preview, Border Container, ProjectTaskChoice Task)> _planItemPreviews = [];
 
     private readonly Dictionary<(Guid, string, string), InputDraft> _invalidInputDrafts = new();
-    private readonly Dictionary<(Guid, string, string), WpfTextBox> _optionInputEditors = new();
-    private readonly Dictionary<string, InspectorRowView> _inspectorRows = new(StringComparer.Ordinal);
+    private readonly List<InspectorRowView> _inspectorRows = [];
     private System.Windows.Data.Binding? _configurationEditableBinding;
     private static readonly string[] SwitchOnCaseNames = ["Yes", "Y", "On", "True", "Enable", "Enabled"];
 
@@ -66,10 +62,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     {
         internal (Guid, string, string) Key => (ConfigurationId, OptionName, InputName);
     }
-
-    // The parts of a shown inspector row that change in place when a value is saved or a draft appears.
-    private sealed record InspectorRowView(
-        ParameterRowPanel Row, StackPanel CaseNotes, IReadOnlyDictionary<string, StackPanel> InputNotes);
 
     // What a replayed tour changes and puts back: the expanded card, the task shelf and the plan's scroll position.
     internal sealed record PlanView((PlanItemKind Kind, string Name)? ExpandedTask, bool TaskShelfExpanded,
@@ -334,16 +326,20 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             return false;
         }
         var match = project.EnabledItems.OrderBy(task => IsExpanded(task) ? 0 : 1)
-            .SelectMany(task => DeriveInspectorRows(task.Name, GetConfigurationOrEmpty(task.Name, task.Kind),
-                shared: false, task.Kind).Where(row => row.IsInvalid).Select(row => (Task: task, Row: row)))
+            .SelectMany(task => ParameterInspector.Flatten(DeriveInspectorRows(GetConfigurationOrEmpty(task.Name, task.Kind)))
+                .Where(row => row.IsInvalid).Select(row => (Task: task, Row: row)))
             .FirstOrDefault();
         if (match.Task is null) {
             return false;
         }
         var option = match.Row.Option.Name;
         var field = match.Row.Inputs.FirstOrDefault(input => input.Error is not null);
-        FrameworkElement? Target() => field is null ? _inspectorRows.GetValueOrDefault(option)?.Row
-            : _optionInputEditors.GetValueOrDefault((project.ActiveConfigurationId, option, field.Input.Name));
+        FrameworkElement? Target()
+        {
+            var view = InspectorViews(_inspectorRows).FirstOrDefault(row => row.OptionName == option);
+            return field is null ? view?.Selector ?? (FrameworkElement?)view?.Row
+                : view?.Inputs.GetValueOrDefault(field.Input.Name)?.Editor;
+        }
         if (!IsExpanded(match.Task) || Target() is null) {
             _expandedTask = (match.Task.Kind, match.Task.Name);
             RenderTaskPlan();
@@ -401,7 +397,8 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
 
     private void OptionInputTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        if (sender is WpfTextBox editor) {
+        if (sender is WpfTextBox editor
+            && (e.NewFocus is not DependencyObject focused || !editor.IsAncestorOf(focused))) {
             _ = CommitOptionInput(editor);
         }
     }
@@ -409,6 +406,9 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     // Enter submits like losing focus; Esc abandons an unsaved or invalid edit and puts the saved value back.
     private void OptionInputTextBox_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (e.OriginalSource is WpfButton) {
+            return;
+        }
         if (e.Key == Key.Enter && sender is WpfTextBox { Tag: OptionInputTag } submitted) {
             _ = CommitOptionInput(submitted);
             e.Handled = true;
@@ -431,8 +431,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     {
         if (message is null) {
             editor.ClearValue(BorderBrushProperty);
+            editor.ClearValue(BackgroundProperty);
         } else {
             editor.SetResourceReference(BorderBrushProperty, "Brush.Error");
+            editor.SetResourceReference(BackgroundProperty, "Brush.Canvas");
         }
         AutomationProperties.SetItemStatus(editor, message ?? string.Empty);
     }
@@ -450,10 +452,9 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         }
 
         try {
-            var before = GetExpandedOptionNames();
             save(RequireProject());
             PlanEdited?.Invoke(this, EventArgs.Empty);
-            RefreshAfterOptionSaved(!before.SequenceEqual(GetExpandedOptionNames()));
+            RefreshAfterOptionSaved();
             _logger.Info($"已保存 explicit case：option={optionName}。 ");
         } catch (Exception exception) {
             _editFailed("保存 select/switch/checkbox option 失败", exception);
@@ -504,28 +505,11 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         ConfigurationValidated?.Invoke(this, valid);
     }
 
-    // Option edits never change the task shelf. Plan cards are rebuilt only when nested options appear or
-    // vanish; otherwise the edited control stays in place and keeps its animation and focus.
-    private void RefreshAfterOptionSaved(bool rebuildCards)
+    private void RefreshAfterOptionSaved()
     {
-        var project = RequireProject();
-        if (rebuildCards) {
-            _updatingOptionEditors = true;
-            try {
-                RenderPlanItems(project);
-            } finally {
-                _updatingOptionEditors = false;
-            }
-        } else {
-            RefreshParameterDisplays();
-        }
-        RefreshConfigurationValidity(project);
+        RefreshParameterDisplays();
+        RefreshConfigurationValidity(RequireProject());
     }
-
-    private string[] GetExpandedOptionNames() => _expandedTask is not { } expanded ? []
-        : DeriveInspectorRows(expanded.Name, GetConfigurationOrEmpty(expanded.Name, expanded.Kind),
-            shared: false, expanded.Kind)
-            .Select(row => row.Option.Name).ToArray();
 
     private void RenderAvailableTaskShelf(ProjectPlanModule project)
     {
@@ -656,7 +640,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         _planItemContainers.Clear();
         _planItemPreviews.Clear();
         _taskDescriptionButtons.Clear();
-        _optionInputEditors.Clear();
         _inspectorRows.Clear();
         var items = project.SelectedItems;
         EmptyPlanPanel.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -699,14 +682,14 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        layout.Children.Add(CreatePlanItemHeader(task, expanded, hasParameters, configuration));
+        layout.Children.Add(CreatePlanItemHeader(task, expanded, hasParameters, configuration, container));
 
         if (expanded) {
             var editor = new Border {
                 Style = (Style)FindResource("ParameterEditorStyle")
             };
             var remove = new WpfButton {
-                Tag = task, Height = 32, MinHeight = 0, Margin = new Thickness(0, 12, 0, 0),
+                Tag = task, Height = 32, MinHeight = 0, Margin = new Thickness(0, 10, -8, 0),
                 Padding = new Thickness(10, 0, 6, 0), FontWeight = FontWeights.Normal,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
                 Style = (Style)FindResource("SubtleButtonStyle")
@@ -729,16 +712,16 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                         .FirstOrDefault()?.Trim() ?? string.Empty,
                     TextWrapping = TextWrapping.Wrap,
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxHeight = 42, Margin = new Thickness(0, 0, 0, 12),
+                    MaxHeight = 42, Margin = new Thickness(0, 0, 0, 14),
                     Style = (Style)FindResource("MutedTextStyle")
                 };
                 body.Children.Add(description);
             }
-            body.Children.Add(CreateParameterInspector(task.Name, configuration, task.Kind));
+            body.Children.Add(CreateParameterInspector(configuration));
             body.Children.Add(remove);
             editor.Child = body;
             container.SizeChanged += (_, args) =>
-                editor.Padding = new Thickness(args.NewSize.Width >= 420 ? 50 : 16, 2, 12, 12);
+                editor.Padding = new Thickness(args.NewSize.Width >= 420 ? 50 : 16, 0, 16, 14);
             Grid.SetRow(editor, 1);
             layout.Children.Add(editor);
         }
@@ -747,7 +730,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     }
 
     private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, bool hasParameters,
-        ProjectConfigurationView configuration)
+        ProjectConfigurationView configuration, Border container)
     {
         var header = new Grid {
             MinHeight = 40,
@@ -781,17 +764,15 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             title.Children.Add(chevron);
         }
         title.Children.Add(CreatePlanRowTitle(task.Label, task.Kind, expanded));
-        var preview = new StackPanel {
-            Orientation = WpfOrientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(10, 0, 0, 0),
-            ClipToBounds = true
-        };
-        if (!expanded && configuration.TaskOptions.Count != 0) {
-            _planItemPreviews.Add((preview, task));
-            FillParameterPreview(preview, configuration);
+        if (!expanded && hasParameters) {
+            var preview = new TextBlock {
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            _planItemPreviews.Add((preview, container, task));
+            FillParameterPreview(preview, configuration, container);
+            title.Children.Add(preview);
         }
-        title.Children.Add(preview);
         var main = new WpfButton {
             Tag = task, Content = title,
             Padding = new Thickness(12, 0, 6, 0),
@@ -875,388 +856,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         };
         Grid.SetColumn(selection, 1);
         return selection;
-    }
-
-    // Drafts are those of the active configuration; sharing is only worked out for the expanded card.
-    private IReadOnlyList<InspectorRow> DeriveInspectorRows(
-        string taskName, ProjectConfigurationView configuration, bool shared, PlanItemKind kind)
-    {
-        var project = RequireProject();
-        var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == project.ActiveConfigurationId)
-            .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value);
-        (string, ProjectConfigurationView)[] others = !shared ? [] : project.SelectedItems
-            .Where(task => task.Name != taskName || task.Kind != kind)
-            .Select(task => (task.Label, GetConfigurationOrEmpty(task.Name, task.Kind))).ToArray();
-        return ParameterInspector.Derive(configuration, drafts, others);
-    }
-
-    // Like MXU, a folded card previews up to three options declared directly on the task.
-    private void FillParameterPreview(StackPanel preview, ProjectConfigurationView configuration)
-    {
-        preview.Children.Clear();
-        var configurationId = RequireProject().ActiveConfigurationId;
-        var shownOptions = 0;
-        foreach (var option in configuration.TaskOptions) {
-            var label = ParameterInspector.GetOptionLabel(option);
-            var invalid = option.StartBlocker is not null;
-            var isSwitch = option.Kind == ProjectOptionKind.Switch;
-            var isOn = isSwitch && option.SelectedCase == GetSwitchCases(option).On.Name;
-            string value;
-            if (option.Kind == ProjectOptionKind.Input) {
-                if (option.Inputs.FirstOrDefault() is not { } input) {
-                    continue;
-                }
-                var draft = _invalidInputDrafts.GetValueOrDefault((configurationId, option.Name, input.Name));
-                value = draft?.Text ?? input.Value;
-                invalid = draft is not null || input.Error is not null;
-                if (value.Length == 0 && !invalid) {
-                    continue;
-                }
-                if (input.IsPassword && value.Length != 0) {
-                    value = ProjectInputEditor.PasswordMask;
-                }
-            } else if (isSwitch) {
-                value = isOn ? "开" : "关";
-            } else if (option.Kind == ProjectOptionKind.Checkbox) {
-                value = $"{option.SelectedCases.Count}/{option.Cases.Count}";
-            } else {
-                value = option.Cases.FirstOrDefault(item => item.Name == option.SelectedCase)?.Label ?? string.Empty;
-            }
-
-            if (shownOptions != 0) {
-                preview.Children.Add(new TextBlock {
-                    Text = " · ", FontSize = 14, VerticalAlignment = VerticalAlignment.Center,
-                    Style = (Style)FindResource("MutedTextStyle")
-                });
-            }
-            var tag = new TextBlock {
-                FontSize = 14, MaxWidth = 160,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
-            };
-            tag.SetResourceReference(TextBlock.ForegroundProperty,
-                invalid ? "Brush.Error.Foreground" : "Brush.Text.Muted");
-            if (isSwitch) {
-                tag.Text = ShortenPreview(label, 6);
-                var switchPreview = new StackPanel {
-                    Orientation = WpfOrientation.Horizontal, ToolTip = tag.ToolTip
-                };
-                switchPreview.Children.Add(tag);
-                var dot = new Ellipse {
-                    Width = 6, Height = 6, Margin = new Thickness(4, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                dot.SetResourceReference(Shape.FillProperty, isOn ? "Brush.Tasks.Accent" : "Brush.Text.Muted");
-                switchPreview.Children.Add(dot);
-                preview.Children.Add(switchPreview);
-            } else {
-                tag.Text = $"{ShortenPreview(label, 8)} {ShortenPreview(ParameterInspector.ShowValue(value), 7)}";
-                preview.Children.Add(tag);
-            }
-            if (++shownOptions == 3) {
-                break;
-            }
-        }
-        preview.Visibility = preview.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    private static string ShortenPreview(string text, int limit)
-    {
-        var singleLine = new System.Globalization.StringInfo(text.ReplaceLineEndings(" "));
-        return singleLine.LengthInTextElements <= limit ? singleLine.String
-            : singleLine.SubstringByTextElements(0, limit) + "…";
-    }
-
-    // Saving a value or keeping a draft refreshes folded previews and the open inspector's notes in place, so the
-    // focused editor and a switch's animation are not rebuilt.
-    private void RefreshParameterDisplays()
-    {
-        foreach (var (preview, task) in _planItemPreviews) {
-            FillParameterPreview(preview, GetConfigurationOrEmpty(task.Name, task.Kind));
-        }
-        if (_expandedTask is not { } expanded || _inspectorRows.Count == 0) {
-            return;
-        }
-        foreach (var row in DeriveInspectorRows(expanded.Name, GetConfigurationOrEmpty(expanded.Name, expanded.Kind),
-            shared: false, expanded.Kind)) {
-            if (_inspectorRows.TryGetValue(row.Option.Name, out var view)) {
-                ApplyInspectorRow(view, row);
-            }
-        }
-    }
-
-    private Border CreateParameterInspector(string taskName, ProjectConfigurationView configuration, PlanItemKind kind)
-    {
-        var table = new StackPanel();
-        foreach (var row in DeriveInspectorRows(taskName, configuration, shared: true, kind)) {
-            table.Children.Add(CreateInspectorRow(row, separated: table.Children.Count != 0));
-        }
-        return new Border { Style = (Style)FindResource("Inspector.Table"), Child = table };
-    }
-
-    private ParameterRowPanel CreateInspectorRow(InspectorRow row, bool separated)
-    {
-        var label = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        label.Children.Add(new TextBlock { Text = row.Label, Style = (Style)FindResource("Inspector.Label") });
-        if (!string.IsNullOrWhiteSpace(row.Description)) {
-            label.Children.Add(new TextBlock {
-                Text = row.Description, Style = (Style)FindResource("Inspector.Description")
-            });
-        }
-        if (row.IsGlobal || row.SharedWith.Count != 0) {
-            label.Children.Add(CreateSharedHint(row));
-        }
-        var caseNotes = new StackPanel();
-        var inputNotes = new Dictionary<string, StackPanel>(StringComparer.Ordinal);
-        var value = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        if (row.Kind == ProjectOptionKind.Input) {
-            value.Children.Add(CreateInputCells(row, inputNotes));
-        } else {
-            value.Children.Add(CreateCaseSelector(row));
-            value.Children.Add(caseNotes);
-        }
-        var panel = new ParameterRowPanel {
-            Depth = row.Depth, Separated = separated, Style = (Style)FindResource("Inspector.Row"),
-            Children = {
-                new Border {
-                    Padding = new Thickness(12 + row.Depth * ParameterRowPanel.IndentStep, 8, 12, 8), Child = label
-                },
-                new Border { Padding = new Thickness(10, 6, 10, 6), Child = value }
-            }
-        };
-        if (row.Depth > 0) {
-            panel.SetResourceReference(System.Windows.Controls.Panel.BackgroundProperty, "Brush.Parameter.Nested");
-        }
-        var view = new InspectorRowView(panel, caseNotes, inputNotes);
-        _inspectorRows[row.Option.Name] = view;
-        ApplyInspectorRow(view, row);
-        return panel;
-    }
-
-    private StackPanel CreateSharedHint(InspectorRow row)
-    {
-        var icon = CreateSymbolIcon(WpfSymbolRegular.Link16);
-        icon.Width = icon.Height = icon.FontSize = 12;
-        icon.Margin = new Thickness(0, 0, 4, 0);
-        icon.SetResourceReference(ForegroundProperty, "Brush.Text.Muted");
-        var text = row.IsGlobal ? "所有任务共用" : $"与 {row.SharedWith.Count} 个任务共用";
-        var hint = new StackPanel {
-            Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 2, 0, 0),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left, Background = WpfBrushes.Transparent,
-            ToolTip = row.IsGlobal ? "全局参数：执行计划中的所有任务共用一个值"
-                : $"同一配置中共用一个值：\n{string.Join("、", row.SharedWith)}",
-            Children = { icon, new TextBlock { Text = text, Style = (Style)FindResource("Inspector.Shared") } }
-        };
-        AutomationProperties.SetName(hint, row.IsGlobal ? text : $"{text}：{string.Join("、", row.SharedWith)}");
-        return hint;
-    }
-
-    private FrameworkElement CreateInputCells(InspectorRow row, Dictionary<string, StackPanel> notes)
-    {
-        if (row.Inputs.Count == 1) {
-            var input = row.Inputs[0];
-            notes[input.Input.Name] = new StackPanel();
-            return new StackPanel { Children = { LimitWidth(CreateInputEditor(row, input)), notes[input.Input.Name] } };
-        }
-        var panel = new ParameterInputsPanel();
-        foreach (var input in row.Inputs) {
-            var header = new StackPanel { MinHeight = 20 };
-            header.Children.Add(new TextBlock {
-                Text = input.Label, Style = (Style)FindResource("Inspector.InputLabel")
-            });
-            if (!string.IsNullOrWhiteSpace(input.HelpText)) {
-                header.Children.Add(new TextBlock {
-                    Text = input.HelpText, Style = (Style)FindResource("Inspector.Description")
-                });
-            }
-            notes[input.Input.Name] = new StackPanel();
-            panel.Children.Add(new StackPanel {
-                Children = { header, CreateInputEditor(row, input), notes[input.Input.Name] }
-            });
-        }
-        return panel;
-    }
-
-    // A password is masked and cannot be revealed; a file or folder path can be typed or picked.
-    private FrameworkElement CreateInputEditor(InspectorRow row, InspectorInput input)
-    {
-        var tag = new OptionInputTag(Project!.ActiveConfigurationId, row.Option.Name, input.Input.Name,
-            input.SavedValue, input.Input.PatternMessage);
-        var editor = input.Input.IsPassword
-            ? new Wpf.Ui.Controls.PasswordBox { PasswordChar = '●', RevealButtonEnabled = false }
-            : new Wpf.Ui.Controls.TextBox();
-        editor.Style = (Style)FindResource("Option.TextBox");
-        editor.Tag = tag;
-        editor.ToolTip = input.Input.PatternMessage;
-        SetInputText(editor, input.DisplayValue);
-        AutomationProperties.SetName(editor, input.AccessibleName);
-        if (!string.IsNullOrWhiteSpace(input.HelpText)) {
-            AutomationProperties.SetHelpText(editor, input.HelpText);
-        }
-        editor.LostKeyboardFocus += OptionInputTextBox_LostKeyboardFocus;
-        editor.PreviewKeyDown += OptionInputTextBox_PreviewKeyDown;
-        BindConfigurationEditable(editor);
-        _optionInputEditors[tag.Key] = editor;
-        if (input.Input.InputType is ProjectInputType.Text or ProjectInputType.Password) {
-            return editor;
-        }
-
-        var folder = input.Input.InputType == ProjectInputType.Directory;
-        var title = folder ? "选择文件夹" : "选择文件";
-        var browse = CreateIconButton(WpfSymbolRegular.FolderOpen24, $"{title}：{input.AccessibleName}", title);
-        browse.Margin = new Thickness(4, 0, 0, 0);
-        Grid.SetColumn(browse, 1);
-        BindConfigurationEditable(browse);
-        browse.Click += (_, _) => {
-            if (PickPath(folder) is { } path) {
-                editor.Text = path;
-                _ = CommitOptionInput(editor);
-            }
-        };
-        return new Grid {
-            ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } },
-            Children = { editor, browse }
-        };
-    }
-
-    // The PI defines no extension filter, so any file can be picked.
-    private string? PickPath(bool folder)
-    {
-        if (folder) {
-            var folderDialog = new Microsoft.Win32.OpenFolderDialog();
-            return folderDialog.ShowDialog(Window.GetWindow(this)) == true ? folderDialog.FolderName : null;
-        }
-        var fileDialog = new Microsoft.Win32.OpenFileDialog();
-        return fileDialog.ShowDialog(Window.GetWindow(this)) == true ? fileDialog.FileName : null;
-    }
-
-    // A password box keeps the real text in Password; its Text holds only mask characters.
-    private static string GetInputText(WpfTextBox editor) =>
-        editor is Wpf.Ui.Controls.PasswordBox password ? password.Password : editor.Text;
-
-    private static void SetInputText(WpfTextBox editor, string value)
-    {
-        if (editor is Wpf.Ui.Controls.PasswordBox password) {
-            password.Password = value;
-        } else {
-            editor.Text = value;
-        }
-    }
-
-    private FrameworkElement CreateCaseSelector(InspectorRow row)
-    {
-        var option = row.Option;
-        var configurationId = Project!.ActiveConfigurationId;
-        System.Windows.Controls.Control selector;
-        FrameworkElement field;
-        if (option.Kind == ProjectOptionKind.Checkbox) {
-            var segments = new System.Windows.Controls.ListBox {
-                ItemsSource = option.Cases, Style = (Style)FindResource("Option.Segments")
-            };
-            foreach (var item in option.Cases.Where(item => option.SelectedCases.Contains(item.Name))) {
-                segments.SelectedItems.Add(item);
-            }
-            segments.SelectionChanged += (_, e) => {
-                var selected = segments.SelectedItems.Cast<ProjectCaseEditor>().ToArray();
-                if (selected.Length > option.MaxCount) {
-                    // At max_count 1 a new pick replaces the old one; a wider limit refuses the extra pick. Either
-                    // removal raises SelectionChanged again, which saves.
-                    var extra = option.MaxCount == 1 ? selected.Except(e.AddedItems.Cast<ProjectCaseEditor>())
-                        : e.AddedItems.Cast<ProjectCaseEditor>();
-                    extra.ToList().ForEach(segments.SelectedItems.Remove);
-                    return;
-                }
-                SaveSelectedCases(configurationId, option.Name, selected.Select(item => item.Name).ToArray());
-            };
-            selector = segments;
-            field = segments;
-        } else if (option.Kind == ProjectOptionKind.Switch) {
-            // One click flips a switch; the on/off captions keep the PI case labels visible.
-            var (on, off) = GetSwitchCases(option);
-            var toggle = new Wpf.Ui.Controls.ToggleSwitch {
-                IsChecked = option.SelectedCase == on.Name, OnContent = on.Label, OffContent = off.Label,
-                Style = (Style)FindResource("Option.ToggleSwitch"),
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            toggle.Click += (_, _) =>
-                SaveSelectedCase(configurationId, option.Name, toggle.IsChecked == true ? on.Name : off.Name);
-            selector = toggle;
-            field = new Grid { Height = (double)FindResource("Height.OptionEditor"), Children = { toggle } };
-        } else {
-            var comboBox = new WpfComboBox {
-                ItemsSource = option.Cases,
-                DisplayMemberPath = nameof(ProjectCaseEditor.Label),
-                SelectedItem = row.SelectedCase,
-                Style = (Style)FindResource("Option.ComboBox")
-            };
-            comboBox.SelectionChanged += (_, _) => {
-                if (comboBox.SelectedItem is ProjectCaseEditor selected) {
-                    SaveSelectedCase(configurationId, option.Name, selected.Name);
-                }
-            };
-            selector = comboBox;
-            field = LimitWidth(comboBox);
-        }
-        AutomationProperties.SetName(selector, row.Label);
-        if (!string.IsNullOrWhiteSpace(row.Description)) {
-            AutomationProperties.SetHelpText(selector, row.Description);
-        }
-        BindConfigurationEditable(selector);
-        return field;
-    }
-
-    // A single editor keeps a readable width on a wide card and still shrinks with a narrow one.
-    private static Grid LimitWidth(UIElement editor) =>
-        new() { ColumnDefinitions = { new ColumnDefinition { MaxWidth = 340 } }, Children = { editor } };
-
-    private void ApplyInspectorRow(InspectorRowView view, InspectorRow row)
-    {
-        view.Row.IsInvalid = row.IsInvalid;
-        view.CaseNotes.Children.Clear();
-        if (row.CaseDescription is { } caseDescription) {
-            view.CaseNotes.Children.Add(CreateInspectorNote(caseDescription, "Inspector.Note"));
-        }
-        if (row.Option.IsBelowMinimum) {
-            view.CaseNotes.Children.Add(CreateInspectorNote(
-                $"至少选择 {row.Option.MinCount} 项，否则不能开始任务", "Inspector.Error"));
-        } else if (row.Option.Cases.Count > 1 && ParameterInspector.DescribeLimits(row.Option) is { } limits) {
-            view.CaseNotes.Children.Add(CreateInspectorNote(limits, "Inspector.Note"));
-        }
-        foreach (var input in row.Inputs) {
-            if (!view.InputNotes.TryGetValue(input.Input.Name, out var notes)) {
-                continue;
-            }
-            notes.Children.Clear();
-            if (_optionInputEditors.TryGetValue(
-                (Project!.ActiveConfigurationId, row.Option.Name, input.Input.Name), out var editor)) {
-                ShowOptionInputError(editor, input.Error);
-            }
-            if (input.Error is { } error) {
-                notes.Children.Add(CreateInspectorNote(error, "Inspector.Error"));
-            }
-            if (input.Draft is not null) {
-                var saved = ParameterInspector.ShowValue(input.Show(input.SavedValue));
-                notes.Children.Add(CreateInspectorNote($"未保存，仍使用「{saved}」· Esc 还原", "Inspector.DraftNote"));
-            }
-        }
-    }
-
-    private TextBlock CreateInspectorNote(string text, string style)
-    {
-        var note = new TextBlock { Text = text, Style = (Style)FindResource(style) };
-        AutomationProperties.SetLiveSetting(note, AutomationLiveSetting.Polite);
-        return note;
-    }
-
-    // PI switch cases carry no on/off flag; the project names them Yes/No, so an affirmative name marks "on",
-    // otherwise the first case does.
-    private static (ProjectCaseEditor On, ProjectCaseEditor Off) GetSwitchCases(ProjectOptionEditor option)
-    {
-        var on = option.Cases.FirstOrDefault(
-            item => SwitchOnCaseNames.Contains(item.Name, StringComparer.OrdinalIgnoreCase)) ?? option.Cases[0];
-        return (on, option.Cases.First(item => item.Name != on.Name));
     }
 
     private void BindConfigurationEditable(UIElement element) => System.Windows.Data.BindingOperations.SetBinding(

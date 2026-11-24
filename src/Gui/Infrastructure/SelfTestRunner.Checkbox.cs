@@ -70,16 +70,16 @@ internal static partial class SelfTestRunner
             EndTour(window);
             var items = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel");
             string[] Previews() => ConfigurationDescendants(items).OfType<TextBlock>()
-                .Select(tag => tag.ToolTip).OfType<string>().ToArray();
+                .Select(tag => tag.ToolTip).OfType<string>().SelectMany(text => text.Split('\n')).ToArray();
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
-            Require(Previews().SequenceEqual(["Mode：Default mode", "Features：2/3", "Tier：0/2"]),
-                "折叠预览必须按声明顺序最多显示三个顶层选项，并显示多选计数。");
+            Require(Previews().Contains("Features：2 项") && Previews().Contains("Charge time：Short"),
+                "折叠预览应显示多选计数以及嵌套值。");
             SetExpandedTask(window, "RealTask");
             InvokeEditor(window, "RenderTaskPlan");
             PumpOnboarding();
             SaveWindowScreenshot(window, "checkbox.png");
-            Require(!Previews().Contains("Features：2/3"), "展开时应隐藏折叠预览。");
+            Require(!Previews().Contains("Features：2 项"), "展开时应隐藏折叠预览。");
             // Saving may rebuild the card, so each step looks the editor up again.
             ListBox Segments(string name) => ConfigurationDescendants(items).OfType<ListBox>()
                 .Single(list => AutomationProperties.GetName(list) == name);
@@ -94,7 +94,7 @@ internal static partial class SelfTestRunner
             var combo = (ListBoxItem)features.ItemContainerGenerator.ContainerFromItem(Case(features, "Combo"));
             Require(features.SelectedItems.Count == 2 && Equals(normal.ToolTip, "Enable normal strike")
                 && combo.ToolTip is null && AutomationProperties.GetName(normal) == "Normal strike",
-                "多 case checkbox 必须显示为分段，有说明的 case 以 tooltip 显示说明。");
+                "多 case checkbox 必须显示为标签，有说明的 case 以 tooltip 显示说明。");
 
             features.SelectedItems.Add(Case(features, "Combo"));
             Require(Option("Features").SelectedCases.SequenceEqual(["Normal", "Charged"])
@@ -118,11 +118,12 @@ internal static partial class SelfTestRunner
             Segments("Finish").SelectedItems.Add(Case(Segments("Finish"), "Enabled"));
             Require(Option("Single").SelectedCases.SequenceEqual(["Enabled"])
                 && !ConfigurationDescendants(items).OfType<CheckBox>().Any(box => AutomationProperties.GetName(box)
-                    == "Finish"), "单 case checkbox 也必须显示为分段。");
+                    == "Finish"), "单 case checkbox 也必须显示为标签。");
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
-            Require(Previews().SequenceEqual(["Mode：Default mode", "Features：0/3", "Tier：1/2"]),
-                "重新折叠后，多选预览必须反映当前的勾选数。");
+            Require(Previews().Any(text => text.Contains("Features", StringComparison.Ordinal)
+                && text.Contains("至少选择", StringComparison.Ordinal)),
+                "重新折叠后，摘要必须标出未达到最少勾选数的参数。");
         }, AddCheckboxOptions);
     }
 

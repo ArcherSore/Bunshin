@@ -303,18 +303,11 @@ internal static partial class SelfTestRunner
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
             var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
-            Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
-                && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7")),
-                "折叠预览应优先显示首个输入的标签，两级标签均为空时显示选项名称。");
-            var switchLabel = tags.Single(tag => Equals(tag.ToolTip, "Nested：开"));
-            var switchPreview = (System.Windows.FrameworkElement)switchLabel.Parent;
-            var dot = ConfigurationDescendants(switchPreview).OfType<System.Windows.Shapes.Ellipse>().Single();
-            switchPreview.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
-            switchPreview.Arrange(new System.Windows.Rect(switchPreview.DesiredSize));
-            double CenterY(System.Windows.FrameworkElement element) =>
-                element.TranslatePoint(new System.Windows.Point(0, element.ActualHeight / 2), switchPreview).Y;
-            Require(Math.Abs(CenterY(switchLabel) - CenterY(dot)) <= PixelTolerance,
-                "开关预览圆点应与文字垂直居中。");
+            Require(tags.Any(tag => tag.ToolTip is string tip
+                && tip.Contains("ServerRange：978-1012", StringComparison.Ordinal)
+                && tip.Contains("出战队伍：7", StringComparison.Ordinal)
+                && tip.Contains("Nested：Yes", StringComparison.Ordinal)),
+                "折叠预览应保留参数的后备标签以及开关的选中值。");
         });
     }
 
@@ -335,7 +328,8 @@ internal static partial class SelfTestRunner
             SetExpandedTask(window, "RealTask");
             InvokeEditor(window, "RenderTaskPlan");
             System.Windows.Controls.TextBlock? OtherPreview(string text) => ConfigurationDescendants(items)
-                .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => Equals(tag.ToolTip, text));
+                .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => tag.ToolTip is string tip
+                    && tip.Contains(text, StringComparison.Ordinal));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
@@ -344,7 +338,7 @@ internal static partial class SelfTestRunner
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, input, null) {
                 RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
             });
-            if (OtherPreview("Server range：978-,")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
+            if (OtherPreview("Server 格式不对")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
                 throw new InvalidOperationException("共享参数的非法草稿必须立即以错误色同步到其他折叠任务的预览。");
             }
             using (var source = new System.Windows.Interop.HwndSource(
@@ -354,7 +348,7 @@ internal static partial class SelfTestRunner
                     RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
                 });
             }
-            if (OtherPreview("Server range：978-1012") is not { } restored
+            if (OtherPreview("Server：978-1012") is not { } restored
                 || restored.Foreground == window.FindResource("Brush.Error.Foreground")
                 || !ConfigurationDescendants(items).Contains(input)) {
                 throw new InvalidOperationException("Esc 必须立即恢复其他摘要的已保存值，且不重建正在编辑的输入框。");

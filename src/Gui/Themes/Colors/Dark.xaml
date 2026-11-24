@@ -44,7 +44,11 @@
     <SolidColorBrush x:Key="Brush.Error.Border" Color="#66DC3C3D" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Error.Foreground" Color="#FA8080" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Transparent" Color="#00FFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Parameter.Nested" Color="#08FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.Field" Color="#0DFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.FieldHover" Color="#13FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.Selected" Color="#404040" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.SwitchOff" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.InvalidRow" Color="#0FDC3C3D" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.Guide" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Border" Color="#1AFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Hover" Color="#13FFFFFF" po:Freeze="True" />
