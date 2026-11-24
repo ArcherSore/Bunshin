@@ -6,6 +6,14 @@
       "icon": "Options20",
       "items": [
         {
+          "id": "appearance",
+          "type": "choice",
+          "icon": "PaintBrush20",
+          "title": "外观",
+          "description": "选择界面使用浅色、深色，或跟随系统。",
+          "choiceKey": "appearance"
+        },
+        {
           "id": "close-to-tray",
           "type": "toggle",
           "icon": "ArrowMinimize20",

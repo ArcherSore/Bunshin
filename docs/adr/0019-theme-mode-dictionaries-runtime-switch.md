@@ -12,3 +12,7 @@
 ## 依据
 
 用户拍板。调研了 WPF-UI 4.3.0 的 `ApplicationThemeManager`/`ApplicationAccentColorManager` 源码、WPF Fluent 的 `ThemeManager`、BetterGI、MFAAvalonia 和 MXU 的主题实现，以及 Fluent 2、Primer 的 token 分层。
+
+## 更新（2026-11-24）
+
+“第一期只浅色、不加设置项”已被取代：色阶按 Claude 设计分析稿重做，深色配色字典随之上线，与浅色键集一致；设置页“通用”分区新增“外观”（跟随系统 / 浅色 / 深色，默认跟随系统），选择保存在 `config/appearance.txt`，切换即时生效，选跟随系统时随系统深浅色变化。高对比配色和 Mica/Acrylic 仍不做。见 ADR 0020。

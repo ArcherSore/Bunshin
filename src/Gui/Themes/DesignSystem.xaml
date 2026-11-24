@@ -5,6 +5,8 @@
 
     <!-- Typography and dimensions -->
     <FontFamily x:Key="FontFamily.Ui">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI</FontFamily>
+    <!-- Serif stack for the "Bunshin" wordmark only; none of these fonts is bundled. -->
+    <FontFamily x:Key="FontFamily.Wordmark">Copernicus, Tiempos Headline, Cormorant Garamond, Noto Serif SC, Georgia</FontFamily>
     <FontFamily x:Key="FontFamily.Monospace">Cascadia Mono, Consolas, Microsoft YaHei UI</FontFamily>
     <sys:Double x:Key="FontSize.WindowTitle">20</sys:Double>
     <sys:Double x:Key="FontSize.Status">16</sys:Double>

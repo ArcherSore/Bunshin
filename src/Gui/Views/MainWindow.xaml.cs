@@ -109,7 +109,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _settings = new ApplicationSettings(_applicationDirectory, logger,
             CheckUpdateFromSettingsAsync, ExportDiagnosticsFromSettingsAsync, ReplayOnboarding, OpenAfdianAsync,
             ManageChildSessionCredentialsAsync, ClearDebugFilesAsync, ViewWelcome, OpenTaskDescriptionLink,
-            ReadLicense, autostart);
+            ReadLicense, autostart, _themes.Apply);
         SettingsView.DataContext = _settings.Page;
         HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,

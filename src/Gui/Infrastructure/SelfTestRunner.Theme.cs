@@ -130,9 +130,15 @@ internal static partial class SelfTestRunner
                 Require(notifications == beforeMessage, "固定浅色时，系统主题消息不应重新应用配色。");
 
                 var production = new ThemeService(app.Resources, readSystemTheme: () => systemTheme);
-                foreach (var mode in Enum.GetValues<AppThemeMode>()) {
+                // The shipped dark palette, not the generated one, must be what a real service switches to.
+                var shipped = new ResourceDictionary { Source = new Uri("pack://application:,,,/Themes/Colors/Dark.xaml") };
+                Require(shipped.Keys.Cast<object>().ToHashSet().SetEquals(light.Keys.Cast<object>()),
+                    "深色与浅色配色字典的键集应完全一致。");
+                foreach (var mode in new[] { AppThemeMode.Dark, AppThemeMode.FollowSystem, AppThemeMode.Light }) {
                     production.Apply(mode);
-                    Check(light, ApplicationTheme.Light);
+                    var dark = mode != AppThemeMode.Light && systemTheme == ApplicationTheme.Dark
+                        || mode == AppThemeMode.Dark;
+                    Check(dark ? shipped : light, dark ? ApplicationTheme.Dark : ApplicationTheme.Light);
                 }
                 ((System.Windows.Controls.Panel)window.Content).Children.Remove(button);
                 CheckPageThemeSwitch(window, service, light, alternate);

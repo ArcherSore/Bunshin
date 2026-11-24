@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Gui.ChildSession;
 using Gui.Infrastructure;
+using Gui.Settings;
 using Gui.Themes;
 using Gui.Views;
 using Gui.Worker;
@@ -28,10 +29,12 @@ public partial class App : System.Windows.Application
     private bool _userExitRequested;
     internal ThemeService Themes { get; private set; } = null!;
 
-    private void ApplyStartupTheme()
+    private void ApplyStartupTheme(bool selfTest)
     {
         Themes = new ThemeService(Resources);
-        Themes.Apply(AppThemeMode.Light);
+        // The self-test starts fixed on light so that its checks do not depend on the machine's setting.
+        Themes.Apply(selfTest ? AppThemeMode.Light
+            : ApplicationSettings.ReadAppearance(AppContext.BaseDirectory));
     }
 
     protected override void OnStartup(StartupEventArgs e)
@@ -39,7 +42,7 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
 
         if (e.Args.Contains("--self-test", StringComparer.OrdinalIgnoreCase)) {
-            ApplyStartupTheme();
+            ApplyStartupTheme(selfTest: true);
             Environment.ExitCode = SelfTestRunner.Run(e.Args);
             Shutdown(Environment.ExitCode);
             return;
@@ -77,7 +80,7 @@ public partial class App : System.Windows.Application
             _logger, Path.Combine(AppContext.BaseDirectory, "state"),
             Path.Combine(AppContext.BaseDirectory, "worker", AppIdentity.WorkerFileName));
         _environment = new RuntimeEnvironment(_logger, _sessionManager, _workerCoordinator);
-        ApplyStartupTheme();
+        ApplyStartupTheme(selfTest: false);
         _mainWindow = new MainWindow(
             _logger, _sessionManager, _workerCoordinator, _environment, RequestExitAsync, EndEnvironmentAsync,
             InstallUpdateAsync, telemetry: _telemetry, launchCommand: command, quitAfterRun: () => _ = ExitAsync(confirm: null),

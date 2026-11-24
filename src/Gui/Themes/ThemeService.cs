@@ -31,7 +31,8 @@ internal sealed class ThemeService
         _readSystemTheme = readSystemTheme ?? ReadSystemTheme;
         _activePalette = FindPalette(resources);
         _palettes = palettes ?? new Dictionary<ApplicationTheme, ResourceDictionary> {
-            [ApplicationTheme.Light] = _activePalette
+            [ApplicationTheme.Light] = _activePalette,
+            [ApplicationTheme.Dark] = new ResourceDictionary { Source = new Uri("pack://application:,,,/Themes/Colors/Dark.xaml") }
         };
     }
 
