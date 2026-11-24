@@ -370,17 +370,10 @@
                         <TextBlock x:Name="RuntimeStatusDetail" Margin="27,3,0,0" TextWrapping="Wrap" FontSize="12"
                                    Foreground="{DynamicResource Brush.Text.Secondary}" />
                         <Grid>
-                            <Button x:Name="PrepareEnvironmentButton" Content="启动并运行"
-                                    Style="{StaticResource Panel.Action}" AutomationProperties.Name="启动并运行" />
                             <Button x:Name="RetryEnvironmentButton" Visibility="Collapsed"
                                     Style="{StaticResource Panel.Action}" ToolTipService.ShowOnDisabled="True">
                                 <TextBlock x:Name="RetryEnvironmentText" />
                             </Button>
-                            <Button x:Name="StartTaskHeaderButton" Visibility="Collapsed" Content="开始任务"
-                                    Style="{StaticResource Panel.Action}" ToolTipService.ShowOnDisabled="True"
-                                    AutomationProperties.Name="开始任务" />
-                            <Button x:Name="StopTaskHeaderButton" Visibility="Collapsed" Content="停止任务"
-                                    Style="{StaticResource Panel.Action}" AutomationProperties.Name="停止任务" />
                             <Button x:Name="RecoverEnvironmentButton" Visibility="Collapsed" Content="结束桌面分身"
                                     Style="{StaticResource Panel.Recover}" ToolTipService.ShowOnDisabled="True"
                                     AutomationProperties.Name="结束桌面分身" />

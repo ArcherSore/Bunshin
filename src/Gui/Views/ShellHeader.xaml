@@ -14,7 +14,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}" CornerRadius="8">
-                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -37,6 +38,27 @@
                      Foreground="{DynamicResource Brush.Text.Primary}" Background="{DynamicResource Brush.Transparent}"
                      ButtonsForeground="{DynamicResource Brush.Text.Primary}"
                      ButtonsBackground="{DynamicResource Brush.Rail.Hover}">
+            <ui:TitleBar.Header>
+                <Grid>
+                    <TextBlock x:Name="PageTitle" VerticalAlignment="Center" Margin="20,0,0,0"
+                               MaxWidth="380" TextTrimming="CharacterEllipsis" />
+                    <Button x:Name="ConfigurationMenuButton" Width="Auto" MaxWidth="400" Margin="12,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True"
+                            Padding="8,0" Click="ConfigurationMenu_Click" Visibility="Collapsed"
+                            PreviewMouseLeftButtonDown="ConfigurationMenu_PreviewMouseLeftButtonDown"
+                            Foreground="{DynamicResource Brush.Text.Primary}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="ConfigurationTitle" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <ui:SymbolIcon Grid.Column="1" Symbol="ChevronDown16" FontSize="12" Margin="6,0,0,0"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
+                        </Grid>
+                    </Button>
+                </Grid>
+            </ui:TitleBar.Header>
             <ui:TitleBar.TrailingContent>
                 <Border BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,0,1,0">
                     <StackPanel Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">

@@ -118,6 +118,13 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         return policy;
     }
 
+    internal void ShowConfiguration(Guid configurationId)
+    {
+        _focus = configurationId;
+        _selected = null;
+        Refresh();
+    }
+
     internal void Refresh()
     {
         if (Project is not { } project || project.Configurations.Count == 0) {

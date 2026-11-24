@@ -38,9 +38,10 @@ internal static partial class SelfTestRunner
                 ("Schedule", "ScheduleView", "定时"), ("Help", "HelpView", "帮助"),
                 ("Settings", "SettingsView", "设置"), ("Home", "HomeView", activeName)
             }) {
-                var item = Named<RailItem>(sidebar, name + "NavigationItem");
-                ClickOnboarding(window, name + "NavigationItem");
-                Require(item.IsActive && Named<UIElement>(window, view).IsVisible && titleBar.Title == title,
+                var item = name == "Home" ? sidebar.Home : Named<RailItem>(sidebar, name + "NavigationItem");
+                ClickConfigurationButton(item);
+                PumpOnboarding();
+                Require(item.IsActive && Named<UIElement>(window, view).IsVisible && AutomationProperties.GetName(titleBar) == title,
                     $"{name} 应显示对应页面、页眉标题和选中状态。");
             }
             Require(AutomationProperties.GetName(Named<RailItem>(sidebar, "ScheduleNavigationItem"))
@@ -84,14 +85,14 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "SidebarToggleButton");
             Require(Math.Abs(sidebar.ActualWidth - 288) < PixelTolerance
                 && Math.Abs(home.ActualWidth - width) < PixelTolerance, "窄窗口可展开侧栏且无须挤占首页。");
-            ClickOnboarding(window, "HomeNavigationItem");
+            ClickHome(window);
             Require(sidebar.ActualWidth < 100 && home.IsVisible, "窄窗口选择页面后应隐藏侧栏浮层。");
 
             var project = ProjectOf(window);
             var count = project.Configurations.Count;
-            ClickOnboarding(window, "NewConfigurationItem");
-            var titleBar = Named<Wpf.Ui.Controls.TitleBar>(Named<ShellHeader>(window, "Header"), "TitleBar");
-            Require(project.Configurations.Count == count + 1 && titleBar.Title
+            CreateEmptyConfigurationFromSidebar(window);
+            var title = Named<System.Windows.Controls.TextBlock>(window.Header, "ConfigurationTitle");
+            Require(project.Configurations.Count == count + 1 && title.Text
                 == project.Configurations.Single(configuration => configuration.Id == project.ActiveConfigurationId).Name,
                 "侧栏可新建配置，页眉随当前配置更新。");
         });
@@ -107,7 +108,8 @@ internal static partial class SelfTestRunner
         window.Width = 1440;
         window.Height = 900;
         project.RenameConfiguration(configurationId, "一键日常");
-        ClickOnboarding(window, "HomeNavigationItem");
+        InvokeEditor(window, "RenderTaskPlan");
+        ClickHome(window);
         var themes = ((App)System.Windows.Application.Current).Themes;
         var desktop = new DesktopToggle(DesktopAction.Show, true, DesktopStatus.Background);
         try {

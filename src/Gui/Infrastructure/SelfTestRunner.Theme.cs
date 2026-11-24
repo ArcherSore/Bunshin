@@ -36,7 +36,7 @@ internal static partial class SelfTestRunner
         RunOnboardingScenario(logger, directory, (window, _) => {
             var button = new Button { Style = (Style)window.FindResource("PrimaryButtonStyle") };
             ((System.Windows.Controls.Panel)window.Content).Children.Add(button);
-            var configurationBar = Named<Border>(window.TaskPlanEditor, "ConfigurationBar");
+            var sidebarSurface = Named<Border>(window.Sidebar, "Frame");
             var project = ProjectOf(window);
             project.AddSchedulePolicy(project.ActiveConfigurationId, "早班");
             ClickOnboarding(window, "ScheduleNavigationItem");
@@ -55,9 +55,9 @@ internal static partial class SelfTestRunner
                 Require(face.Background is SolidColorBrush fill && fill.Color == primary
                     && window.Background is SolidColorBrush canvas && canvas.Color == Expected("Brush.Canvas"),
                     "已显示窗口的背景和公共按钮模板应呈现当前配色。");
-                Require(configurationBar.Background is SolidColorBrush bar
-                    && bar.Color == Expected("Brush.Configuration.Bar"),
-                    "任务计划编辑器中已显示的配置标签栏应跟随当前配色。");
+                Require(sidebarSurface.Background is SolidColorBrush rail
+                    && rail.Color == Expected("Brush.Surface.Subdued"),
+                    "包含任务配置的侧栏背景应跟随当前配色。");
                 Require(window.Foreground is SolidColorBrush body && body.Color == Expected("Brush.Text.Body")
                     && Named<System.Windows.Shapes.Ellipse>(window, "UpdateNavigationBadge").Fill is SolidColorBrush badge
                     && badge.Color == Expected("Brush.Rail.UpdateBadge")
@@ -139,7 +139,7 @@ internal static partial class SelfTestRunner
             check(light);
         }
 
-        ClickOnboarding(window, "HomeNavigationItem");
+        ClickHome(window);
         var worker = ScenarioWorker("theme", active: RunState.Running);
         SetOnboardingField(window, "_workerSnapshot", new WorkerCoordinatorSnapshot(WorkerObservation.Connected,
             true, worker, ""));

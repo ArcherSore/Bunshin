@@ -19,7 +19,7 @@ internal static partial class SelfTestRunner
     private const uint ScenarioSessionId = 7;
     private static readonly Guid ScenarioWorkerId = new("7a0c0e3e-5d1f-4b8e-9a51-000000000007");
     private static readonly string[] RuntimeHeaderControls = [
-        "PrepareEnvironmentButton", "RetryEnvironmentButton", "StartTaskHeaderButton", "StopTaskHeaderButton",
+        "RetryEnvironmentButton",
         "RecoverEnvironmentButton", "RuntimeHeaderProgressRing"
     ];
 
@@ -27,16 +27,16 @@ internal static partial class SelfTestRunner
     private static void VerifyRuntimeControlMapping(AppLogger logger, string testDirectory)
     {
         WithRuntimeControlWindow(logger, Path.Combine(testDirectory, "runtime-mapping"), window => {
-            var idleDesktop = new DesktopToggle(DesktopAction.Show, true, DesktopStatus.Background);
+            var idleDesktop = new DesktopToggle(DesktopAction.Show, false, DesktopStatus.NotRunning);
             foreach (var (action, control, enabled, progress) in new (RuntimeAction, string, bool, string?)[] {
-                (new RuntimeAction.Prepare(true), "PrepareEnvironmentButton", true, null),
-                (new RuntimeAction.Prepare(false), "PrepareEnvironmentButton", false, null),
+                (new RuntimeAction.Prepare(true), "StartSessionMenuItem", true, null),
+                (new RuntimeAction.Prepare(false), "StartSessionMenuItem", false, null),
                 (new RuntimeAction.Retry(RetryTarget.Prepare, true), "RetryEnvironmentButton", true, null),
                 (new RuntimeAction.Retry(RetryTarget.Start, false), "RetryEnvironmentButton", false, null),
-                (new RuntimeAction.Start(true), "StartTaskHeaderButton", true, null),
-                (new RuntimeAction.Start(false), "StartTaskHeaderButton", false, null),
-                (new RuntimeAction.Stop(true), "StopTaskHeaderButton", true, null),
-                (new RuntimeAction.Stop(false), "StopTaskHeaderButton", false, null),
+                (new RuntimeAction.Start(true), "StartPlanButton", true, null),
+                (new RuntimeAction.Start(false), "StartPlanButton", false, null),
+                (new RuntimeAction.Stop(true), "StopPlanButton", true, null),
+                (new RuntimeAction.Stop(false), "StopPlanButton", false, null),
                 (new RuntimeAction.Recover(true, RecoveryReason.WorkerLost), "RecoverEnvironmentButton", true, null),
                 (new RuntimeAction.Recover(false, RecoveryReason.WorkerLost), "RecoverEnvironmentButton", false, null),
                 (new RuntimeAction.InProgress(ProgressKind.PreparingEnvironment), "RuntimeHeaderProgressRing", true,
@@ -49,23 +49,21 @@ internal static partial class SelfTestRunner
                     "正在结束桌面分身")
             }) {
                 window.ApplyRuntimeControls(new RuntimeControlState(action, true, null, idleDesktop, true));
-                var shown = ShownHeaderControls(window);
-                Require(shown.SequenceEqual([control]), $"{action} 应只显示 {control}，实际为 {string.Join("、", shown)}。");
                 var element = Named<FrameworkElement>(window, control);
-                Require(progress is null ? element.IsEnabled == enabled
-                    : element.ToolTip is null && AutomationProperties.GetName(element) == progress,
+                Require(HeaderShows(window, control, enabled)
+                    && (progress is null || element.ToolTip is null && AutomationProperties.GetName(element) == progress),
                     $"{action} 的可用性或进度说明不符。");
             }
 
             // A blocked action says why, on hover and to screen readers; an enabled one needs no explanation.
             var reasons = new List<string>();
             foreach (var (action, control, explained) in new (RuntimeAction, string, bool)[] {
-                (new RuntimeAction.Start(true), "StartTaskHeaderButton", false),
-                (new RuntimeAction.Start(false, StartBlocker.CommandsUnavailable), "StartTaskHeaderButton", true),
-                (new RuntimeAction.Start(false, StartBlocker.ProjectNotLoaded), "StartTaskHeaderButton", true),
-                (new RuntimeAction.Start(false, StartBlocker.NoTasks), "StartTaskHeaderButton", true),
-                (new RuntimeAction.Start(false, StartBlocker.ConfigurationInvalid), "StartTaskHeaderButton", true),
-                (new RuntimeAction.Start(false, StartBlocker.RuntimeNotReady), "StartTaskHeaderButton", true),
+                (new RuntimeAction.Start(true), "StartPlanButton", false),
+                (new RuntimeAction.Start(false, StartBlocker.CommandsUnavailable), "StartPlanButton", true),
+                (new RuntimeAction.Start(false, StartBlocker.ProjectNotLoaded), "StartPlanButton", true),
+                (new RuntimeAction.Start(false, StartBlocker.NoTasks), "StartPlanButton", true),
+                (new RuntimeAction.Start(false, StartBlocker.ConfigurationInvalid), "StartPlanButton", true),
+                (new RuntimeAction.Start(false, StartBlocker.RuntimeNotReady), "StartPlanButton", true),
                 (new RuntimeAction.Retry(RetryTarget.Prepare, true), "RetryEnvironmentButton", false),
                 (new RuntimeAction.Retry(RetryTarget.Start, true), "RetryEnvironmentButton", false),
                 (new RuntimeAction.Retry(RetryTarget.Start, false, StartBlocker.NoTasks), "RetryEnvironmentButton",
@@ -76,7 +74,7 @@ internal static partial class SelfTestRunner
                 Require(button.ToolTip is string == explained && ToolTipService.GetShowOnDisabled(button)
                     && AutomationProperties.GetHelpText(button) == (button.ToolTip as string ?? ""),
                     $"{action} 的说明不符。");
-                if (control == "StartTaskHeaderButton" && explained) {
+                if (control == "StartPlanButton" && explained) {
                     reasons.Add((string)button.ToolTip!);
                 }
             }
@@ -105,7 +103,7 @@ internal static partial class SelfTestRunner
             }) {
                 window.ApplyRuntimeControls(
                     state with { ConfigurationEditable = editable, ConfigurationLock = lockReason });
-                Require(Named<UIElement>(window, "NewConfigurationButton").IsEnabled == editable
+                Require(window.Sidebar.NewConfigurationItem.IsEnabled == editable
                     && Named<UIElement>(window, "ConfigurationLockBadge").IsVisible == lockReason is not null,
                     $"配置可编辑={editable}、锁定原因={lockReason} 的显示不符。");
             }

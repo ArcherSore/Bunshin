@@ -137,7 +137,7 @@ internal static partial class SelfTestRunner
                 "设置页应隐藏侧栏与分隔器。");
             window.Width = 1440;
             PumpOnboarding();
-            ClickOnboarding(window, "HomeNavigationItem");
+            ClickHome(window);
             Require(Math.Abs(console.ActualWidth - widest) < 1, "返回首页且空间恢复后应恢复用户宽度。");
 
             Drag(widest - 340 + 35);
@@ -173,7 +173,7 @@ internal static partial class SelfTestRunner
                 window.Height = 640;
                 PumpOnboarding();
                 ClickOnboarding(window, "SettingsNavigationItem");
-                ClickOnboarding(window, "HomeNavigationItem");
+                ClickHome(window);
                 Require(Math.Abs(console.ActualWidth - preferred) < 1,
                     "窗口缩放和首页/设置切换不应覆盖仍可容纳的用户宽度。");
                 AssertLayout();
@@ -193,7 +193,7 @@ internal static partial class SelfTestRunner
             KeyDown(System.Windows.Input.Key.Escape);
             EndDrag();
             ClickOnboarding(window, "SettingsNavigationItem");
-            ClickOnboarding(window, "HomeNavigationItem");
+            ClickHome(window);
             Require(Math.Abs(console.ActualWidth - preferred) < 1, "取消拖拽后应保留原宽度。");
 
             Drag(20);
