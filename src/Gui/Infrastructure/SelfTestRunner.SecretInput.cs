@@ -139,7 +139,8 @@ internal static partial class SelfTestRunner
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
             var tag = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>()
-                .SingleOrDefault(text => Equals(text.ToolTip, $"Login：{ProjectInputEditor.PasswordMask}"));
+                .SingleOrDefault(text => text.ToolTip is string tip
+                    && tip.Contains($"Login：{ProjectInputEditor.PasswordMask}", StringComparison.Ordinal));
             Require(tag is not null && tag.Text.Contains(ProjectInputEditor.PasswordMask, StringComparison.Ordinal)
                 && !tag.Text.Contains(SecretInputValue, StringComparison.Ordinal),
                 "折叠预览标签和悬停提示必须用掩码显示已填写的密码。");

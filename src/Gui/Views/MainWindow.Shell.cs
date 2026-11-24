@@ -10,6 +10,7 @@ internal enum MainSection { Home, Schedule, Help, Settings }
 public partial class MainWindow
 {
     private bool _sidebarOverlayMode;
+    private MainSection _sectionBeforeSettings;
 
     private void InitializeShell()
     {
@@ -18,6 +19,16 @@ public partial class MainWindow
             DismissSidebarOverlay();
             SwitchSection(section);
         };
+        Sidebar.ShowSettingsSections(_settings.Page.Sections);
+        Sidebar.SettingsBackRequested += (_, _) => {
+            DismissSidebarOverlay();
+            SwitchSection(_sectionBeforeSettings);
+        };
+        Sidebar.SettingsSectionRequested += (_, index) => {
+            DismissSidebarOverlay();
+            SettingsView.ScrollToSection(index);
+        };
+        SettingsView.CurrentSectionChanged += (_, index) => Sidebar.MarkSettingsSection(index);
         InitializeConfigurationList();
         Sidebar.UpdateRequested += (_, _) => {
             DismissSidebarOverlay();
@@ -25,6 +36,7 @@ public partial class MainWindow
         };
         Sidebar.ToggleRequested += (_, _) => ToggleSidebar();
         Header.OpenLogsRequested += (_, _) => TryOpenLogsDirectory();
+        Header.ScheduleStatusRequested += (_, _) => SwitchSection(MainSection.Home);
         RegisterName("RuntimePanelToggleButton", Header.Actions);
         _settings.RuntimePanelCollapsed.PropertyChanged += (_, e) => {
             if (e.PropertyName == nameof(_settings.RuntimePanelCollapsed.Value)) {
@@ -130,7 +142,9 @@ public partial class MainWindow
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
         var home = _section == MainSection.Home;
-        Header.ShowPage(title, home, home && configuration is not null);
+        Header.ShowPage(title, home, home && configuration is not null,
+            showScheduleStatus: _section == MainSection.Schedule,
+            showPageHeading: _section is not (MainSection.Help or MainSection.Settings));
         RefreshSidebarSchedule();
     }
 
