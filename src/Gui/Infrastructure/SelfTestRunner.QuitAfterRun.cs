@@ -167,7 +167,7 @@ internal static partial class SelfTestRunner
                     Require(boundary == WorkerEvidenceKind.NotSent, "正文前断线应取得明确的未发送证据。");
                 }
                 PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");
-                await CompleteManualRetry("StartTaskHeaderButton", originalLength: length);
+                await CompleteManualRetry("StartPlanButton", originalLength: length);
                 return;
             }
             if (scenario == "not-sent") {
@@ -197,7 +197,7 @@ internal static partial class SelfTestRunner
                     pipeName, record, 0, token, stateRevision: 2);
                 pipe = restored;
                 PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");
-                await CompleteManualRetry("StartTaskHeaderButton");
+                await CompleteManualRetry("StartPlanButton");
                 return;
             }
             if (terminalState.HasValue) {
@@ -241,7 +241,7 @@ internal static partial class SelfTestRunner
                 await pipe.WriteAsync(WireEnvelope.Failure(start.Operation, start.RequestId!.Value,
                     "operation_not_allowed", "scripted refusal"), token);
                 Require(await launch, "自动执行必须处理 Worker 的明确拒绝。");
-                await CompleteManualRetry("StartTaskHeaderButton", last.RunId);
+                await CompleteManualRetry("StartPlanButton", last.RunId);
                 return;
             }
             if (scenario is "reconnect" or "retry-ended") {
@@ -260,8 +260,8 @@ internal static partial class SelfTestRunner
                     void StartOnTerminal(object? _, RunTerminalNotification notice)
                     {
                         if (notice.Failed) return;
-                        clickedBeforeQuit = window.StartTaskHeaderButton.IsEnabled && exitRequests == 0;
-                        Click(window, "StartTaskHeaderButton");
+                        clickedBeforeQuit = window.TaskPlanEditor.StartPlanButton.IsEnabled && exitRequests == 0;
+                        Click(window, "StartPlanButton");
                     }
                     void CountStart(object? _, WorkerObservationBatch batch)
                     {
@@ -285,7 +285,7 @@ internal static partial class SelfTestRunner
                 PumpUntil(() => exitRequests == 1, "重连后新鲜终态应确认目标 Run 并退出。");
                 if (scenario == "retry-ended") {
                     PumpUntil(() => coordinator.Snapshot.SnapshotFresh && ConfigurationEditable(window), "等待手动重试。");
-                    Click(window, "StartTaskHeaderButton");
+                    Click(window, "StartPlanButton");
                     PumpUntil(() => ConfigurationEditable(window), "Worker 已确认原 Run 完成，手动重试应直接结束。");
                 }
                 Require(exitRequests == 1, "只允许退出一次。");

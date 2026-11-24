@@ -579,13 +579,41 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Expander}">
                     <StackPanel>
-                        <ToggleButton Content="{TemplateBinding Header}" MinHeight="36"
-                                      Style="{StaticResource CollapsibleHeaderToggleStyle}"
+                        <ToggleButton Content="{TemplateBinding Header}" MinHeight="30" Padding="8,0" Cursor="Hand"
+                                      HorizontalContentAlignment="Stretch"
+                                      FocusVisualStyle="{StaticResource ControlFocusVisualStyle}"
                                       AutomationProperties.Name="{Binding (AutomationProperties.Name),
                                           RelativeSource={RelativeSource TemplatedParent}}"
                                       IsChecked="{Binding IsExpanded, Mode=TwoWay,
-                                          RelativeSource={RelativeSource TemplatedParent}}" />
-                        <ContentPresenter x:Name="GroupContent" Margin="8,2,0,6" Visibility="Collapsed" />
+                                          RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="HitTarget" Padding="{TemplateBinding Padding}" CornerRadius="8"
+                                            Background="{DynamicResource Brush.Transparent}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <ui:SymbolIcon x:Name="Arrow" Symbol="ChevronRight12"
+                                                           FontSize="10" Margin="0,0,8,0"
+                                                           Foreground="{DynamicResource Brush.Text.Muted}" />
+                                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="HitTarget" Property="Background"
+                                                    Value="{DynamicResource Brush.Plan.Hover}" />
+                                        </Trigger>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Arrow" Property="Symbol" Value="ChevronDown12" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="GroupContent" Visibility="Collapsed" />
                     </StackPanel>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsExpanded" Value="True">
@@ -598,67 +626,10 @@
     </Style>
 
     <Style x:Key="TaskShelfSurfaceStyle" TargetType="{x:Type Border}">
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource Radius.Section}" />
-    </Style>
-
-    <Style x:Key="TaskChipButtonStyle"
-           TargetType="{x:Type Button}"
-           BasedOn="{StaticResource BaseButtonStyle}">
-        <Setter Property="MinHeight" Value="38" />
-        <Setter Property="Template" Value="{StaticResource TaskButtonTemplate}" />
-        <Setter Property="Margin" Value="0,0,8,8" />
-        <Setter Property="Padding" Value="12,6" />
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
-        <Setter Property="FocusVisualStyle" Value="{StaticResource TasksFocusVisualStyle}" />
-        <Style.Triggers>
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsMouseOver" Value="True" />
-                    <Condition Property="IsEnabled" Value="True" />
-                </MultiTrigger.Conditions>
-                <Setter Property="Background" Value="{DynamicResource Brush.Tasks.Accent.Surface}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Tasks.Accent.Border}" />
-            </MultiTrigger>
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsPressed" Value="True" />
-                    <Condition Property="IsEnabled" Value="True" />
-                </MultiTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Tasks.Accent}" />
-            </MultiTrigger>
-        </Style.Triggers>
-    </Style>
-
-    <!-- A task already in the plan: quiet surface, muted text and a check instead of the green add action. -->
-    <Style x:Key="TaskChipAddedButtonStyle"
-           TargetType="{x:Type Button}"
-           BasedOn="{StaticResource TaskChipButtonStyle}">
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface.Subdued}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface.Popover}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
-        <Style.Triggers>
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsMouseOver" Value="True" />
-                    <Condition Property="IsEnabled" Value="True" />
-                </MultiTrigger.Conditions>
-                <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-            </MultiTrigger>
-            <MultiTrigger>
-                <MultiTrigger.Conditions>
-                    <Condition Property="IsPressed" Value="True" />
-                    <Condition Property="IsEnabled" Value="True" />
-                </MultiTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Strong}" />
-            </MultiTrigger>
-        </Style.Triggers>
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="12" />
     </Style>
 
     <Style x:Key="CompactIconButtonStyle"
@@ -742,103 +713,43 @@
 
     <Style x:Key="PlanHeaderButtonStyle"
            TargetType="{x:Type Button}"
-           BasedOn="{StaticResource SubtleButtonStyle}">
-        <Setter Property="MinHeight" Value="44" />
+           BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="MinHeight" Value="40" />
         <Setter Property="Template" Value="{StaticResource TaskButtonTemplate}" />
-        <Setter Property="Padding" Value="8,6" />
+        <Setter Property="Padding" Value="8,0" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
-        <Setter Property="FocusVisualStyle" Value="{StaticResource TasksFocusVisualStyle}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Cursor" Value="Hand" />
     </Style>
 
     <Style x:Key="PlanItemStyle" TargetType="{x:Type Border}">
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource Radius.Control}" />
-        <Setter Property="Margin" Value="0,0,0,8" />
-    </Style>
-
-    <Style x:Key="PlanItemExpandedStyle"
-           TargetType="{x:Type Border}"
-           BasedOn="{StaticResource PlanItemStyle}">
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
-    </Style>
-
-    <!-- The expanded card's parameter area and the inspector table inside it. -->
-    <Style x:Key="ParameterEditorStyle" TargetType="{x:Type Border}">
-        <Setter Property="Padding" Value="14,12,14,14" />
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface.Option}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
-        <Setter Property="BorderThickness" Value="0,1,0,0" />
-        <Setter Property="CornerRadius" Value="0,0,6,6" />
-    </Style>
-
-    <Style x:Key="Inspector.Table" TargetType="{x:Type Border}">
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="{StaticResource Radius.Control}" />
-        <Setter Property="Padding" Value="0,0,0,1" />
-    </Style>
-
-    <Style x:Key="Inspector.Row" TargetType="{x:Type Panel}">
         <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+        <Setter Property="CornerRadius" Value="8" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="{DynamicResource Brush.Parameter.Nested}" />
+                <Setter Property="Background" Value="{DynamicResource Brush.Plan.Hover}" />
             </Trigger>
         </Style.Triggers>
     </Style>
 
-    <Style x:Key="Inspector.Label" TargetType="{x:Type TextBlock}">
-        <Setter Property="FontSize" Value="12.5" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
+    <Style x:Key="PlanItemExpandedStyle" TargetType="{x:Type Border}">
+        <Setter Property="Background" Value="{DynamicResource Brush.Plan.Expanded}" />
+        <Setter Property="CornerRadius" Value="8" />
     </Style>
 
-    <Style x:Key="Inspector.Note" TargetType="{x:Type TextBlock}">
-        <Setter Property="Margin" Value="0,3,0,0" />
-        <Setter Property="FontSize" Value="11.5" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
-        <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style x:Key="Inspector.Description" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Margin" Value="0,2,0,0" />
-    </Style>
-
-    <Style x:Key="Inspector.DraftNote" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-    </Style>
-
-    <Style x:Key="Inspector.Error" TargetType="{x:Type TextBlock}" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Margin" Value="0,4,0,0" />
-        <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
-    </Style>
-
-    <Style x:Key="Inspector.Shared" TargetType="{x:Type TextBlock}">
-        <Setter Property="FontSize" Value="11" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-        <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-
-    <Style x:Key="Inspector.InputLabel" TargetType="{x:Type TextBlock}">
-        <Setter Property="FontSize" Value="11.5" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-        <Setter Property="VerticalAlignment" Value="Center" />
-        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    <Style x:Key="ParameterEditorStyle" TargetType="{x:Type Border}">
+        <Setter Property="Padding" Value="50,0,16,14" />
     </Style>
 
     <Style x:Key="TaskDescriptionDrawerStyle" TargetType="{x:Type Border}">
-        <Setter Property="Padding" Value="20,18" />
-        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+        <Setter Property="Padding" Value="24,16" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface.Popover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
         <Setter Property="BorderThickness" Value="1,0,0,0" />
-        <Setter Property="CornerRadius" Value="8,0,0,8" />
+        <Setter Property="CornerRadius" Value="12,0,0,12" />
         <Setter Property="Effect" Value="{DynamicResource Effect.Surface.Drawer}" />
     </Style>
 

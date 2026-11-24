@@ -10,7 +10,7 @@ internal static partial class SelfTestRunner
     {
         var none = new Dictionary<(string, string), InputDraft>();
         var simple = ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "inspector-simple.json"));
-        var rows = ParameterInspector.Derive(simple.GetConfiguration("RealTask"), none, []);
+        var rows = ParameterInspector.Flatten(ParameterInspector.Derive(simple.GetConfiguration("RealTask"), none)).ToList();
         Require(rows.Select(row => (row.Option.Name, row.Depth, row.IsGlobal)).SequenceEqual(new[] {
             ("ServerRange", 0, true), ("Mode", 0, false), ("Nested", 1, false)
         }), "检查器行必须先全局后任务，按声明顺序深度优先。");
@@ -28,10 +28,9 @@ internal static partial class SelfTestRunner
         var project = ProjectPlanModule.Open(directory, Path.Combine(directory, "config.json"));
         project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
         project.AddItem(Protocol.PlanItemKind.MaaTask, "ThirdTask");
-        var others = new[] {
-            ("Real task", project.GetConfiguration("RealTask")), ("Third task", project.GetConfiguration("ThirdTask"))
-        };
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), none, others);
+        List<InspectorRow> Rows(IReadOnlyDictionary<(string, string), InputDraft> drafts) => ParameterInspector.Flatten(
+            ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts, project.OptionOwners)).ToList();
+        rows = Rows(none);
         Require(rows.Select(row => (row.Option.Name, row.Depth)).SequenceEqual(new[] {
             ("ServerRange", 0), ("Mode", 0), ("Nested", 1), ("Level1", 0), ("Level2", 1), ("Level3", 2)
         }), "选中 case 的子选项必须紧跟父行，三级嵌套深度依次递增。");
@@ -40,10 +39,10 @@ internal static partial class SelfTestRunner
         Require(rows[3].CaseDescription == "Goes one level deeper" && rows[1].CaseDescription is null,
             "选中 case 有说明时才给出 case 说明。");
         Require(rows[0].IsGlobal && rows[0].SharedWith.Count == 0
-            && rows[1].SharedWith.SequenceEqual(new[] { "Real task", "Third task" })
-            && rows[2].SharedWith.SequenceEqual(new[] { "Real task", "Third task" })
-            && rows[3].SharedWith.Count == 0 && rows[5].SharedWith.Count == 0,
-            "共用提示必须列出执行计划中使用同一选项的其他任务，全局选项另行标记。");
+            && rows[1].SharedWith.SequenceEqual(new[] { "Real task", "Stress task", "Third task" })
+            && rows[2].SharedWith.SequenceEqual(new[] { "Real task", "Stress task", "Third task" })
+            && rows[3].SharedWith.Count == 1 && rows[5].SharedWith.Count == 1,
+            "共用提示必须列出项目中使用同一选项的任务，全局选项另行标记。");
 
         project.SetInputValue("ServerRange", "retry_count", "3");
         project.SetInputValue("ServerRange", "server_range", "979");
@@ -51,19 +50,19 @@ internal static partial class SelfTestRunner
         var drafts = new Dictionary<(string, string), InputDraft> {
             [("ServerRange", "enabled")] = new("maybe", "必须是 true 或 false")
         };
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts, others);
+        rows = Rows(drafts);
         var inputs = rows[0].Inputs;
         Require(rows[0].IsInvalid && inputs[2].Draft?.Text == "maybe" && inputs[2].SavedValue == "true"
             && inputs[2].DisplayValue == "maybe" && !rows[1].IsInvalid,
             "草稿状态必须给出草稿文本、提示与已保存值。");
 
         project.SetSelectedCase("Level1", "Shallow");
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), none, others);
+        rows = Rows(none);
         Require(rows.Select(row => row.Option.Name).SequenceEqual(new[] {
             "ServerRange", "Mode", "Nested", "Level1"
         }) && rows[3].CaseDescription is null, "切换 case 后子行必须消失，case 说明随之消失。");
         project.SetSelectedCase("Level1", "Deep");
-        rows = ParameterInspector.Derive(project.GetConfiguration("StressTask"), none, others);
+        rows = Rows(none);
         Require(rows.Count == 6, "切回默认 case 后子行恢复。");
     }
 
@@ -156,7 +155,7 @@ internal static partial class SelfTestRunner
                 window.Height = width == 920 ? 640 : width == 1180 ? 760 : 900;
                 PumpOnboarding();
                 var rows = ConfigurationDescendants(items).OfType<ParameterRowPanel>().ToArray();
-                Require(rows.Length == 6 && rows.All(row => row.IsStacked == stacked)
+                Require(rows.Length == 6 && rows.Where(row => row.Depth == 0).All(row => row.IsStacked == stacked)
                     && planScroll.ComputedHorizontalScrollBarVisibility != System.Windows.Visibility.Visible,
                     $"{width} 宽度下参数检查器应{(stacked ? "上下堆叠" : "为两列")}，且没有横向滚动。");
                 SaveWindowScreenshot(window, $"inspector-{width}.png");
@@ -183,9 +182,9 @@ internal static partial class SelfTestRunner
 
     private static void VerifyParameterRowLayout()
     {
-        Require(ParameterRowPanel.CalculateLabelWidth(469) is null
-            && ParameterRowPanel.CalculateLabelWidth(470) is not null
-            && ParameterRowPanel.CalculateLabelWidth(1200) == 280, "标签列有上限，窄于 470 时上下堆叠。");
+        Require(ParameterRowPanel.CalculateLabelWidth(307, 0) is null
+            && ParameterRowPanel.CalculateLabelWidth(308, 0) == 114
+            && ParameterRowPanel.CalculateLabelWidth(1200, 1) == 98, "宽布局为标签和控件两列，窄布局上下堆叠。");
         Require(ParameterInputsPanel.CalculateColumns(140, 3) == 1 && ParameterInputsPanel.CalculateColumns(300, 3) == 2
             && ParameterInputsPanel.CalculateColumns(900, 3) == 3, "多输入在宽度不足时换行。");
 
@@ -206,9 +205,9 @@ internal static partial class SelfTestRunner
         var wide = Arrange(600);
         Require(!row.IsStacked && wide.X >= LabelSlot().Width && wide.Right <= 600
             && description.ActualHeight > value.Height, "宽编辑区为两列，长说明在标签列内换行，没有横向溢出。");
-        var narrow = Arrange(400);
-        Require(row.IsStacked && narrow.X > 0 && narrow.Y >= description.ActualHeight - 10 && LabelSlot().Width == 400,
-            "窄编辑区标签与控件上下堆叠，控件按深度缩进。");
+        var narrow = Arrange(240);
+        Require(row.IsStacked && narrow.X == 0 && narrow.Y >= description.ActualHeight && LabelSlot().Width == 240,
+            "窄编辑区标签与控件上下堆叠，且对齐。");
     }
 
     private static string CreateComplexInspectorFixture(string testDirectory)

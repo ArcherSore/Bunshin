@@ -26,13 +26,13 @@ public partial class MainWindow
     private string? ConfigurationName(Guid id) =>
         _projectPlan?.Configurations.FirstOrDefault(item => item.Id == id)?.Name;
 
-    private void ApplyScheduleHeaderStatus(StatusTone tone)
+    private void ApplyScheduleHeaderStatus(StatusTone tone, string runStatus)
     {
         var name = ActiveConfigurationName;
         (string Text, string? Brush) status = tone switch {
-            StatusTone.Busy => ($"桌面分身{RuntimeStatusText.Text} · {name}", "Brush.Warning"),
+            StatusTone.Busy => ($"桌面分身{runStatus} · {name}", "Brush.Warning"),
             StatusTone.Run => ($"桌面分身运行中 · {name}", "Brush.Success"),
-            StatusTone.Bad => ($"桌面分身{RuntimeStatusText.Text} · {name}", "Brush.Error"),
+            StatusTone.Bad => ($"桌面分身{runStatus} · {name}", "Brush.Error"),
             StatusTone.Ok => ("桌面分身已就绪", "Brush.Success"),
             _ => ("桌面分身未启动", null)
         };

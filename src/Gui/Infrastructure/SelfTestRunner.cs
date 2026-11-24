@@ -206,6 +206,10 @@ internal static partial class SelfTestRunner
             c => VerifyRuntimeControlMapping(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyRuntimeSidebarResize),
             c => VerifyRuntimeSidebarResize(c.Logger, c.Directory)),
+        new(Group.RuntimeControls, nameof(VerifyRuntimePanelCollapse),
+            c => VerifyRuntimePanelCollapse(c.Logger, c.Directory)),
+        new(Group.RuntimeControls, nameof(VerifyRuntimePanelSections),
+            c => VerifyRuntimePanelSections(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyRuntimeConsole), c => VerifyRuntimeConsole(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyRunProgressWiring),
             c => VerifyRunProgressWiring(c.Logger, c.Directory)),
@@ -646,16 +650,17 @@ internal static partial class SelfTestRunner
                 window.Width = width;
                 window.Height = width == 920 ? 640 : 900;
                 PumpOnboarding();
-                if (shelf.ActualHeight > Math.Min(340, workspace.ActualHeight * 0.44) + 1
-                    || catalogScroll.ScrollableHeight <= 0 || planScroll.ActualHeight < 132 - PixelTolerance
-                    || catalogScroll.ExtentWidth > catalogScroll.ViewportWidth + 1) {
+                if (shelf.ActualHeight > Math.Min(762, workspace.ActualHeight - 32) + PixelTolerance
+                    || planScroll.ActualHeight < 132 - PixelTolerance
+                    || catalogScroll.ExtentWidth > catalogScroll.ViewportWidth + PixelTolerance) {
                     throw new InvalidOperationException("添加任务面板必须限高、独立滚动，并为执行计划保留最小高度。");
                 }
                 var planTop = planScroll.TranslatePoint(new System.Windows.Point(), workspace).Y;
                 var planOffset = planScroll.VerticalOffset;
                 catalogScroll.ScrollToBottom();
                 PumpOnboarding();
-                if (catalogScroll.VerticalOffset <= 0 || planScroll.VerticalOffset != planOffset
+                if (catalogScroll.ScrollableHeight > 0 && catalogScroll.VerticalOffset <= 0
+                    || planScroll.VerticalOffset != planOffset
                     || Math.Abs(planScroll.TranslatePoint(new System.Windows.Point(), workspace).Y - planTop) > 1) {
                     throw new InvalidOperationException("滚动可用任务不得移动执行计划。");
                 }
@@ -673,6 +678,14 @@ internal static partial class SelfTestRunner
             if (first.IsExpanded) {
                 throw new InvalidOperationException("分类应遵循 default_expand=false。");
             }
+            foreach (var group in catalog.Children.OfType<System.Windows.Controls.Expander>()) {
+                group.IsExpanded = true;
+            }
+            PumpOnboarding();
+            if (catalogScroll.ScrollableHeight <= 0) {
+                throw new InvalidOperationException("展开所有分类后，可用任务面板应可以独立滚动。");
+            }
+            first.IsExpanded = false;
             search.Text = "RealTask";
             PumpOnboarding();
             var matches = catalog.Children.OfType<System.Windows.Controls.Expander>().ToArray();

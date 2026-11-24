@@ -85,7 +85,7 @@ internal static partial class SelfTestRunner
                     if (scenario == ScheduleScenario.PendingStart) {
                         Require(coordinator.Snapshot.WorkerSnapshot?.ActiveRun is null, "开始应答可以先于运行快照。");
                     } else {
-                        PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "命令行任务应可停止。");
+                        PumpUntil(() => HeaderShows(window, "StopPlanButton", enabled: true), "命令行任务应可停止。");
                     }
                 }
                 window.NotificationRequested += (_, notice) => {
@@ -122,8 +122,8 @@ internal static partial class SelfTestRunner
                         && wts.LogoffAttempts.Count == 0 && !stopReply.Task.IsCompleted,
                         "跳过时不得追加倒计时、停止任务或更换分身。");
                     var scheduleEntries = window.LogLines.OfType<LogEntry>().Count(e => e.TaskLabel == "定时");
-                    PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true), "命令行任务仍应可停止。");
-                    Click(window, "StopTaskHeaderButton");
+                    PumpUntil(() => HeaderShows(window, "StopPlanButton", enabled: true), "命令行任务仍应可停止。");
+                    Click(window, "StopPlanButton");
                     PumpUntil(() => stopReply.Task.IsCompleted && window.CurrentOperation == PendingOperation.None,
                         "窗口应已处理本次停止应答。");
                     Require(!exitRequested, "仅收到 stop_requested 时，命令行 -q 任务仍须等待终态。");
