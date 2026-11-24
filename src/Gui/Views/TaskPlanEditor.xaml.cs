@@ -27,7 +27,7 @@ using WpfSymbolRegular = Wpf.Ui.Controls.SymbolRegular;
 
 namespace Gui.Views;
 
-// The task plan editor: configuration tabs, plan item cards with their parameter inspectors, the task shelf and
+// The task plan editor: plan item cards with their parameter inspectors, the task shelf and
 // drag-and-drop ordering. It edits the ProjectPlanModule the window supplies and knows nothing of the Runtime
 // Environment; the window decides when editing is allowed and settles what an edit means for the next Run.
 public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
@@ -37,7 +37,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     private AppLogger _logger = null!;
     private Func<ProjectPlanModule?> _project = () => null;
     private Func<bool> _editable = () => false;
-    private Func<LockReason?> _configurationLock = () => null;
     private Action<string, Exception> _editFailed = (_, _) => { };
     private bool _updatingOptionEditors;
     private bool _taskShelfExpanded;
@@ -80,8 +79,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     public TaskPlanEditor()
     {
         InitializeComponent();
-        BindConfigurationEditable(NewConfigurationButton);
-        BindConfigurationEditable(PresetConfigurationButton);
         BindConfigurationEditable(TaskShelfHeaderButton);
         BindConfigurationEditable(EmptyPlanAddButton);
     }
@@ -92,7 +89,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     // Raised after every validation of the active configuration, with whether it passed.
     internal event EventHandler<bool>? ConfigurationValidated;
 
-    // Raised whenever the tabs are rendered, so other lists of the configurations can follow them.
+    // Raised after configuration edits and project renders so the shell can present the saved configurations.
     internal event EventHandler<ProjectPlanModule>? ConfigurationsRendered;
 
     // The description drawer covers the whole home page, so the window shows and closes it.
@@ -102,12 +99,11 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     // The window owns the project and the runtime state. Editable and the lock are read fresh on every check, so a
     // click never acts on a lock the window no longer shows; editFailed reports an edit that could not be saved.
     internal void Attach(AppLogger logger, Func<ProjectPlanModule?> project, Func<bool> editable,
-        Func<LockReason?> configurationLock, Action<string, Exception> editFailed)
+        Action<string, Exception> editFailed)
     {
         _logger = logger;
         _project = project;
         _editable = editable;
-        _configurationLock = configurationLock;
         _editFailed = editFailed;
     }
 
@@ -132,6 +128,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     internal void ShowProjectUnavailable(string title, string detail)
     {
         _invalidInputDrafts.Clear();
+        _shownConfigurationId = null;
         _expandedTask = null;
         AvailableTasksPanel.Children.Clear();
         PlanItemsPanel.Children.Clear();
@@ -151,7 +148,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         _configurationLockText = reason == LockReason.RunActive
             ? "任务运行中，配置已锁定" : "运行环境处理中，配置暂时锁定";
         UpdateConfigurationLockText();
-        RefreshConfigurationTabStates();
     }
 
     // Below the reference window width the badge shrinks to its icon and a short word; the full reason stays in the
@@ -475,7 +471,8 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         var project = RequireProject();
         _updatingOptionEditors = true;
         try {
-            RenderConfigurationTabs();
+            _shownConfigurationId = project.ActiveConfigurationId;
+            ConfigurationsRendered?.Invoke(this, project);
             RenderAvailableTaskShelf(project);
             RenderPlanItems(project);
             RefreshConfigurationValidity(project);
@@ -500,7 +497,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         ConfigurationValidated?.Invoke(this, valid);
     }
 
-    // Option edits never change the task shelf or tabs. Plan cards are rebuilt only when nested options appear or
+    // Option edits never change the task shelf. Plan cards are rebuilt only when nested options appear or
     // vanish; otherwise the edited control stays in place and keeps its animation and focus.
     private void RefreshAfterOptionSaved(bool rebuildCards)
     {
