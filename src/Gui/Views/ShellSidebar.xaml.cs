@@ -130,6 +130,7 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         SidebarToggleIcon.Symbol = IsCollapsed ? SymbolRegular.PanelLeftExpand24 : SymbolRegular.PanelLeftContract24;
         SidebarToggleButton.ToolTip = action;
         SidebarToggleButton.HorizontalAlignment = IsCollapsed ? Alignment.Center : Alignment.Right;
+        SidebarToggleButton.Margin = IsCollapsed ? new Thickness() : new Thickness(0, 0, 4, 0);
         AutomationProperties.SetName(SidebarToggleButton, action);
         RefreshCompactUpdateMarker();
     }

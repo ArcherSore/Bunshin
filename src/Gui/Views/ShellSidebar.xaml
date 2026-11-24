@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              xmlns:views="clr-namespace:Gui.Views"
-             AutomationProperties.Name="导航">
+             AutomationProperties.Name="导航" FontSize="14">
     <UserControl.Resources>
         <!-- A 32 DIP row: icon, label and trailing content. Compact keeps only the icon. -->
         <Style x:Key="Sidebar.Item" TargetType="views:RailItem">
@@ -25,6 +25,9 @@
                             </Trigger>
                             <Trigger Property="IsActive" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -207,7 +210,7 @@
                                 <StackPanel x:Name="HomeRunningIndicator" Orientation="Horizontal"
                                             Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
                                     <Ellipse Width="7" Height="7" Margin="0,0,6,0" Fill="{DynamicResource Brush.Success}" />
-                                    <TextBlock Text="运行中" Foreground="{DynamicResource Brush.Rail.Running}" />
+                                    <TextBlock Text="运行中" Foreground="{DynamicResource Brush.Success.Foreground}" />
                                 </StackPanel>
                             </Grid>
                         </Grid>
@@ -255,7 +258,7 @@
                                              IsIndeterminate="True" Visibility="Collapsed"
                                              Foreground="{DynamicResource Brush.Primary}" />
                             <TextBlock x:Name="UpdateNavigationText" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource Brush.Primary}" />
+                                       Foreground="{DynamicResource Brush.Rail.UpdateLabel}" />
                         </StackPanel>
                     </Grid>
                 </views:RailItem>
