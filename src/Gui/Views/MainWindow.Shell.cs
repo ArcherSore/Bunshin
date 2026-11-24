@@ -20,7 +20,7 @@ public partial class MainWindow
         Sidebar.NewConfigurationRequested += (_, _) => {
             DismissSidebarOverlay();
             SwitchSection(MainSection.Home);
-            TaskPlanEditor.RequestNewConfiguration();
+            TaskPlanEditor.CreateEmptyConfiguration();
         };
         Sidebar.UpdateRequested += (_, _) => {
             DismissSidebarOverlay();

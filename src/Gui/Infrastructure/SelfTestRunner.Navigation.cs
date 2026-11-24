@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Automation;
+using Gui.Themes;
 using Gui.Views;
 using Updates;
 
@@ -55,6 +56,8 @@ internal static partial class SelfTestRunner
             PumpUntil(() => marker.IsVisible, "取消下载后应恢复新版本标记。");
             ClickOnboarding(window, "CloseUpdateButton");
 
+            CaptureWindowShell(window, project, id);
+
             ClickOnboarding(window, "SidebarToggleButton");
             Require(sidebar.ActualWidth < 100, "侧栏按钮应收起到图标宽度。");
             Require(Named<UIElement>(sidebar, "UpdateNavigationCornerDot").IsVisible,
@@ -78,6 +81,49 @@ internal static partial class SelfTestRunner
                 && Math.Abs(home.ActualWidth - width) < PixelTolerance, "窄窗口可展开侧栏且无须挤占首页。");
             ClickOnboarding(window, "HomeNavigationItem");
             Require(sidebar.ActualWidth < 100 && home.IsVisible, "窄窗口选择页面后应隐藏侧栏浮层。");
+
+            var project = ProjectOf(window);
+            var count = project.Configurations.Count;
+            ClickOnboarding(window, "NewConfigurationItem");
+            var titleBar = Named<Wpf.Ui.Controls.TitleBar>(Named<ShellHeader>(window, "Header"), "TitleBar");
+            Require(project.Configurations.Count == count + 1 && titleBar.Title
+                == project.Configurations.Single(configuration => configuration.Id == project.ActiveConfigurationId).Name,
+                "侧栏可新建配置，页眉随当前配置更新。");
         });
+    }
+
+    private static void CaptureWindowShell(MainWindow window, ProjectModel.ProjectPlanModule project, Guid configurationId)
+    {
+        var screenshots = Environment.GetEnvironmentVariable("BUNSHIN_PANEL_SCREENSHOTS");
+        if (string.IsNullOrEmpty(screenshots)) {
+            return;
+        }
+        Directory.CreateDirectory(screenshots);
+        window.Width = 1440;
+        window.Height = 900;
+        project.RenameConfiguration(configurationId, "一键日常");
+        ClickOnboarding(window, "HomeNavigationItem");
+        var themes = ((App)System.Windows.Application.Current).Themes;
+        var desktop = new DesktopToggle(DesktopAction.Show, true, DesktopStatus.Background);
+        try {
+            foreach (var mode in new[] { AppThemeMode.Light, AppThemeMode.Dark }) {
+                themes.Apply(mode);
+                window.ApplyRuntimeControls(new(new RuntimeAction.Start(true), true, null, desktop, true));
+                Capture("idle");
+                window.ApplyRuntimeControls(new(new RuntimeAction.Stop(true), false, LockReason.RunActive, desktop, true));
+                Capture("running");
+
+                void Capture(string state)
+                {
+                    window.UpdateLayout();
+                    SaveScreenshot(window, Path.Combine(screenshots, $"shell-{mode.ToString().ToLowerInvariant()}-{state}.png"));
+                }
+            }
+            ClickOnboarding(window, "SidebarToggleButton");
+            SaveScreenshot(window, Path.Combine(screenshots, "shell-dark-collapsed.png"));
+            ClickOnboarding(window, "SidebarToggleButton");
+        } finally {
+            themes.Apply(AppThemeMode.Light);
+        }
     }
 }

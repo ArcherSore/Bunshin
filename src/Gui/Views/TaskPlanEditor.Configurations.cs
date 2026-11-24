@@ -239,15 +239,9 @@ public sealed partial class TaskPlanEditor
             : editor != _configurationNameEditor || CommitConfigurationName(unattended);
     }
 
-    // The sidebar's "新建配置" does what the tab strip's button does.
-    internal void RequestNewConfiguration()
-    {
-        if (NewConfigurationButton.IsEnabled) {
-            NewConfigurationButton_Click(NewConfigurationButton, new RoutedEventArgs());
-        }
-    }
+    private void NewConfigurationButton_Click(object sender, RoutedEventArgs e) => CreateEmptyConfiguration();
 
-    private void NewConfigurationButton_Click(object sender, RoutedEventArgs e)
+    internal void CreateEmptyConfiguration()
     {
         ChangeConfiguration(() => {
             var id = Project!.CreateConfiguration();
