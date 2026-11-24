@@ -1,12 +1,8 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options"
-                    xmlns:themes="clr-namespace:Gui.Themes">
+                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
 
     <!-- Same key set as the other palette; values come from the design tokens. -->
-    <Color x:Key="Color.Shadow">#000000</Color>
-    <themes:PaletteColor x:Key="Color.Splitter.Shadow" ResourceKey="Color.Shadow" />
-
     <SolidColorBrush x:Key="Brush.Canvas" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Popover" Color="#FFFFFF" po:Freeze="True" />
@@ -29,6 +25,8 @@
     <SolidColorBrush x:Key="Brush.Text.Disabled" Color="#77000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Inverse" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary" Color="#257DE0" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Primary.Foreground" Color="#1757AC" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.RuntimePanel.SwitchOff" Color="#1F000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Hover" Color="#2370CD" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Pressed" Color="#1D5FB0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Surface" Color="#14257DE0" po:Freeze="True" />
@@ -48,13 +46,21 @@
     <SolidColorBrush x:Key="Brush.Error.Border" Color="#4DC83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Error.Foreground" Color="#A42528" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Transparent" Color="#00FFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Parameter.Nested" Color="#09000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.Field" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.FieldHover" Color="#13000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.Selected" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.SwitchOff" Color="#1A000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.InvalidRow" Color="#0FC83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.Guide" Color="#1F000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Border" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Hover" Color="#0D000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.Active" Color="#1A000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.UpdateBadge" Color="#257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.UpdateLabel" Color="#1757AC" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.Field" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.Action" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.ActionHover" Color="#13000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.SwitchTrack" Color="#1F000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Dialog.Border" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Console.MenuText" Color="#E6000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Activity.ClearDisabled" Color="#77000000" po:Freeze="True" />
@@ -64,7 +70,6 @@
     <SolidColorBrush x:Key="Brush.Illustration.Document" Color="#E0E0E0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Illustration.Detail" Color="#EBEBEB" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Illustration.Ink" Color="#FFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Splitter.FocusRing" Color="#99257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Progress.Track" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Warning.Surface" Color="#1FFBB315" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Warning.SurfaceHover" Color="#33FBB315" po:Freeze="True" />
@@ -77,20 +82,38 @@
     <SolidColorBrush x:Key="Brush.Chart.Category5" Color="#7A3E9D" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Chart.Category6" Color="#C83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Grid" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Track" Color="#08000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="#59000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Selected" Color="#E6000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Sibling" Color="#80000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Other" Color="#2E000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Skipped" Color="#7E5808" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.GridStrong" Color="#1A000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Hatch" Color="#18000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Night" Color="#F4F4F4" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Timeline.Track" Color="#FAFAFA" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Hover" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Current" Color="#1A000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Expanded" Color="#09000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Button" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Tag" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Check" Color="#FFFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Progress" Color="#FF1757AC" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureSurface" Color="#0FC83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureBorder" Color="#33C83839" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Schedule.ChipRemoveHover" Color="#1F000000" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="#77000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Warning" Color="#FBB315" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Now" Color="#257DE0" po:Freeze="True" />
-    <LinearGradientBrush x:Key="Brush.Schedule.NextRun" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
-        <GradientStop Offset="0" Color="#1757AC" />
-        <GradientStop Offset="1" Color="#257DE0" />
-    </LinearGradientBrush>
+    <SolidColorBrush x:Key="Brush.Schedule.Card" Color="#09000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Field" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Hover" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Secondary" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.SecondaryHover" Color="#13000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.SwitchOff" Color="#1A000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.DaySelected" Color="#191919" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.DaySelectedText" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.PresetSelected" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Menu" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Link" Color="#1757AC" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.AccentSurface" Color="#14257DE0" po:Freeze="True" />
     <LinearGradientBrush x:Key="Brush.Scroll.FadeTop" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
         <GradientStop Offset="0" Color="#FFFFFF" />
         <GradientStop Offset="1" Color="#00FFFFFF" />
@@ -98,16 +121,6 @@
     <LinearGradientBrush x:Key="Brush.Scroll.FadeBottom" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
         <GradientStop Offset="0" Color="#00FFFFFF" />
         <GradientStop Offset="1" Color="#FFFFFF" />
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Brush.Splitter.Tether" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
-        <GradientStop Offset="0" Color="#00000000" />
-        <GradientStop Offset="0.5" Color="#33000000" />
-        <GradientStop Offset="1" Color="#00000000" />
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Brush.Splitter.Tether.Dragging" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
-        <GradientStop Offset="0" Color="#00257DE0" />
-        <GradientStop Offset="0.5" Color="#257DE0" />
-        <GradientStop Offset="1" Color="#00257DE0" />
     </LinearGradientBrush>
 
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.06" po:Freeze="True" />

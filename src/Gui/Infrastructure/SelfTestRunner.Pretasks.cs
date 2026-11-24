@@ -157,7 +157,7 @@ internal static partial class SelfTestRunner
             Select(0, false);
             Select(1, false);
             Select(2, false);
-            Require(project.EnabledItems.Count == 0 && !Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
+            Require(project.EnabledItems.Count == 0 && !Named<Button>(window, "StartPlanButton").IsEnabled,
                 "全部取消后不得启动空计划。");
             try {
                 project.CreateRunStartAttempt(project.ActiveConfigurationId);
@@ -195,7 +195,7 @@ internal static partial class SelfTestRunner
                 .SequenceEqual(planText), "任务配置区不能随运行状态展示进度、耗时或执行结果。");
             Require(!Selection(0).IsEnabled && !Selection(2).IsEnabled
                 && Named<TextBlock>(window, "RuntimeStatusTitle").Text == "第二个前置"
-                && Named<Button>(window, "StopTaskHeaderButton").IsEnabled,
+                && Named<Button>(window, "StopPlanButton").IsEnabled,
                 "运行期间勾选被锁定，控制面板显示当前前置任务并可停止。");
             var lastWorker = idle with { LastRun = run with { State = RunState.Succeeded } };
             var kinds = project.SelectedItems.Select(item => (item.Kind, item.Name)).ToArray();
@@ -214,13 +214,13 @@ internal static partial class SelfTestRunner
             };
             Observe(idle with { RunState = RunState.Running, ActiveRun = filteredRun });
             Require(Named<TextBlock>(window, "RuntimeStatusTitle").Text == "第二个前置"
-                && Named<TextBlock>(window, "RunProgressCaption").Text == "运行中 · 第 1 / 2 项",
+                && Named<TextBlock>(window, "RunProgressCaption").Text == "1 / 2",
                 "跳过前置项后，控制面板应显示实际运行项和过滤后的进度。");
             Observe(idle);
             Select(0, true);
             Click(ButtonNamed(Cards()[2], "从执行计划移除 Real task"));
             Require(project.SelectedTaskNames.Count == 0 && project.SelectedItemCount == 2
-                && Named<Button>(window, "StartTaskHeaderButton").IsEnabled,
+                && Named<Button>(window, "StartPlanButton").IsEnabled,
                 "只选择前置任务时仍可开始，移除普通同名任务不得影响前置任务。");
             var onlyPre = project.CreateRunStartAttempt(project.ActiveConfigurationId).Plan;
             var starting = run with {
@@ -230,7 +230,7 @@ internal static partial class SelfTestRunner
                     : Snapshot(item, PlanItemState.Pending, null, null)).ToArray()
             };
             Observe(idle with { RunState = RunState.Starting, ActiveRun = starting });
-            Require(Named<Button>(window, "StopTaskHeaderButton").IsEnabled,
+            Require(Named<Button>(window, "StopPlanButton").IsEnabled,
                 "前置任务启动阶段也必须提供停止，不能等待游戏控制器创建。");
             Observe(idle);
             Click(ButtonNamed(Cards()[0], "从执行计划移除 启动并登录"));

@@ -19,17 +19,17 @@ internal static partial class SelfTestRunner
     private static void VerifyStartupAndExitWiring(AppLogger logger, string directory)
     {
         WithRuntimeControlWindow(logger, Path.Combine(directory, "startup"), window => {
-            Require(HeaderShows(window, "PrepareEnvironmentButton", enabled: true) && ConfigurationEditable(window)
+            Require(HeaderShows(window, "StartSessionMenuItem", enabled: true) && ConfigurationEditable(window)
                 && !Named<UIElement>(window, "ConfigurationLockBadge").IsVisible, "无分身启动后应可准备运行环境并编辑配置。");
             window.SetExitInProgress(true);
-            Require(HeaderShows(window, "PrepareEnvironmentButton", enabled: false) && !ConfigurationEditable(window)
+            Require(HeaderShows(window, "StartSessionMenuItem", enabled: false) && !ConfigurationEditable(window)
                 && LockText(window) == "运行环境处理中，配置暂时锁定", "退出过程中应禁用运行命令并锁定配置。");
             window.SetExitInProgress(false);
-            Require(HeaderShows(window, "PrepareEnvironmentButton", enabled: true) && ConfigurationEditable(window),
+            Require(HeaderShows(window, "StartSessionMenuItem", enabled: true) && ConfigurationEditable(window),
                 "取消退出后应恢复运行命令与配置编辑。");
         });
         WithRuntimeControlWindow(logger, Path.Combine(directory, "no-project"), window => {
-            Require(HeaderShows(window, "PrepareEnvironmentButton", enabled: false) && !ConfigurationEditable(window)
+            Require(HeaderShows(window, "StartSessionMenuItem", enabled: false) && !ConfigurationEditable(window)
                 && !Named<UIElement>(window, "ConfigurationLockBadge").IsVisible,
                 "项目加载失败后不应能准备运行环境，也不显示配置锁定说明。");
         }, loadProject: false);
@@ -51,7 +51,7 @@ internal static partial class SelfTestRunner
             (bool Prepare, bool Editable, bool Replay, string? ReplayTip)? duringLogoff = null;
             var replay = SettingsActionFor(window, "onboarding.replay");
             wts.DuringLogoff = _ => window.Dispatcher.Invoke(() => {
-                duringLogoff = (HeaderShows(window, "PrepareEnvironmentButton", enabled: false),
+                duringLogoff = (HeaderShows(window, "StartSessionMenuItem", enabled: false),
                     ConfigurationEditable(window), replay.IsEnabled, replay.ToolTip);
             });
             var ending = session.TerminateAsync();
@@ -59,7 +59,7 @@ internal static partial class SelfTestRunner
             ending.GetAwaiter().GetResult();
             Require(duringLogoff == (true, false, false, "当前操作完成后可查看新手指引"),
                 "结束分身期间应禁用准备运行环境、锁定配置，并暂不可重看新手指引。");
-            Require(HeaderShows(window, "PrepareEnvironmentButton", enabled: true) && ConfigurationEditable(window)
+            Require(HeaderShows(window, "StartSessionMenuItem", enabled: true) && ConfigurationEditable(window)
                 && replay.IsEnabled && replay.ToolTip is null, "分身结束后应回到可准备运行环境并可重看新手指引。");
         }, session: session, runOperation: operations.RunAsync);
     }
@@ -103,7 +103,7 @@ internal static partial class SelfTestRunner
                 Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended && progressDuringLogoff == true,
                     "从窗口外结束时，窗口应显示结束进度并禁用命令。");
                 PumpOnboarding();
-                Require(HeaderShows(window, "PrepareEnvironmentButton", enabled: true) && ConfigurationEditable(window),
+                Require(HeaderShows(window, "StartSessionMenuItem", enabled: true) && ConfigurationEditable(window),
                     "结束分身后迟到的 Worker 断线不应让运行控制回到重试。");
             }, session: session, coordinator: coordinator, environment: environment);
         });
@@ -225,13 +225,12 @@ internal static partial class SelfTestRunner
                             System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
                         Require(typeof(MainWindow).GetField("_lastStartKey", flags)!.GetValue(window) is null,
                             "修改勾选必须清除旧的启动重试请求。");
-                        var button = scenario == "prepare-only" ? "StartSessionMenuItem" : "PrepareEnvironmentButton";
                         Task<bool>? launch = null;
                         if (scenario == "prepare-only") {
                             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                             var holder = environment.RunExclusiveAsync(() => release.Task);
                             try {
-                                Named<System.Windows.Controls.MenuItem>(window, button).RaiseEvent(
+                                Named<System.Windows.Controls.MenuItem>(window, "StartSessionMenuItem").RaiseEvent(
                                     new RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
                                 window.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
                                 Require(prepareCount == 0, "闸门仍被占用时，仅启动分身不得提前准备。");
@@ -246,7 +245,7 @@ internal static partial class SelfTestRunner
                             choice.Selected = choice.Options.Single(option => option.Id == CurrentProject().ActiveConfigurationId.ToString());
                             launch = window.AutoRunOnLaunchAsync();
                         } else {
-                            Click(window, button);
+                            Click(window, "StartPlanButton");
                         }
                         PumpUntil(() => prepareCount == 1 && coordinator.Snapshot.SnapshotFresh,
                             "启动并运行必须先完成环境准备和 Worker 同步。");
@@ -377,10 +376,10 @@ internal static partial class SelfTestRunner
             };
             await worker.Pipe.WriteAsync(StateEvent(cancelled), cancellationToken);
         }, coordinator => WithRuntimeControlWindow(logger, Path.Combine(directory, "stop-window"), window => {
-            PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true),
+            PumpUntil(() => HeaderShows(window, "StopPlanButton", enabled: true),
                 "Worker 报告运行中的 Run 后应显示可用的停止任务。");
             Require(LockText(window) == "任务运行中，配置已锁定", "运行中应说明配置已锁定。");
-            Click(window, "StopTaskHeaderButton");
+            Click(window, "StopPlanButton");
             PumpUntil(() => operations.Entered == 1, "点击停止任务应开始停止操作。");
             Require(ProgressShows(window, "正在停止任务"), "停止操作进行中应显示停止进度。");
             replaceRun.SetResult();
@@ -388,9 +387,9 @@ internal static partial class SelfTestRunner
                 "排队期间旧 Run 应已结束，后继 Run 应已开始。");
             operations.Release();
             PumpUntil(() => window.CurrentOperation == PendingOperation.None, "旧停止请求应返回。");
-            Require(stops.IsEmpty && HeaderShows(window, "StopTaskHeaderButton", enabled: true),
+            Require(stops.IsEmpty && HeaderShows(window, "StopPlanButton", enabled: true),
                 "旧的停止点击不得停止后继 Run。");
-            Click(window, "StopTaskHeaderButton");
+            Click(window, "StopPlanButton");
             PumpUntil(() => operations.Entered == 2, "用户可以单独停止后继 Run。");
             operations.Release();
             PumpUntil(() => stoppingSent.Task.IsCompleted, "Worker 未收到停止请求。");
@@ -398,7 +397,7 @@ internal static partial class SelfTestRunner
             PumpOnboarding();
             Require(ProgressShows(window, "正在停止任务"), "Run 停止中应保持停止进度。");
             sendCancelled.TrySetResult();
-            PumpUntil(() => HeaderShows(window, "PrepareEnvironmentButton", enabled: true)
+            PumpUntil(() => HeaderShows(window, "StartSessionMenuItem", enabled: true)
                 && ConfigurationEditable(window), "Run 取消后应回到准备运行环境并解除配置锁定。");
         }, coordinator: coordinator, runOperation: operations.RunAsync));
     }
@@ -449,7 +448,7 @@ internal static partial class SelfTestRunner
                 var ending = environment.EndAsync(() => true);
                 PumpUntil(() => ending.IsCompleted, "结束运行环境未完成。");
                 Require(ending.GetAwaiter().GetResult() == EnvironmentEndResult.Ended, "结束运行环境应确认完成。");
-                PumpUntil(() => HeaderShows(window, "PrepareEnvironmentButton", enabled: true)
+                PumpUntil(() => HeaderShows(window, "StartSessionMenuItem", enabled: true)
                     && ConfigurationEditable(window), "结束运行环境后应回到准备运行环境，并可编辑配置。");
             }, session: session, coordinator: coordinator, environment: environment, endEnvironment: () => {
                 endRequests++;
@@ -462,7 +461,7 @@ internal static partial class SelfTestRunner
     {
         WithRunningFakeWorker(logger, Path.Combine(directory, "no-project-stop"), (_, _) => Task.CompletedTask,
             coordinator => WithRuntimeControlWindow(logger, Path.Combine(directory, "no-project-window"), window => {
-                PumpUntil(() => HeaderShows(window, "StopTaskHeaderButton", enabled: true),
+                PumpUntil(() => HeaderShows(window, "StopPlanButton", enabled: true),
                     "项目未加载时，运行中的 Run 仍应可以停止。");
             }, coordinator: coordinator, loadProject: false));
     }
@@ -592,8 +591,16 @@ internal static partial class SelfTestRunner
         }
     }
 
-    private static bool HeaderShows(MainWindow window, string control, bool enabled) =>
-        ShownHeaderControls(window).SequenceEqual([control]) && Named<UIElement>(window, control).IsEnabled == enabled;
+    private static bool HeaderShows(MainWindow window, string control, bool enabled)
+    {
+        var element = Named<UIElement>(window, control);
+        var shown = ShownHeaderControls(window);
+        return element.IsEnabled == enabled && (control switch {
+            "StartSessionMenuItem" => element.Visibility == Visibility.Visible && shown.Length == 0,
+            "StartPlanButton" or "StopPlanButton" => element.IsVisible && shown.Length == 0,
+            _ => shown.SequenceEqual([control])
+        });
+    }
 
     private static bool ProgressShows(MainWindow window, string text)
     {
