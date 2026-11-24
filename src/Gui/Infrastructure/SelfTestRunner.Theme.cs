@@ -220,6 +220,18 @@ internal static partial class SelfTestRunner
             $"{element} 应呈现 {key} 的颜色 {expected}，实际为 {actual}。");
     }
 
+    private static void RequireReadableText(TextBlock text, Border card)
+    {
+        var foreground = ((SolidColorBrush)text.Foreground).Color;
+        var background = ((SolidColorBrush)card.Background).Color;
+        var backgroundLight = Luminance(background);
+        var textLight = foreground.ScA * Luminance(foreground) + (1 - foreground.ScA) * backgroundLight;
+        var contrast = (Math.Max(textLight, backgroundLight) + 0.05) / (Math.Min(textLight, backgroundLight) + 0.05);
+        Require(contrast >= 4.5, $"{text.Name} 的文字对比度应至少为 4.5，实际为 {contrast:F2}。");
+
+        static double Luminance(Color color) => 0.2126 * color.ScR + 0.7152 * color.ScG + 0.0722 * color.ScB;
+    }
+
     private static void CheckScheduleColors(ScheduleView page, ResourceDictionary palette)
     {
         var category = ((SolidColorBrush)palette["Brush.Chart.Category1"]).Color;

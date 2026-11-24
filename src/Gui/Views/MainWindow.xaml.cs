@@ -1339,7 +1339,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
                 ? $"{progress.EndedAtUtc?.ToLocalTime():HH:mm} 完成"
                 : RunProgress.Caption(progress).Replace("上次运行：", "");
         RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active ? "Brush.Primary"
-            : progress.Failed > 0 ? "Brush.Error.Foreground" : "Brush.Success");
+            : progress.Failed > 0 ? "Brush.Error.Foreground" : "Brush.Success.Foreground");
         RunProgressCaption.FontWeight = FontWeights.SemiBold;
     }
 
@@ -1395,7 +1395,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private static (string Surface, string Foreground) ToneBrushes(StatusTone tone) => tone switch {
         StatusTone.Busy => ("Brush.Warning.Surface", "Brush.Warning.Foreground"),
-        StatusTone.Ok => ("Brush.Tasks.Accent.Surface", "Brush.Success"),
+        StatusTone.Ok => ("Brush.Tasks.Accent.Surface", "Brush.Success.Foreground"),
         StatusTone.Run => ("Brush.Primary.Surface", "Brush.Primary"),
         StatusTone.Bad => ("Brush.Error.Surface", "Brush.Error"),
         _ => ("Brush.Surface.Disabled", "Brush.Text.Secondary")

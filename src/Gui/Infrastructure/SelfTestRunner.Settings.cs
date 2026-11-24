@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -93,6 +95,21 @@ internal static partial class SelfTestRunner
         Require(applied[^1] == AppThemeMode.FollowSystem
             && ApplicationSettings.ReadAppearance(directory) == AppThemeMode.FollowSystem
             && Create().Appearance.Selected.Id is null, "选回跟随系统后应立即应用并保存。");
+
+        settings.Appearance.Selected = settings.Appearance.Options.Single(option => option.Id == "dark");
+        var preference = new FileInfo(Path.Combine(directory, "config", "appearance.txt"));
+        using var identity = WindowsIdentity.GetCurrent();
+        var denyRead = new FileSystemAccessRule(identity.User!, FileSystemRights.ReadData, AccessControlType.Deny);
+        var security = preference.GetAccessControl();
+        security.AddAccessRule(denyRead);
+        preference.SetAccessControl(security);
+        try {
+            Require(ApplicationSettings.ReadAppearance(directory) == AppThemeMode.FollowSystem
+                && Create().Appearance.Selected.Id is null, "外观文件不可读时，启动和设置页都应回到跟随系统。");
+        } finally {
+            security.RemoveAccessRule(denyRead);
+            preference.SetAccessControl(security);
+        }
     }
 
     private static void VerifyDeclarativeSettings(AppLogger logger, string testDirectory)
