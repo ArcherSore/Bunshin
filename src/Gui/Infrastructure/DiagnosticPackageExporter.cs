@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
+using Gui.ChildSession;
 using Protocol;
 
 namespace Gui.Infrastructure;
@@ -19,9 +20,10 @@ internal sealed class DiagnosticPackageExporter(AppLogger logger)
     private const long EndOfCentralDirectoryBytes = 22;
     private const int KeptExports = 10;
     private const string TimestampFormat = "yyyyMMdd-HHmmss";
+    private const string WorkerBootstrapEntry = "logs/" + ProtocolConstants.WorkerBootstrapLogFileName;
     private static readonly Regex ExportTimestamp = new(@"\d{8}-\d{6}\z", RegexOptions.CultureInvariant);
 
-    private sealed record Source(string Path, string Entry, bool Text, long Length);
+    private sealed record Source(string Entry, bool Text, long Length, Func<Stream> OpenRead);
 
     internal DiagnosticExportResult Export(string applicationDirectory, string logDirectory, string? projectName,
         string? projectVersion, DateTime now, DiagnosticExportLimits? limits = null)
@@ -91,13 +93,17 @@ internal sealed class DiagnosticPackageExporter(AppLogger logger)
     private static IEnumerable<Source> Select(string applicationDirectory, string logDirectory,
         DiagnosticExportLimits limits, Action<string, Exception> skip)
     {
+        var snapshot = Encoding.UTF8.GetBytes(ChildSessionEnvironment.ReadSnapshot());
         var debug = Path.Combine(applicationDirectory, "debug");
         var debugReadable = MaaDebugImages.TryList(applicationDirectory, debug, skip, out _);
         var config = Path.Combine(applicationDirectory, "config");
         var frameworkLog = debugReadable ? Single(applicationDirectory, "debug/maafw.log") : [];
 
-        // Small, and the only record of a Worker that never reached the GUI: older logs must not push it back a volume.
-        var first = Single(applicationDirectory, $"logs/{ProtocolConstants.WorkerBootstrapLogFileName}")
+        // Both small, and the first things read when a Child Session or Worker never came up: older logs must not
+        // push them back a volume.
+        var first = Single(applicationDirectory, WorkerBootstrapEntry)
+            .Append(new Source("logs/child-session-environment.txt", true, snapshot.Length,
+                () => new MemoryStream(snapshot, writable: false)))
             .Concat(Files(logDirectory, $"{AppIdentity.Name}-*.log", "logs", skip)
                 .OrderByDescending(file => file.LastWriteTimeUtc).ThenBy(file => file.Name, StringComparer.Ordinal)
                 .Select(file => TextFile(file, "logs")))
@@ -118,7 +124,7 @@ internal sealed class DiagnosticPackageExporter(AppLogger logger)
             .Select(file => (File: file, Entry: MaaDebugImages.RelativePath(applicationDirectory, file.FullName)))
             .OrderByDescending(image => image.File.LastWriteTimeUtc)
             .ThenBy(image => image.Entry, StringComparer.Ordinal)
-            .Select(image => new Source(image.File.FullName, image.Entry, false, image.File.Length)).ToArray();
+            .Select(image => FromFile(image.File, image.Entry, false)).ToArray();
         static bool IsFailure(Source image) => image.Entry.StartsWith("debug/on_error/", StringComparison.Ordinal);
         var backups = FrameworkLogBackups(debug, skip).Select(file => TextFile(file, "debug"));
         var rest = images.Where(IsFailure)
@@ -134,13 +140,16 @@ internal sealed class DiagnosticPackageExporter(AppLogger logger)
         sources.TakeWhile(source => (budget -= source.Length) >= 0);
 
     private static Source TextFile(FileInfo file, string folder) =>
-        new(file.FullName, $"{folder}/{file.Name}", true, file.Length);
+        FromFile(file, $"{folder}/{file.Name}", true);
+
+    private static Source FromFile(FileInfo file, string entry, bool text) =>
+        new(entry, text, file.Length, () => file.Open(FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
 
     // Under the application directory, where the entry name is also the relative path.
     private static Source[] Single(string applicationDirectory, string entry)
     {
         var file = new FileInfo(Path.Combine(applicationDirectory, entry));
-        return file.Exists ? [new Source(file.FullName, entry, true, file.Length)] : [];
+        return file.Exists ? [FromFile(file, entry, true)] : [];
     }
 
     private static FileInfo[] Files(string directory, string pattern, string label, Action<string, Exception> skip)
@@ -205,10 +214,10 @@ internal sealed class DiagnosticPackageExporter(AppLogger logger)
         return true;
     }
 
-    private static FileStream? TryOpen(Source source, Action<string, Exception> skip)
+    private static Stream? TryOpen(Source source, Action<string, Exception> skip)
     {
         try {
-            return new FileStream(source.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return source.OpenRead();
         } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
             skip(source.Entry, exception);
             return null;

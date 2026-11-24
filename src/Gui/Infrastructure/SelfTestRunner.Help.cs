@@ -18,6 +18,12 @@ internal static partial class SelfTestRunner
             "Hello 场景应直接给出恢复指引，不混入原始 RDP 错误和断开码。");
         Require(MainWindow.GetWindowsHelloGuidance(prepare, failure, false) is null,
             "未开启 Hello 限制时应保留原始故障说明。");
+        var disconnected = new ChildSessionConnectionFailedEventArgs("RDP 断开", 516, 0);
+        Require(MainWindow.GetWindowsHelloGuidance(prepare, new ChildSessionConnectionException(disconnected), true)
+            is null, "未能建立连接时，即使开启 Hello 限制也应保留原始故障说明。");
+        var logonError = new ChildSessionConnectionFailedEventArgs("RDP 登录失败", 516);
+        Require(MainWindow.GetWindowsHelloGuidance(prepare, new ChildSessionConnectionException(logonError), true)
+            == guidance, "登录事件的错误码不能按断开原因解释。");
         Require(MainWindow.GetWindowsHelloGuidance(prepare,
             new InvalidOperationException("Worker 启动失败"), true) is null,
             "即使开启 Hello 限制，也不能把 Worker 等其他准备失败归因于分身登录。");

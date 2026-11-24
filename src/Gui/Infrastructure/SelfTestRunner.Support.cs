@@ -383,6 +383,8 @@ internal static partial class SelfTestRunner
         }, () => true);
     }
 
+    private const string EnvironmentEntry = "logs/child-session-environment.txt";
+
     private static void VerifyDiagnosticPackage(AppLogger logger, string testDirectory)
     {
         var root = Path.Combine(testDirectory, "diagnostics");
@@ -426,11 +428,15 @@ internal static partial class SelfTestRunner
         foreach (var path in included) {
             Require(entries.Contains(relative(path)), $"诊断包应包含：{relative(path)}");
         }
-        Require(entries[0] == "logs/Worker.bootstrap.log", "启动失败日志不能被大量旧日志挤到后面的分卷。");
+        Require(entries[0] == "logs/Worker.bootstrap.log" && entries[1] == EnvironmentEntry,
+            "启动失败日志和环境快照应排在第一卷最前面。");
         foreach (var path in excluded) {
             Require(!entries.Contains(relative(path)), $"诊断包不应包含：{relative(path)}");
         }
         using (var archive = ZipFile.OpenRead(complete.FirstVolume)) {
+            using var snapshot = new StreamReader(archive.GetEntry(EnvironmentEntry)!.Open());
+            var keys = snapshot.ReadToEnd().Split('\n').Select(line => line.Split('=', 2)[0]).ToHashSet();
+            Require(keys.Contains("ServiceDll") && keys.Contains("TermService"), "环境快照应包含服务 DLL 和服务状态。");
             using var reader = new StreamReader(archive.GetEntry("debug/on_error/new.png")!.Open());
             Require(reader.ReadToEnd() == "debug/on_error/new.png", "诊断图片必须按原始内容导出。");
             Require(archive.GetEntry("debug/on_error/new.png")!.CompressedLength
@@ -501,8 +507,8 @@ internal static partial class SelfTestRunner
         Require(volumes[0] == result.FirstVolume, "定位的应是第一卷。");
         Require(volumes.All(volume => new FileInfo(volume).Length <= limits.VolumeBytes), "每卷都不能超过上限。");
         var all = volumes.SelectMany(VolumeEntries).ToArray();
-        Require(all.Length == 13 && all.Distinct().Count() == 13, "所有文件都应进入分卷，且不能重复。");
-        Require(all[0] == "logs/Bunshin-current.log", "当前日志应排在失败截图之前。");
+        Require(all.Length == 14 && all.Distinct().Count() == 14, "所有文件都应进入分卷，且不能重复。");
+        Require(all[1] == "logs/Bunshin-current.log", "当前日志应排在失败截图之前。");
         Require(all.Where(entry => entry.Contains("on_error")).SequenceEqual(
             Enumerable.Range(1, 6).Select(index => $"debug/on_error/error-{index}.png")),
             "失败截图应跨卷保持从新到旧的顺序。");
@@ -536,7 +542,7 @@ internal static partial class SelfTestRunner
             "低压缩率文本也不能使多文件分卷超过上限。");
         all = volumes.SelectMany(VolumeEntries).ToArray();
         Require(all.SequenceEqual(Enumerable.Range(0, 3).Select(index => $"logs/Bunshin-{index}.log")
-            .Append("debug/on_error/latest.png")), "日志占满首卷时，失败截图仍应完整导出并保持顺序。");
+            .Prepend(EnvironmentEntry).Append("debug/on_error/latest.png")), "日志占满首卷时，失败截图仍应完整导出并保持顺序。");
 
         // Even a highly compressible oversized source stays alone, rather than sharing its smaller output volume.
         WriteFixture(textRoot, "logs/Bunshin-large.log", new byte[30_000], 10);

@@ -13,13 +13,13 @@ namespace Gui.ChildSession;
 // The original BetterGI code is licensed under GPL-3.0; see THIRD_PARTY_NOTICES.md.
 // This file has been modified and is distributed as part of Bunshin (GPL-3.0-only).
 // Dropped: DI/logging/DispatcherTimer/retry-reconnect/InstanceService/Config/WPF window.
-// Kept: the connect->await LoginCompleted(timeout 60s)->report failure flow, and the
+// Kept: the connect->await LoginCompleted(timeout 90s)->report failure flow, and the
 // enable / query / logoff surface (delegated to ChildSessionNativeMethods).
 // All ActiveX access happens on the UI thread (caller is the RdpPreviewWindow, single STA thread).
 internal sealed class ChildSessionService
 {
     private static readonly DrawingSize DefaultDesktopSize = new(1920, 1080);
-    private static readonly TimeSpan ConnectionTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan ConnectionTimeout = TimeSpan.FromSeconds(90);
 
     private readonly RdpPreviewWindow _window;
     private readonly RdpActiveXHost _host;
@@ -84,12 +84,14 @@ internal sealed class ChildSessionService
             } catch (OperationCanceledException) {
                 TryDisconnect();
                 throw new InvalidOperationException(
-                    $"桌面分身连接及登录初始化未能在 {ConnectionTimeout.TotalSeconds:0} 秒内完成。");
+                    $"桌面分身连接及登录初始化未能在 {ConnectionTimeout.TotalSeconds:0} 秒内完成。"
+                    + "如果弹出了登录窗口，请检查它是否被其他窗口挡住。");
             }
 
             if (!ok) {
+                var failure = _lastFailure;
                 TryDisconnect();
-                throw new ChildSessionConnectionException(_lastFailure?.Message ?? "RDP 连接失败。");
+                throw new ChildSessionConnectionException(failure);
             }
 
             ChildSessionId = ChildSessionNativeMethods.TryGetChildSessionId();
@@ -128,4 +130,14 @@ internal sealed class ChildSessionService
 }
 
 // Identifies an RDP-reported failure before login completes, without changing the connection or recovery flow.
-internal sealed class ChildSessionConnectionException(string message) : InvalidOperationException(message);
+internal sealed class ChildSessionConnectionException(string message, bool connectionNotEstablished = false)
+    : InvalidOperationException(message)
+{
+    public bool ConnectionNotEstablished { get; } = connectionNotEstablished;
+
+    // Only OnDisconnected supplies an extended reason (including zero). Logon and fatal codes have other meanings.
+    public ChildSessionConnectionException(ChildSessionConnectionFailedEventArgs? failure)
+        : this(failure?.Message ?? "RDP 连接失败。", failure is {
+            ExtendedErrorCode: not null, ErrorCode: 260 or 264 or 516 or 520 or 772 or 1028 or 1288 or 2308
+        }) { }
+}
