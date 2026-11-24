@@ -132,26 +132,30 @@ internal static partial class SelfTestRunner
     {
         WithPlanWindow(logger, testDirectory, project, (window, _) => {
             InvokeEditor(window, "RenderTaskPlan");
-            var button = (Button)window.TaskPlanEditor.FindName("PresetConfigurationButton");
-            Require(button.Visibility == Visibility.Visible, "有预设时必须展示新建入口。");
-            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var button = window.Sidebar.NewConfigurationItem;
+            ClickConfigurationButton(button);
             var menu = button.ContextMenu!;
-            Require(menu.Items.Count == 3 && ((MenuItem)menu.Items[0]).Header as string == "日常预设",
+            var submenu = menu.Items.OfType<MenuItem>().Single(item => item.Name == "CreatePresetConfigurationMenuItem");
+            var presets = submenu.Items.OfType<MenuItem>().Where(item => item.IsEnabled).ToArray();
+            Require(presets.Length == 3 && presets[0].Header as string == "日常预设",
                 "预设菜单必须按项目顺序显示名称。");
-            menu.IsOpen = false;
             var count = project.Configurations.Count;
-            ((MenuItem)menu.Items[1]).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            InvokeConfigurationMenuItem(presets[1]);
             Require(project.Configurations.Count == count + 1 && project.Configurations[^1].Name == "startup",
                 "点击预设菜单必须创建并激活普通配置。");
             window.SetPendingOperation(Views.PendingOperation.PreparingEnvironment);
-            ((MenuItem)menu.Items[1]).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-            Require(!button.IsEnabled && project.Configurations.Count == count + 1,
-                "运行环境处理中必须同时锁住预设按钮及已打开的菜单操作。");
+            InvokeConfigurationMenuItem(presets[1]);
+            Require(!button.IsEnabled && !menu.IsOpen && project.Configurations.Count == count + 1,
+                "运行环境处理中必须锁住新建操作并关闭菜单。");
+            window.SetPendingOperation(Views.PendingOperation.None);
             var plain = CreateProjectFixture(Path.Combine(testDirectory, "no-presets"));
             var plainPath = Path.Combine(plain, "config.json");
             SetOnboardingField(window, "_projectPlan", ProjectPlanModule.Open(plain, plainPath));
             InvokeEditor(window, "RenderTaskPlan");
-            Require(button.Visibility == Visibility.Collapsed, "未声明预设时必须隐藏新建入口。");
+            ClickConfigurationButton(button);
+            Require(button.ContextMenu?.Items.OfType<MenuItem>().Single().Name == "CreateEmptyConfigurationMenuItem",
+                "未声明预设时只保留新建空配置。");
+            button.ContextMenu!.IsOpen = false;
         });
     }
 }

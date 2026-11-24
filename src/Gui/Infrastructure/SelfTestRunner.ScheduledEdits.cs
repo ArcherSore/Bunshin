@@ -37,8 +37,7 @@ internal static partial class SelfTestRunner
                 && !activity.Any(e => e.Message.StartsWith("启动「")),
                 "配置替换失败时，运行动态应显示一次目标配置失败且没有启动记录。");
             Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession
-                && window.TaskPlanEditor.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
-                    { Tag: Guid selected } && selected == original && project.ActiveConfigurationId == original
+                && window.Sidebar.ConfigurationList.ActiveConfigurationId == original && project.ActiveConfigurationId == original
                 && saved.SequenceEqual(File.ReadAllBytes(path)),
                 "配置替换失败必须保留当前标签和配置文件，且不注销旧分身。");
         }, session: session, captureProcesses: () => [],
@@ -119,12 +118,11 @@ internal static partial class SelfTestRunner
                 window.UpdateLayout();
                 TextBox editor;
                 if (rename) {
-                    var tabs = Named<System.Windows.Controls.TabControl>(window, "ConfigurationTabs");
-                    var tab = (System.Windows.Controls.TabItem)tabs.SelectedItem;
-                    tab.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice,
-                        PresentationSource.FromVisual(tab), 0, Key.F2) { RoutedEvent = Keyboard.KeyDownEvent });
-                    window.UpdateLayout();
-                    editor = ConfigurationDescendants(tab).OfType<TextBox>().Single();
+                    var row = ConfigurationRows(window).Single(row => row.Id == id);
+                    row.SelectButton.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice,
+                        PresentationSource.FromVisual(row.SelectButton), 0, Key.F2) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                    editor = row.NameEditor;
+                    PumpUntil(() => editor.IsKeyboardFocused, "重命名后应聚焦侧栏名称输入框。");
                 } else {
                     editor = ConfigurationDescendants(Named<DependencyObject>(window, "PlanItemsPanel"))
                         .OfType<TextBox>().Single(box => AutomationProperties.GetName(box) == "Recipient");

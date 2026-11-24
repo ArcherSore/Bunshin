@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -109,7 +108,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
         ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
-            () => CurrentControls.ConfigurationLock, HandleOperationError);
+            HandleOperationError);
         TaskPlanEditor.PlanEdited += (_, _) => {
             _lastStartKey = null;
             _editVersion++;
@@ -125,6 +124,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         };
         TaskPlanEditor.TaskDescriptionRequested += (_, task) => OpenTaskDescriptionDrawer(task);
         TaskPlanEditor.TaskDescriptionCloseRequested += (_, _) => CloseTaskDescriptionDrawer();
+        TaskPlanEditor.StartRequested += StartPlanButton_Click;
+        TaskPlanEditor.StopRequested += StopRunButton_Click;
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
         _sessionManager = sessionManager;
         _workerCoordinator = workerCoordinator;
@@ -166,7 +167,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
         StateChanged += MainWindow_StateChanged;
-        SizeChanged += (_, _) => TaskPlanEditor.UpdateConfigurationLockText();
         RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
         foreach (var routedEvent in new[] {
             MouseEnterEvent, MouseLeaveEvent, MouseMoveEvent, GotKeyboardFocusEvent, LostKeyboardFocusEvent,
@@ -288,7 +288,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         Themes.ThemeService.InitializeWindow(this);
         var source = PresentationSource.FromVisual(this) as HwndSource;
         source?.AddHook(_themes.SystemThemeHook);
-        TaskPlanEditor.AddConfigurationWheelHook(source);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
@@ -303,7 +302,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             _onboardingClosed = true;
             EndOnboarding(handled: false);
             RemoveModalWindowHook();
-            TaskPlanEditor.RemoveConfigurationWheelHook();
             _runTimer.Stop();
             _scheduleTimer.Stop();
             _forcedStartTimer.Stop();
@@ -542,6 +540,33 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             ShowActionableError("保存自动启动分身设置失败", exception, "请检查配置目录写入权限。", offerLogDirectory: false);
         }
     }
+
+    private void StartPlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        switch (CurrentControls.Action) {
+            case RuntimeAction.Prepare { Enabled: true } when PlanStartBlocker(CurrentControls.Action) is null:
+                PrepareAndRunButton_Click(sender, e);
+                break;
+            case RuntimeAction.Start { Enabled: true }:
+                StartRunButton_Click(sender, e);
+                break;
+            case RuntimeAction.Retry { Enabled: true }:
+                RetryRuntimeHeaderButton_Click(sender, e);
+                break;
+            default:
+                LogIgnoredAction();
+                break;
+        }
+    }
+
+    private StartBlocker? PlanStartBlocker(RuntimeAction action) => action switch {
+        RuntimeAction.Start start => start.Blocker,
+        RuntimeAction.Retry retry => retry.Blocker,
+        RuntimeAction.Prepare { Enabled: false } => StartBlocker.CommandsUnavailable,
+        RuntimeAction.Prepare when _projectPlan?.EnabledItems.Count is null or 0 => StartBlocker.NoTasks,
+        RuntimeAction.Prepare when !_projectConfigurationValid => StartBlocker.ConfigurationInvalid,
+        _ => null
+    };
 
     private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
     {

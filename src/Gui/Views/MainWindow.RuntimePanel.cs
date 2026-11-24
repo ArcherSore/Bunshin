@@ -14,12 +14,9 @@ public partial class MainWindow
     private void InitializeRuntimePanel()
     {
         RuntimeSidebar.Attach(_settings);
-        RuntimeSidebar.PrepareEnvironmentButton.Click += PrepareAndRunButton_Click;
         RuntimeSidebar.StartSessionMenuItem.Click += PrepareEnvironmentButton_Click;
         RuntimeSidebar.RetryEnvironmentButton.Click += RetryRuntimeHeaderButton_Click;
         RuntimeSidebar.RecoverEnvironmentButton.Click += RecoverEnvironmentButton_Click;
-        RuntimeSidebar.StartTaskHeaderButton.Click += StartRunButton_Click;
-        RuntimeSidebar.StopTaskHeaderButton.Click += StopRunButton_Click;
         RuntimeSidebar.DesktopViewButton.Click += DesktopViewButton_Click;
         RuntimeSidebar.OpenLogsMenuItem.Click += OpenLogsMenuItem_Click;
         RuntimeSidebar.EndEnvironmentMenuItem.Click += EndEnvironmentMenuItem_Click;
@@ -35,21 +32,14 @@ public partial class MainWindow
         ApplyDesktopToggle(state.Desktop);
 
         var action = state.Action;
-        RuntimeSidebar.PrepareEnvironmentButton.Visibility = Visible(action is RuntimeAction.Prepare);
-        RuntimeSidebar.PrepareEnvironmentButton.IsEnabled = action is RuntimeAction.Prepare { Enabled: true };
         RuntimeSidebar.RetryEnvironmentButton.Visibility = Visible(action is RuntimeAction.Retry);
         RuntimeSidebar.RetryEnvironmentButton.IsEnabled = action is RuntimeAction.Retry { Enabled: true };
-        RuntimeSidebar.StartTaskHeaderButton.Visibility = Visible(action is RuntimeAction.Start);
-        RuntimeSidebar.StartTaskHeaderButton.IsEnabled = action is RuntimeAction.Start { Enabled: true };
-        Explain(RuntimeSidebar.StartTaskHeaderButton, (action as RuntimeAction.Start)?.Blocker);
         Explain(RuntimeSidebar.RetryEnvironmentButton, (action as RuntimeAction.Retry)?.Blocker);
         if (action is RuntimeAction.Retry { Target: var retryTarget }) {
             var retryText = retryTarget == RetryTarget.Prepare ? "重试准备运行环境" : "重试开始任务";
             RuntimeSidebar.RetryEnvironmentText.Text = retryText;
             AutomationProperties.SetName(RuntimeSidebar.RetryEnvironmentButton, retryText);
         }
-        RuntimeSidebar.StopTaskHeaderButton.Visibility = Visible(action is RuntimeAction.Stop);
-        RuntimeSidebar.StopTaskHeaderButton.IsEnabled = action is RuntimeAction.Stop { Enabled: true };
         RuntimeSidebar.RecoverEnvironmentButton.Visibility = Visible(action is RuntimeAction.Recover);
         RuntimeSidebar.RecoverEnvironmentButton.IsEnabled = action is RuntimeAction.Recover { Enabled: true };
         if (action is RuntimeAction.Recover { Reason: var recovery }) {
@@ -76,12 +66,13 @@ public partial class MainWindow
         ApplyPanelSummary(state, progress);
 
         TaskPlanEditor.ApplyConfigurationLock(state.ConfigurationEditable, state.ConfigurationLock);
-        Sidebar.AllowNewConfiguration(state.ConfigurationEditable);
+        TaskPlanEditor.ApplyRunPresentation(state, progress,
+            PlanStartBlocker(action) is { } blocker ? StartBlockerText(blocker) : null);
+        ApplyConfigurationLockToShell(state.ConfigurationEditable, state.ConfigurationLock);
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
 
-        // A blocked Start, or a Retry that would start, says why on hover and to screen readers; the task area
-        // holds the detailed message. The visible label needs no tooltip of its own.
+        // A blocked Retry says why on hover and to screen readers.
         static void Explain(FrameworkElement button, StartBlocker? blocker)
         {
             var reason = blocker is { } value ? StartBlockerText(value) : null;
@@ -300,6 +291,7 @@ public partial class MainWindow
             return;
         }
         ApplyRunElapsed(progress);
+        TaskPlanEditor.ApplyRunProgress(progress);
     }
 
     private void ApplyRunElapsed(RunProgressView progress) => RuntimeSidebar.RunProgressElapsed.Text = progress.Active

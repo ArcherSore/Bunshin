@@ -130,6 +130,29 @@ public sealed partial class ProjectPlanModule
         Id = Guid.NewGuid(), Name = $"配置 {_config.Configurations.Count + 1}"
     });
 
+    public Guid DuplicateConfiguration(Guid id)
+    {
+        var source = FindConfiguration(id);
+        // A new copy of the plan gets a separate identity and starts without automatic runs.
+        return AddConfiguration(source with {
+            Id = Guid.NewGuid(), Name = $"{source.Name} 副本", SchedulePolicies = []
+        });
+    }
+
+    public bool MoveConfiguration(Guid id, int targetIndex)
+    {
+        var configurations = _config.Configurations.ToList();
+        var configuration = FindConfiguration(id);
+        var from = configurations.IndexOf(configuration);
+        if (targetIndex < 0 || targetIndex >= configurations.Count || targetIndex == from) {
+            return false;
+        }
+        configurations.RemoveAt(from);
+        configurations.Insert(targetIndex, configuration);
+        SaveConfig(_config with { Configurations = configurations.ToArray() });
+        return true;
+    }
+
     public void ActivateConfiguration(Guid id)
     {
         _ = FindConfiguration(id);
