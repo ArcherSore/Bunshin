@@ -126,6 +126,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         };
         TaskPlanEditor.TaskDescriptionRequested += (_, task) => OpenTaskDescriptionDrawer(task);
         TaskPlanEditor.TaskDescriptionCloseRequested += (_, _) => CloseTaskDescriptionDrawer();
+        TaskPlanEditor.StartRequested += StartPlanButton_Click;
+        TaskPlanEditor.StopRequested += StopRunButton_Click;
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
         _sessionManager = sessionManager;
         _workerCoordinator = workerCoordinator;
@@ -166,7 +168,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
         StateChanged += MainWindow_StateChanged;
-        SizeChanged += (_, _) => TaskPlanEditor.UpdateConfigurationLockText();
         RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
         foreach (var routedEvent in new[] {
             MouseEnterEvent, MouseLeaveEvent, MouseMoveEvent, GotKeyboardFocusEvent, LostKeyboardFocusEvent,
@@ -545,6 +546,33 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             ShowActionableError("保存自动启动分身设置失败", exception, "请检查配置目录写入权限。", offerLogDirectory: false);
         }
     }
+
+    private void StartPlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        switch (CurrentControls.Action) {
+            case RuntimeAction.Prepare { Enabled: true } when PlanStartBlocker(CurrentControls.Action) is null:
+                PrepareAndRunButton_Click(sender, e);
+                break;
+            case RuntimeAction.Start { Enabled: true }:
+                StartRunButton_Click(sender, e);
+                break;
+            case RuntimeAction.Retry { Enabled: true }:
+                RetryRuntimeHeaderButton_Click(sender, e);
+                break;
+            default:
+                LogIgnoredAction();
+                break;
+        }
+    }
+
+    private StartBlocker? PlanStartBlocker(RuntimeAction action) => action switch {
+        RuntimeAction.Start start => start.Blocker,
+        RuntimeAction.Retry retry => retry.Blocker,
+        RuntimeAction.Prepare { Enabled: false } => StartBlocker.CommandsUnavailable,
+        RuntimeAction.Prepare when _projectPlan?.EnabledItems.Count is null or 0 => StartBlocker.NoTasks,
+        RuntimeAction.Prepare when !_projectConfigurationValid => StartBlocker.ConfigurationInvalid,
+        _ => null
+    };
 
     private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1264,6 +1292,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ApplyPanelSummary(state, progress);
 
         TaskPlanEditor.ApplyConfigurationLock(state.ConfigurationEditable, state.ConfigurationLock);
+        TaskPlanEditor.ApplyRunPresentation(state, progress,
+            PlanStartBlocker(action) is { } blocker ? StartBlockerText(blocker) : null);
         ApplyConfigurationLockToShell(state.ConfigurationEditable, state.ConfigurationLock);
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
@@ -1491,6 +1521,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             return;
         }
         ApplyRunElapsed(progress);
+        TaskPlanEditor.ApplyRunProgress(progress);
         if (CurrentControls.Action is RuntimeAction.Stop && progress.Current is { } current) {
             RuntimeStatusDetail.Text = $"本项已运行 {ElapsedText(current.StartedAtUtc, null)}";
         }
