@@ -28,6 +28,7 @@ public partial class MainWindow
         };
         Sidebar.ToggleRequested += (_, _) => ToggleSidebar();
         Header.OpenLogsRequested += (_, _) => TryOpenLogsDirectory();
+        Header.ScheduleStatusRequested += (_, _) => SwitchSection(MainSection.Home);
         MainWindowContent.SizeChanged += (_, e) => UpdateSidebarMode(e.NewSize.Width);
         _scheduleTimer.Tick += (_, _) => RefreshSidebarSchedule();
         ScheduleView.PoliciesChanged += (_, _) => RefreshSidebarSchedule();
@@ -106,7 +107,7 @@ public partial class MainWindow
             MainSection.Settings => "设置",
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
-        Header.ShowPage(title, _section == MainSection.Home);
+        Header.ShowPage(title, _section == MainSection.Home, _section == MainSection.Schedule);
         RefreshSidebarSchedule();
     }
 

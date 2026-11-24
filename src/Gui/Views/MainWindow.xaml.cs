@@ -108,7 +108,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
-        ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
             () => CurrentControls.ConfigurationLock, HandleOperationError);
         TaskPlanEditor.PlanEdited += (_, _) => {
@@ -1433,7 +1432,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, foreground);
         RuntimeStatusText.Text = pill;
         AutomationProperties.SetName(RuntimeStatusPill, $"运行状态：{pill}");
-        ApplyScheduleCapsule(tone);
+        ApplyScheduleHeaderStatus(tone);
         Sidebar.ShowRunning(tone == StatusTone.Run);
         RuntimeStatusTitle.Text = title;
         RuntimeStatusDetail.Text = detail;

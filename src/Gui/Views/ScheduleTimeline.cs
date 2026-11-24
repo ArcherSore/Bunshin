@@ -5,7 +5,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfBrushes = System.Windows.Media.Brushes;
-using WpfColor = System.Windows.Media.Color;
 using WpfCursors = System.Windows.Input.Cursors;
 using WpfFontFamily = System.Windows.Media.FontFamily;
 using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
@@ -20,43 +19,35 @@ namespace Gui.Views;
 // configuration, which can only be selected here.
 internal enum TimelinePinRole { Active, Sibling, Other }
 
-internal sealed record TimelinePin(Guid ConfigurationId, Guid PolicyId, DayOfWeek Day, TimeOnly Time, int PaletteIndex,
+internal sealed record TimelinePin(Guid ConfigurationId, Guid PolicyId, DayOfWeek Day, TimeOnly Time,
     TimelinePinRole Role, bool Enabled, bool Skipped, double Offset, string Tip);
 
 // One week, Monday first, 24 hours across. Drawn in OnRender so many points stay cheap. Clicking an empty track picks
 // a time in 15-minute steps; dragging an active point moves it in 5-minute steps; exact minutes go through the editor.
 internal sealed class ScheduleTimeline : FrameworkElement
 {
-    private const double Gutter = 66, AxisHeight = 22, RightPad = 12, Bottom = 4;
-    // Rows share whatever height the page gives the timeline; tracks grow slower than rows so tall rows keep a gap.
-    // The smallest row that still reads well; below it the editor column scrolls instead.
-    private const double MinRow = 20;
+    private const double Gutter = 48, AxisHeight = 18, RowHeight = 29;
+    private const double PinWidth = 6, PinHeight = 16;
     private const int AddStep = 15, DragStep = 5;
-    internal static readonly IReadOnlyList<string> PaletteKeys = [
-        "Brush.Chart.Category1", "Brush.Chart.Category2", "Brush.Chart.Category3",
-        "Brush.Chart.Category4", "Brush.Chart.Category5", "Brush.Chart.Category6"
-    ];
 
-    // Each brush invalidates the drawing independently, including a palette slot used only by another configuration.
     private static DependencyProperty RegisterBrush(string name) => DependencyProperty.Register(
         name, typeof(SolidColorBrush), typeof(ScheduleTimeline),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
-    private static readonly DependencyProperty[] CategoryBrushes = PaletteKeys
-        .Select((_, index) => RegisterBrush($"CategoryBrush{index + 1}")).ToArray();
     private static readonly DependencyProperty GridBrushProperty = RegisterBrush("GridBrush");
-    private static readonly DependencyProperty GridStrongBrushProperty = RegisterBrush("GridStrongBrush");
-    private static readonly DependencyProperty HatchBrushProperty = RegisterBrush("HatchBrush");
-    private static readonly DependencyProperty NightBrushProperty = RegisterBrush("NightBrush");
     private static readonly DependencyProperty TrackBrushProperty = RegisterBrush("TrackBrush");
     private static readonly DependencyProperty NowBrushProperty = RegisterBrush("NowBrush");
     private static readonly DependencyProperty WarningBrushProperty = RegisterBrush("WarningBrush");
     private static readonly DependencyProperty MutedBrushProperty = RegisterBrush("MutedBrush");
+    private static readonly DependencyProperty AxisBrushProperty = RegisterBrush("AxisBrush");
+    private static readonly DependencyProperty SelectedBrushProperty = RegisterBrush("SelectedBrush");
+    private static readonly DependencyProperty SiblingBrushProperty = RegisterBrush("SiblingBrush");
+    private static readonly DependencyProperty OtherBrushProperty = RegisterBrush("OtherBrush");
     private static readonly DependencyProperty DisabledBrushProperty = RegisterBrush("DisabledBrush");
-    private static readonly DependencyProperty SurfaceBrushProperty = RegisterBrush("SurfaceBrush");
-    private static readonly DependencyProperty InverseBrushProperty = RegisterBrush("InverseBrush");
+    private static readonly DependencyProperty AccentSurfaceBrushProperty = RegisterBrush("AccentSurfaceBrush");
+    private static readonly DependencyProperty AccentOutlineBrushProperty = RegisterBrush("AccentOutlineBrush");
     private static readonly DependencyProperty PrimaryBrushProperty = RegisterBrush("PrimaryBrush");
-    private static readonly DependencyProperty TodayBorderBrushProperty = RegisterBrush("TodayBorderBrush");
+    private static readonly DependencyProperty InverseBrushProperty = RegisterBrush("InverseBrush");
 
     private readonly WpfToolTip _tip = new() { Placement = PlacementMode.Relative };
     private IReadOnlyList<TimelinePin> _pins = [];
@@ -70,29 +61,25 @@ internal sealed class ScheduleTimeline : FrameworkElement
     public ScheduleTimeline()
     {
         SetResourceReference(GridBrushProperty, "Brush.Timeline.Grid");
-        SetResourceReference(GridStrongBrushProperty, "Brush.Timeline.GridStrong");
-        SetResourceReference(HatchBrushProperty, "Brush.Timeline.Hatch");
-        SetResourceReference(NightBrushProperty, "Brush.Timeline.Night");
         SetResourceReference(TrackBrushProperty, "Brush.Timeline.Track");
         SetResourceReference(NowBrushProperty, "Brush.Timeline.Now");
-        SetResourceReference(WarningBrushProperty, "Brush.Timeline.Warning");
+        SetResourceReference(WarningBrushProperty, "Brush.Timeline.Skipped");
         SetResourceReference(MutedBrushProperty, "Brush.Text.Muted");
+        SetResourceReference(AxisBrushProperty, "Brush.Text.Disabled");
+        SetResourceReference(SelectedBrushProperty, "Brush.Timeline.Selected");
+        SetResourceReference(SiblingBrushProperty, "Brush.Timeline.Sibling");
+        SetResourceReference(OtherBrushProperty, "Brush.Timeline.Other");
         SetResourceReference(DisabledBrushProperty, "Brush.Timeline.Inactive");
-        SetResourceReference(SurfaceBrushProperty, "Brush.Surface");
+        SetResourceReference(AccentSurfaceBrushProperty, "Brush.Schedule.AccentSurface");
+        SetResourceReference(AccentOutlineBrushProperty, "Brush.Primary.Border");
+        SetResourceReference(PrimaryBrushProperty, "Brush.Text.Primary");
         SetResourceReference(InverseBrushProperty, "Brush.Text.Inverse");
-        SetResourceReference(PrimaryBrushProperty, "Brush.Primary");
-        SetResourceReference(TodayBorderBrushProperty, "Brush.Primary.Border");
-        for (var index = 0; index < CategoryBrushes.Length; index++) {
-            SetResourceReference(CategoryBrushes[index], PaletteKeys[index]);
-        }
         _tip.PlacementTarget = this;
         Focusable = true;
         FocusVisualStyle = null;
     }
 
     private SolidColorBrush BrushFor(DependencyProperty property) => (SolidColorBrush)GetValue(property);
-    private SolidColorBrush CategoryBrush(int index) => BrushFor(CategoryBrushes[index]);
-    private SolidColorBrush ActiveBrush => CategoryBrush(ActivePaletteIndex);
 
     internal event Action<DayOfWeek, TimeOnly>? EmptyClicked;
     internal event Action<DayOfWeek>? DayClicked;
@@ -114,26 +101,24 @@ internal sealed class ScheduleTimeline : FrameworkElement
     }
 
     internal IReadOnlySet<DayOfWeek> ActiveDays { get; set; } = new HashSet<DayOfWeek>();
-    internal int ActivePaletteIndex { get; set; }
     internal (Guid PolicyId, TimeOnly Time)? Selected { get; set; }
     internal DateTime Clock { get; set; } = DateTime.Now;
 
-    // A scrolling page measures with unlimited height and then stretches the timeline into the space left over.
     protected override WpfSize MeasureOverride(WpfSize available) => new(
-        double.IsInfinity(available.Width) ? 640 : available.Width,
-        double.IsInfinity(available.Height) ? AxisHeight + 7 * MinRow + Bottom
-            : Math.Max(available.Height, AxisHeight + 7 * MinRow + Bottom));
+        double.IsInfinity(available.Width) ? 640 : available.Width, AxisHeight + 7 * RowHeight);
 
-    private double RowHeight => Math.Max(MinRow, (ActualHeight - AxisHeight - Bottom) / 7);
-    private double TrackHeight => Math.Min(RowHeight - 6, 8 + RowHeight * 0.7);
-    private double TrackTop(DayOfWeek day) => RowTop(day) + (RowHeight - TrackHeight) / 2;
-
-    private double TrackWidth => Math.Max(1, ActualWidth - Gutter - RightPad);
+    private double TrackWidth => Math.Max(1, ActualWidth - Gutter);
     private double X(int minutes) => Gutter + minutes / 1440.0 * TrackWidth;
     private double RowTop(DayOfWeek day) =>
         AxisHeight + Array.IndexOf(SchedulePreview.WeekOrder, day) * RowHeight;
     private static int Minutes(TimeOnly time) => time.Hour * 60 + time.Minute;
     private static TimeOnly FromMinutes(int minutes) => new(minutes / 60, minutes % 60);
+
+    internal WpfPoint ScopeMenuAnchor(DayOfWeek day, TimeOnly time, double width, bool remove)
+    {
+        var x = X(Minutes(time)) + (remove ? 8 - width : -8);
+        return new WpfPoint(Math.Clamp(x, 0, Math.Max(0, ActualWidth - width)), RowTop(day) + RowHeight + 4);
+    }
 
     private int MinutesAt(double x, int step)
     {
@@ -142,111 +127,78 @@ internal sealed class ScheduleTimeline : FrameworkElement
     }
 
     private WpfPoint PinPoint(TimelinePin pin) =>
-        new(X(Minutes(pin.Time)), RowTop(pin.Day) + RowHeight / 2
-            + pin.Offset * Math.Clamp((TrackHeight - 10) / 28, 0, 1)); // Short rows squeeze the lanes together.
+        new(X(Minutes(pin.Time)), RowTop(pin.Day) + RowHeight / 2 + pin.Offset * 0.34);
 
     protected override void OnRender(DrawingContext dc)
     {
         var gridPen = new WpfPen(BrushFor(GridBrushProperty), 1);
-        var gridStrongPen = new WpfPen(BrushFor(GridStrongBrushProperty), 1);
-        var hatchPen = new WpfPen(BrushFor(HatchBrushProperty), 1);
         var muted = BrushFor(MutedBrushProperty);
+        var primary = BrushFor(PrimaryBrushProperty);
         var nowBrush = BrushFor(NowBrushProperty);
         var inverse = BrushFor(InverseBrushProperty);
         var dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         var family = TryFindResource("FontFamily.Ui") as WpfFontFamily ?? new WpfFontFamily("Segoe UI");
         var regular = new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-        var bold = new Typeface(family, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
-        FormattedText Text(string text, double size, WpfBrush brush, bool strong) => new(text,
-            CultureInfo.CurrentUICulture, System.Windows.FlowDirection.LeftToRight, strong ? bold : regular, size,
+        var medium = new Typeface(family, FontStyles.Normal, FontWeights.Medium, FontStretches.Normal);
+        FormattedText Text(string text, double size, WpfBrush brush, bool strong = false) => new(text,
+            CultureInfo.CurrentUICulture, System.Windows.FlowDirection.LeftToRight, strong ? medium : regular, size,
             brush, dip);
 
         dc.DrawRectangle(WpfBrushes.Transparent, null, new Rect(0, 0, ActualWidth, ActualHeight));
-        for (var hour = 0; hour <= 24; hour += 3) {
-            var label = Text(hour.ToString("00"), 10.5, muted, false);
-            dc.DrawText(label, new WpfPoint(X(hour * 60) - label.Width / 2, 3));
+        for (var hour = 0; hour <= 24; hour += 6) {
+            var label = Text($"{hour}:00", 12, BrushFor(AxisBrushProperty));
+            var offset = hour == 0 ? 0 : hour == 24 ? label.Width : label.Width / 2;
+            dc.DrawText(label, new WpfPoint(X(hour * 60) - offset, 0));
         }
 
         var today = Clock.DayOfWeek;
-        var now = Clock.Hour * 60 + Clock.Minute;
         foreach (var day in SchedulePreview.WeekOrder) {
             var top = RowTop(day);
-            var track = new Rect(Gutter, TrackTop(day), TrackWidth, TrackHeight);
-            var active = ActiveDays.Contains(day);
-            var label = Text(SchedulePreview.DayName(day), 12, active ? ActiveBrush : muted, active);
-            dc.DrawText(label, new WpfPoint(Gutter - 14 - label.Width, top + (RowHeight - label.Height) / 2));
-            if (active) {
-                dc.DrawRoundedRectangle(ActiveBrush, null,
-                    new Rect(6, top + RowHeight / 2 - 8, 3, 16), 1.5, 1.5);
+            var label = Text(SchedulePreview.DayName(day), 14, day == today ? primary : muted, day == today);
+            dc.DrawText(label, new WpfPoint(0, top + (RowHeight - label.Height) / 2));
+            if (ActiveDays.Contains(day)) {
+                dc.DrawRectangle(BrushFor(TrackBrushProperty), null, new Rect(Gutter, top, TrackWidth, RowHeight));
             }
-
-            dc.PushClip(new RectangleGeometry(track, 6, 6));
-            dc.DrawRectangle(BrushFor(TrackBrushProperty), null, track);
-            dc.DrawRectangle(BrushFor(NightBrushProperty), null,
-                new Rect(X(0), track.Top, X(360) - X(0), track.Height));
-            dc.DrawRectangle(BrushFor(NightBrushProperty), null,
-                new Rect(X(1320), track.Top, X(1440) - X(1320), track.Height));
-            for (var hour = 1; hour < 24; hour++) {
-                var x = Math.Round(X(hour * 60)) + 0.5;
-                dc.DrawLine(hour % 6 == 0 ? gridStrongPen : gridPen, new WpfPoint(x, track.Top),
-                    new WpfPoint(x, track.Bottom));
-            }
-            if (day == today) {
-                // Today's elapsed part: minutes that have passed are never caught up on.
-                dc.PushClip(new RectangleGeometry(new Rect(track.Left, track.Top, X(now) - track.Left, track.Height)));
-                for (var x = track.Left - track.Height; x < X(now); x += 6) {
-                    dc.DrawLine(hatchPen, new WpfPoint(x, track.Bottom), new WpfPoint(x + track.Height, track.Top));
-                }
-                dc.Pop();
-            }
-            dc.Pop();
-            if (day == today) {
-                dc.DrawRoundedRectangle(null, new WpfPen(BrushFor(TodayBorderBrushProperty), 1), track, 6, 6);
-            }
-            if (_preview is { } preview && preview.Days.Contains(day)) {
-                var tint = (preview.Remove ? nowBrush : ActiveBrush).Color;
-                dc.DrawRoundedRectangle(new SolidColorBrush(WpfColor.FromArgb(0x1C, tint.R, tint.G, tint.B)),
-                    new WpfPen(new SolidColorBrush(WpfColor.FromArgb(0x80, tint.R, tint.G, tint.B)), 1), track, 6, 6);
-            }
+            dc.DrawLine(gridPen, new WpfPoint(Gutter, top + 0.5), new WpfPoint(ActualWidth, top + 0.5));
+        }
+        var bottom = AxisHeight + 7 * RowHeight - 0.5;
+        dc.DrawLine(gridPen, new WpfPoint(Gutter, bottom), new WpfPoint(ActualWidth, bottom));
+        for (var hour = 0; hour <= 24; hour += 6) {
+            var x = Math.Min(ActualWidth - 0.5, X(hour * 60) + 0.5);
+            dc.DrawLine(gridPen, new WpfPoint(x, AxisHeight), new WpfPoint(x, bottom));
         }
 
-        // Marks and labels go on top of every point so a covered point still shows that it will be skipped.
-        var ordered = _pins.OrderBy(p => p.Role switch {
-            TimelinePinRole.Other => 0, TimelinePinRole.Sibling => 1, _ => 2 }).ToArray();
-        foreach (var pin in ordered) {
+        var nowX = X(Clock.Hour * 60 + Clock.Minute);
+        dc.DrawRoundedRectangle(nowBrush, null, new Rect(nowX - 1, RowTop(today), 2, RowHeight), 1, 1);
+
+        // Clip endpoint markers to the time grid. Nearby points remain selectable through their original hit regions.
+        dc.PushClip(new RectangleGeometry(new Rect(Gutter, AxisHeight, TrackWidth, RowHeight * 7)));
+        foreach (var pin in _pins.OrderBy(pin => pin.Skipped ? 3 : pin.Role switch {
+            TimelinePinRole.Other => 0, TimelinePinRole.Sibling => 1, _ => 2 })) {
             DrawPin(dc, pin);
-        }
-        foreach (var pin in ordered) {
-            DrawPinMarks(dc, pin, Text);
         }
 
         if (_preview is { Remove: false } added) {
-            var pen = new WpfPen(ActiveBrush, 2) { DashStyle = new DashStyle([1.5, 1.5], 0) };
+            var pen = DashedPen(nowBrush, 1);
             foreach (var day in added.Days) {
                 var point = new WpfPoint(X(Minutes(added.Time)), RowTop(day) + RowHeight / 2);
-                dc.DrawEllipse(BrushFor(SurfaceBrushProperty), pen, point, 6, 6);
-                var label = Text(SchedulePreview.TimeText(added.Time), 10, ActiveBrush, true);
-                dc.DrawText(label, new WpfPoint(point.X + 11, point.Y - label.Height / 2));
+                dc.DrawRoundedRectangle(BrushFor(AccentSurfaceBrushProperty), pen, PinRect(point), 3, 3);
             }
         }
+        dc.Pop();
 
-        var primary = BrushFor(PrimaryBrushProperty);
-        if (_hover is { } hover && _dragging is null && _preview is null) {
-            var top = TrackTop(hover.Day);
-            var x = Math.Round(X(hover.Minutes)) + 0.5;
-            dc.DrawLine(new WpfPen(primary, 1), new WpfPoint(x, top + 2),
-                new WpfPoint(x, top + TrackHeight - 2));
+        if (_dragging is not null) {
+            var point = DrawnPoint(_dragging);
+            DrawTag(dc, Text(SchedulePreview.TimeText(FromMinutes(_dragMinutes)), 12, inverse, true),
+                point.X, point.Y - 25, nowBrush);
+        } else if (_hover is { } hover && _preview is null) {
+            var top = RowTop(hover.Day);
+            var x = X(hover.Minutes);
+            dc.DrawLine(new WpfPen(nowBrush, 1), new WpfPoint(x, top + 2), new WpfPoint(x, top + RowHeight - 2));
             var time = SchedulePreview.TimeText(FromMinutes(hover.Minutes));
-            DrawTag(dc, Text((ActiveDays.Contains(hover.Day) ? "+ " : "新建 ") + time, 10, inverse, true),
-                x, top - 10, primary);
+            DrawTag(dc, Text((ActiveDays.Contains(hover.Day) ? "+ " : "新建 ") + time, 12, inverse, true),
+                x, top - 16, nowBrush);
         }
-
-        var nowX = Math.Round(X(now)) + 0.5;
-        var todayTop = TrackTop(today) - 3;
-        dc.DrawLine(new WpfPen(nowBrush, 2), new WpfPoint(nowX, todayTop),
-            new WpfPoint(nowX, todayTop + TrackHeight + 6));
-        DrawTag(dc, Text("现在 " + Clock.ToString("HH\\:mm"), 10, inverse, true), nowX, todayTop - 10,
-            nowBrush);
     }
 
     private bool IsDragging(TimelinePin pin) => _dragging is { } drag && drag.PolicyId == pin.PolicyId
@@ -261,57 +213,41 @@ internal sealed class ScheduleTimeline : FrameworkElement
         return point;
     }
 
-    private static double Radius(TimelinePin pin) =>
-        pin.Role switch { TimelinePinRole.Active => 7.0, TimelinePinRole.Other => 4.5, _ => 5.0 };
+    private static Rect PinRect(WpfPoint point) =>
+        new(point.X - PinWidth / 2, point.Y - PinHeight / 2, PinWidth, PinHeight);
+
+    private static WpfPen DashedPen(WpfBrush brush, double thickness) =>
+        new(brush, thickness) { DashStyle = new DashStyle([2, 2], 0) };
 
     private void DrawPin(DrawingContext dc, TimelinePin pin)
     {
-        var point = DrawnPoint(pin);
-        var radius = Radius(pin);
-        var brush = CategoryBrush(pin.PaletteIndex);
-        // A policy's times are shared by all its days, so pointing at one shows every point that changes with it.
-        if (pin.Role == TimelinePinRole.Active && _hoverPin is { Role: TimelinePinRole.Active } hovered
-            && hovered.PolicyId == pin.PolicyId && hovered.Time == pin.Time && _dragging is null) {
-            dc.DrawEllipse(new SolidColorBrush(WpfColor.FromArgb(0x40, brush.Color.R, brush.Color.G, brush.Color.B)),
-                null, point, radius + 5, radius + 5);
-        }
+        var rect = PinRect(DrawnPoint(pin));
         var removed = _preview is { Remove: true } preview && pin.Role == TimelinePinRole.Active
             && preview.Days.Contains(pin.Day) && preview.Time == pin.Time;
-        dc.PushOpacity(pin.Role switch { TimelinePinRole.Sibling => 0.35, TimelinePinRole.Other => 0.8, _ => 1.0 });
+        var emphasis = pin.Role == TimelinePinRole.Active &&
+            (_hoverPin is { } hovered && hovered.PolicyId == pin.PolicyId && hovered.Time == pin.Time
+                || (pin.PolicyId, pin.Time) == Selected);
+        if (removed || emphasis) {
+            var outline = rect;
+            outline.Inflate(2, 2);
+            dc.DrawRoundedRectangle(null, new WpfPen(BrushFor(AccentOutlineBrushProperty), 1.5), outline, 4, 4);
+        }
         if (removed) {
-            dc.DrawEllipse(BrushFor(NowBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 2),
-                point, radius, radius);
-        } else if (pin.Enabled) {
-            dc.DrawEllipse(brush,
-                new WpfPen(BrushFor(SurfaceBrushProperty), pin.Role == TimelinePinRole.Other ? 1 : 2),
-                point, radius, radius);
+            dc.PushOpacity(0.3);
+        }
+        if (pin.Enabled) {
+            var brush = BrushFor(pin.Skipped ? WarningBrushProperty : pin.Role switch {
+                TimelinePinRole.Active => SelectedBrushProperty,
+                TimelinePinRole.Sibling => SiblingBrushProperty,
+                _ => OtherBrushProperty
+            });
+            dc.DrawRoundedRectangle(brush, null, rect, 3, 3);
         } else {
-            dc.DrawEllipse(BrushFor(SurfaceBrushProperty), new WpfPen(BrushFor(DisabledBrushProperty), 2), point,
-                radius - 1, radius - 1);
+            rect.Inflate(-0.5, -0.5);
+            dc.DrawRoundedRectangle(null, DashedPen(BrushFor(DisabledBrushProperty), 1), rect, 2.5, 2.5);
         }
-        if (pin.Role == TimelinePinRole.Active && Selected is { } selected
-            && selected.PolicyId == pin.PolicyId && selected.Time == pin.Time) {
-            dc.DrawEllipse(null, new WpfPen(brush, 2), point, radius + 4, radius + 4);
-        }
-        dc.Pop();
-    }
-
-    private void DrawPinMarks(DrawingContext dc, TimelinePin pin,
-        Func<string, double, WpfBrush, bool, FormattedText> text)
-    {
-        var point = DrawnPoint(pin);
-        var radius = Radius(pin);
-        if (pin.Skipped) {
-            var badge = new WpfPoint(point.X - radius - 3, point.Y - radius - 2);
-            dc.DrawEllipse(BrushFor(WarningBrushProperty), new WpfPen(BrushFor(SurfaceBrushProperty), 1.5),
-                badge, 6, 6);
-            var mark = text("!", 9, BrushFor(InverseBrushProperty), true);
-            dc.DrawText(mark, new WpfPoint(badge.X - mark.Width / 2, badge.Y - mark.Height / 2));
-        }
-        if (pin.Role == TimelinePinRole.Active) {
-            var label = text(SchedulePreview.TimeText(IsDragging(pin) ? FromMinutes(_dragMinutes) : pin.Time), 10,
-                CategoryBrush(pin.PaletteIndex), true);
-            dc.DrawText(label, new WpfPoint(point.X + radius + 4, point.Y - label.Height / 2));
+        if (removed) {
+            dc.Pop();
         }
     }
 
@@ -325,7 +261,7 @@ internal sealed class ScheduleTimeline : FrameworkElement
     private TimelinePin? HitPin(WpfPoint point) => _pins
         .Select(pin => (Pin: pin, Distance: (PinPoint(pin) - point).Length))
         .Where(item => item.Distance <= 9)
-        .OrderBy(item => item.Pin.Role == TimelinePinRole.Active ? 0 : 1).ThenBy(item => item.Distance)
+        .OrderBy(item => item.Distance).ThenBy(item => item.Pin.Role == TimelinePinRole.Active ? 0 : 1)
         .Select(item => item.Pin).FirstOrDefault();
 
     private DayOfWeek? DayAt(WpfPoint point)
@@ -377,6 +313,8 @@ internal sealed class ScheduleTimeline : FrameworkElement
         if (_pressed is { } pin) {
             if (e.ClickCount == 2 && pin.Role == TimelinePinRole.Active) {
                 _pressed = null;
+                _tip.IsOpen = false;
+                SetHover(null);
                 PinDoubleClicked?.Invoke(pin);
             } else {
                 CaptureMouse();
@@ -424,6 +362,9 @@ internal sealed class ScheduleTimeline : FrameworkElement
 
     private void ShowTip(TimelinePin pin)
     {
+        if (_preview is not null) {
+            return;
+        }
         var point = PinPoint(pin);
         _tip.Content = pin.Tip;
         _tip.HorizontalOffset = point.X + 10;

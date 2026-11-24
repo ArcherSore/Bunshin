@@ -44,7 +44,12 @@ internal static partial class SelfTestRunner
             Require(preview.ListState(b).Outcome == ScheduleOutcome.Skip
                 && preview.Issues(b, b.SchedulePolicies[0]).Any(issue => !issue.Error),
                 "同时到点、排在后面的配置应在列表和编辑区预告跳过。");
-            Require(view.ConfigurationList.Children.Count == 2, "列表应列出每份配置。");
+            var configuration = Named<System.Windows.Controls.Button>(view, "ConfigurationPicker");
+            configuration.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            var configurations = configuration.ContextMenu;
+            Require(configurations is { IsOpen: true } && configurations.Items.Count == 2,
+                "配置菜单应能打开并列出每份配置。");
+            configurations!.IsOpen = false;
 
             Policies(project, daily, out var policy);
             Call(view, "Timeline_EmptyClicked", DayOfWeek.Wednesday, new TimeOnly(21, 0));
@@ -87,10 +92,13 @@ internal static partial class SelfTestRunner
             Call(view, "Timeline_PinClicked", view.Timeline.Pins.First(p => p.ConfigurationId == empty));
             Require(view.Timeline.Pins.Where(p => p.Role != TimelinePinRole.Other).All(p => p.ConfigurationId == empty),
                 "点击其他配置的时间点应切换到该配置。");
-            view.StatusCapsule.RaiseEvent(
+            var header = Named<ShellHeader>(window, "Header");
+            var status = Named<System.Windows.Controls.Button>(header, "ScheduleStatusLink");
+            Require(status.IsVisible && status.IsEnabled, "定时页眉应显示可用的桌面分身状态入口。");
+            status.RaiseEvent(
                 new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-            Require(((UIElement)window.FindName("HomeView")).IsVisible && !view.IsVisible,
-                "点击状态胶囊应回到首页。");
+            Require(((UIElement)window.FindName("HomeView")).IsVisible && !view.IsVisible && !status.IsVisible,
+                "点击定时页眉的状态入口应回到首页。");
         }, scheduleClock: clock);
 
         static IReadOnlyList<SchedulePolicy> Policies(ProjectPlanModule project, Guid id, out SchedulePolicy first)

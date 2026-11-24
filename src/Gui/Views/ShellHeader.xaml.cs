@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Shapes;
 
 namespace Gui.Views;
 
@@ -9,14 +10,7 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
     public static readonly DependencyProperty ActionsProperty = DependencyProperty.Register(
         nameof(Actions), typeof(object), typeof(ShellHeader));
 
-    public ShellHeader()
-    {
-        InitializeComponent();
-        if (TitleBar.Header is System.Windows.Controls.TextBlock title) {
-            title.MaxWidth = 400;
-            title.TextTrimming = TextTrimming.CharacterEllipsis;
-        }
-    }
+    public ShellHeader() => InitializeComponent();
 
     // Buttons or other controls shown before the system buttons.
     public object? Actions
@@ -26,13 +20,26 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
     }
 
     internal event EventHandler? OpenLogsRequested;
+    internal event EventHandler? ScheduleStatusRequested;
 
-    internal void ShowPage(string title, bool showHomeActions)
+    internal void ShowPage(string title, bool showHomeActions, bool showScheduleStatus = false)
     {
         TitleBar.Title = title;
         AutomationProperties.SetName(TitleBar, title);
         OpenLogsButton.Visibility = showHomeActions ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleStatusLink.Visibility = showScheduleStatus ? Visibility.Visible : Visibility.Collapsed;
+        PageActions.Visibility = showScheduleStatus ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    internal void SetScheduleStatus(string text, string? tone)
+    {
+        ScheduleStatusText.Text = text;
+        ScheduleStatusDot.SetResourceReference(Shape.FillProperty, tone ?? "Brush.Transparent");
+        ScheduleStatusDot.SetResourceReference(Shape.StrokeProperty, tone ?? "Brush.Text.Muted");
+        AutomationProperties.SetName(ScheduleStatusLink, text);
     }
 
     private void OpenLogs_Click(object sender, RoutedEventArgs e) => OpenLogsRequested?.Invoke(this, EventArgs.Empty);
+    private void ScheduleStatus_Click(object sender, RoutedEventArgs e) =>
+        ScheduleStatusRequested?.Invoke(this, EventArgs.Empty);
 }
