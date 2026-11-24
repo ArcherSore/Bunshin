@@ -9,6 +9,7 @@
 
     <SolidColorBrush x:Key="Brush.Canvas" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Popover" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Subdued" Color="#FAFAFA" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Option" Color="#F9F9F9" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Disabled" Color="#F7F7F7" po:Freeze="True" />
