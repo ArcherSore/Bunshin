@@ -646,8 +646,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Escape && WelcomeOverlay.Visibility == Visibility.Visible) {
-            CloseWelcome();
+        if (e.Key == Key.Escape && ProjectReader.Visibility == Visibility.Visible) {
+            CloseProjectReader();
             e.Handled = true;
             return;
         }
@@ -970,7 +970,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private void MainWindow_StateChanged(object? sender, EventArgs e) => ReevaluateOnboarding();
 
     private bool IsGlobalModalOpen => UpdateOverlay.Visibility == Visibility.Visible
-        || WelcomeOverlay.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible;
+        || ProjectReader.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible;
 
     private void EnsureModalWindowHook()
     {

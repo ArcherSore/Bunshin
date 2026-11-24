@@ -14,6 +14,7 @@
     <SolidColorBrush x:Key="Brush.Border.Strong" Color="#66FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Dim" Color="#80000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="#80000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Overlay.Reader" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Update" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="#80000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Primary" Color="#EDFFFFFF" po:Freeze="True" />
@@ -112,7 +113,7 @@
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog" Color="#000000" BlurRadius="24" ShadowDepth="8" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog.Update" Color="#000000" BlurRadius="48" ShadowDepth="16" Direction="270" Opacity="0.4" po:Freeze="True" />
-    <DropShadowEffect x:Key="Effect.Dialog.Welcome" Color="#000000" BlurRadius="50" ShadowDepth="25" Direction="270" Opacity="0.5" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Dialog.Welcome" Color="#000000" BlurRadius="48" ShadowDepth="16" Direction="270" Opacity="0.26" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light" Color="#000000" BlurRadius="8" ShadowDepth="1" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Popover" Color="#000000" BlurRadius="24" ShadowDepth="7" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Drag" Color="#000000" BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.4" po:Freeze="True" />
