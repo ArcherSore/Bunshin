@@ -121,10 +121,11 @@ internal static partial class SelfTestRunner
             Click("Stress task，已折叠");
             window.SetPendingOperation(PendingOperation.PreparingEnvironment);
             var rows = ConfigurationDescendants(items).OfType<ParameterRowPanel>().ToArray();
-            var editors = rows.SelectMany(ConfigurationDescendants).OfType<System.Windows.Controls.Control>()
+            var elements = rows.SelectMany(ConfigurationDescendants).Distinct().ToArray();
+            var editors = elements.OfType<System.Windows.Controls.Control>()
                 .Where(control => control is System.Windows.Controls.TextBox or System.Windows.Controls.ComboBox
-                    or Wpf.Ui.Controls.ToggleSwitch).ToArray();
-            var notes = rows.SelectMany(ConfigurationDescendants).OfType<System.Windows.Controls.TextBlock>()
+                    or System.Windows.Controls.ListBox or Wpf.Ui.Controls.ToggleSwitch).ToArray();
+            var notes = elements.OfType<System.Windows.Controls.TextBlock>()
                 .Where(text => text.Text == "Goes one level deeper").ToArray();
             Require(editors.Length == 5 && editors.All(editor => !editor.IsEnabled) && notes.Length == 1
                 && notes.All(note => note.IsEnabled), "锁定时参数控件禁用，说明保持可读。");
@@ -147,20 +148,34 @@ internal static partial class SelfTestRunner
             var items = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel");
             var notes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
             Require(notes.Any(note => note.Text == "Number of retry attempts")
+                && notes.Any(note => note.Text.Contains("−2147483648～2147483647", StringComparison.Ordinal)
+                    && note.Text.Contains("项目格式", StringComparison.Ordinal))
                 && notes.All(note => !note.Text.StartsWith("默认：", StringComparison.Ordinal)),
                 "输入说明必须直接可见，显式值偏离默认时也不显示默认提示。");
             var planScroll = (System.Windows.Controls.ScrollViewer)window.TaskPlanEditor.FindName("PlanScroll");
-            foreach (var (width, stacked) in new[] { (920, true), (1180, false), (1440, false) }) {
+            foreach (var width in new[] { 920, 1180, 1440 }) {
                 window.Width = width;
                 window.Height = width == 920 ? 640 : width == 1180 ? 760 : 900;
                 PumpOnboarding();
                 var rows = ConfigurationDescendants(items).OfType<ParameterRowPanel>().ToArray();
-                Require(rows.Length == 6 && rows.Where(row => row.Depth == 0).All(row => row.IsStacked == stacked)
-                    && planScroll.ComputedHorizontalScrollBarVisibility != System.Windows.Visibility.Visible,
-                    $"{width} 宽度下参数检查器应{(stacked ? "上下堆叠" : "为两列")}，且没有横向滚动。");
+                Require(rows.Length == 6 && rows.All(LabelsAndValuesFit)
+                    && planScroll.ExtentWidth <= planScroll.ViewportWidth + PixelTolerance,
+                    $"{width} 宽度下参数标签与值应各自完整可见、互不重叠，执行计划无需横向滚动。");
                 SaveWindowScreenshot(window, $"inspector-{width}.png");
             }
         }, AddComplexInspectorOptions);
+
+        static bool LabelsAndValuesFit(ParameterRowPanel row)
+        {
+            System.Windows.Rect Bounds(System.Windows.UIElement element) => element.TransformToAncestor(row)
+                .TransformBounds(new System.Windows.Rect(element.RenderSize));
+            var label = Bounds(row.Children[0]);
+            var value = Bounds(row.Children[1]);
+            var overlap = System.Windows.Rect.Intersect(label, value);
+            return (overlap.IsEmpty || overlap.Width <= PixelTolerance || overlap.Height <= PixelTolerance)
+                && new[] { label, value }.All(bounds => bounds.Left >= -PixelTolerance && bounds.Top >= -PixelTolerance
+                    && bounds.Right <= row.ActualWidth + PixelTolerance && bounds.Bottom <= row.ActualHeight + PixelTolerance);
+        }
     }
 
     // Set BUNSHIN_TASK_SCREENSHOTS to a directory to keep rendered windows for a visual check.
@@ -234,6 +249,7 @@ internal static partial class SelfTestRunner
         }
         var definitions = json["option"]!.AsObject();
         definitions["ServerRange"]!["inputs"]![1]!["description"] = "Number of retry attempts";
+        definitions["ServerRange"]!["inputs"]![1]!["verify"] = "^(?:1|3|5|8)$";
         definitions["Level1"] = JsonNode.Parse("""
             {"type": "select", "label": "", "default_case": "Deep", "cases": [
               {"name": "Deep", "description": "Goes one level deeper", "option": ["Level2"]},

@@ -218,6 +218,7 @@ internal static partial class SelfTestRunner
                 "跳过前置项后，控制面板应显示实际运行项和过滤后的进度。");
             Observe(idle);
             Select(0, true);
+            Click(Header(Cards()[2]));
             Click(ButtonNamed(Cards()[2], "从执行计划移除 Real task"));
             Require(project.SelectedTaskNames.Count == 0 && project.SelectedItemCount == 2
                 && Named<Button>(window, "StartPlanButton").IsEnabled,
@@ -233,6 +234,7 @@ internal static partial class SelfTestRunner
             Require(Named<Button>(window, "StopPlanButton").IsEnabled,
                 "前置任务启动阶段也必须提供停止，不能等待游戏控制器创建。");
             Observe(idle);
+            Click(Header(Cards()[0]));
             Click(ButtonNamed(Cards()[0], "从执行计划移除 启动并登录"));
             Require(project.SelectedPretaskNames.SequenceEqual(new[] { "SecondBoot" }),
                 "前置任务的移除入口必须更新当前配置。");

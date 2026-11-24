@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Windows.Media;
 using Gui.Infrastructure;
 using Gui.Themes;
@@ -12,6 +13,7 @@ internal sealed class ApplicationSettings
     private readonly string _closePreferencePath;
     private readonly string _appearancePath;
     private readonly string _autoRunConfigurationPath;
+    private readonly string _sidebarConfigurationOrderPath;
     private readonly AutostartTask _autostart;
     private readonly AppLogger _logger;
     private readonly RuntimePanelPreferences _runtimePanelPreferences;
@@ -26,6 +28,7 @@ internal sealed class ApplicationSettings
         _updatePreferencePath = Path.Combine(applicationDirectory, "config", "update-check.txt");
         _closePreferencePath = Path.Combine(applicationDirectory, "config", "close-to-tray.txt");
         _autoRunConfigurationPath = Path.Combine(applicationDirectory, "config", "autorun-configuration.txt");
+        _sidebarConfigurationOrderPath = Path.Combine(applicationDirectory, "config", "sidebar-configuration-order.json");
         _autostart = autostart ?? AutostartTask.ForCurrentProcess();
         _logger = logger;
         _runtimePanelPreferences = new(Path.Combine(applicationDirectory, "config", "runtime-panel-sections.json"), logger);
@@ -163,6 +166,36 @@ internal sealed class ApplicationSettings
     internal SettingsValue CurrentVersion { get; } = new() { Text = "—" };
 
     internal event Action<SettingsToggle>? FrameworkOptionsChanged;
+
+    internal IReadOnlyList<Guid> ReadSidebarConfigurationOrder()
+    {
+        try {
+            return File.Exists(_sidebarConfigurationOrderPath)
+                ? JsonSerializer.Deserialize<Guid[]>(File.ReadAllText(_sidebarConfigurationOrderPath)) ?? [] : [];
+        } catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) {
+            _logger.Warn("读取侧栏配置顺序失败，已使用默认顺序。", error);
+            return [];
+        }
+    }
+
+    internal bool TrySaveSidebarConfigurationOrder(IReadOnlyList<Guid> order)
+    {
+        var temporary = $"{_sidebarConfigurationOrderPath}.{Guid.NewGuid():N}.tmp";
+        try {
+            Directory.CreateDirectory(Path.GetDirectoryName(_sidebarConfigurationOrderPath)!);
+            File.WriteAllText(temporary, JsonSerializer.Serialize(order));
+            File.Move(temporary, _sidebarConfigurationOrderPath, overwrite: true);
+            return true;
+        } catch (Exception error) when (error is IOException or UnauthorizedAccessException) {
+            _logger.Warn("保存侧栏配置顺序失败。", error);
+            try {
+                File.Delete(temporary);
+            } catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException) {
+                _logger.Warn("删除侧栏配置顺序临时文件失败。", cleanupError);
+            }
+            return false;
+        }
+    }
 
     private static string AppearancePath(string applicationDirectory) =>
         Path.Combine(applicationDirectory, "config", "appearance.txt");

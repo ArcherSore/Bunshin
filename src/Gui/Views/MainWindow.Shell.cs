@@ -152,13 +152,13 @@ public partial class MainWindow
     private void RefreshSidebarSchedule()
     {
         if (_projectPlan is not { } project) {
-            Sidebar.ShowConfigurations(null, null);
+            Sidebar.ShowConfigurations([], null, null);
             Sidebar.ShowNextRun(null);
             RuntimeSidebar.ShowSchedule(null, null, _scheduleClock.GetLocalNow().DateTime);
             return;
         }
         var preview = CreateSidebarSchedulePreview(project);
-        Sidebar.ShowConfigurations(project, preview);
+        Sidebar.ShowConfigurations(SidebarConfigurations(project), project.ActiveConfigurationId, preview);
         Sidebar.ShowNextRun(preview.NextRun is { } next ? SchedulePreview.WhenText(next.Time, preview.Now) : null);
         RuntimeSidebar.ShowSchedule(project.Configurations.FirstOrDefault(c => c.Id == project.ActiveConfigurationId),
             preview.NextRun, preview.Now);

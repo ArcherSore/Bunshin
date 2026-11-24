@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using ProjectModel;
 using Symbol = Wpf.Ui.Controls.SymbolRegular;
 using WpfButton = System.Windows.Controls.Button;
 
@@ -9,10 +10,12 @@ namespace Gui.Views;
 public partial class MainWindow
 {
     private ConfigurationMenu? _configurationMenu;
+    private IReadOnlyList<Guid> _sidebarConfigurationOrder = [];
 
     private void InitializeConfigurationList()
     {
         var list = Sidebar.ConfigurationList;
+        _sidebarConfigurationOrder = _settings.ReadSidebarConfigurationOrder();
         TaskPlanEditor.CommitConfigurationName = list.CommitRename;
         list.CanEdit = TaskPlanEditor.CanChangeConfiguration;
         list.SaveRename = TaskPlanEditor.RenameConfiguration;
@@ -25,11 +28,7 @@ public partial class MainWindow
             }
         };
         list.MenuRequested += (_, request) => OpenConfigurationMenu(request.Id, request.Anchor);
-        list.MoveRequested += (_, request) => {
-            if (TaskPlanEditor.MoveConfiguration(request.Id, request.Index) && ScheduleView.IsVisible) {
-                ScheduleView.Refresh();
-            }
-        };
+        list.MoveRequested += (_, request) => MoveSidebarConfiguration(request.Id, request.Index);
         Sidebar.NewConfigurationRequested += (_, anchor) => OpenNewConfigurationMenu(anchor);
         Header.CanEditConfiguration = TaskPlanEditor.CanChangeConfiguration;
         Header.ConfigurationMenuRequested += (_, anchor) => {
@@ -37,6 +36,29 @@ public partial class MainWindow
                 OpenConfigurationMenu(project.ActiveConfigurationId, anchor);
             }
         };
+    }
+
+    private IReadOnlyList<TaskConfiguration> SidebarConfigurations(ProjectPlanModule project)
+    {
+        if (_sidebarConfigurationOrder.Count == 0) return project.Configurations;
+        var positions = _sidebarConfigurationOrder.Distinct().Select((id, index) => (id, index))
+            .ToDictionary(position => position.id, position => position.index);
+        return project.Configurations.OrderBy(configuration => positions.GetValueOrDefault(configuration.Id, int.MaxValue))
+            .ToArray();
+    }
+
+    internal void MoveSidebarConfiguration(Guid id, int index)
+    {
+        if (_projectPlan is not { } project || !TaskPlanEditor.CanChangeConfiguration()) return;
+        var order = SidebarConfigurations(project).Select(configuration => configuration.Id).ToList();
+        var previous = order.IndexOf(id);
+        if (previous < 0 || index < 0 || index >= order.Count || previous == index) return;
+        order.RemoveAt(previous);
+        order.Insert(index, id);
+        if (_settings.TrySaveSidebarConfigurationOrder(order)) {
+            _sidebarConfigurationOrder = order;
+            RefreshSidebarSchedule();
+        }
     }
 
     private void OpenNewConfigurationMenu(WpfButton anchor)

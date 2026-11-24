@@ -19,8 +19,12 @@ public sealed partial class TaskPlanEditor
         return CommitConfigurationName?.Invoke(unattended) ?? true;
     }
 
-    internal bool CanChangeConfiguration() =>
-        Project is not null && Editable && CommitFocusedConfigurationInput();
+    internal bool CanChangeConfiguration() => CanChangeConfiguration(allowInvalidDraft: false);
+
+    private bool CanChangeConfiguration(bool allowInvalidDraft) => Project is not null && Editable
+        && (CommitFocusedConfigurationInput() || allowInvalidDraft
+            && Keyboard.FocusedElement is WpfTextBox { Tag: OptionInputTag tag } editor
+            && _invalidInputDrafts.TryGetValue(tag.Key, out var draft) && draft.Text == GetInputText(editor));
 
     internal bool CreateEmptyConfiguration() => ChangeConfiguration(() => {
         var id = Project!.CreateConfiguration();
@@ -39,7 +43,7 @@ public sealed partial class TaskPlanEditor
             Project.ActivateConfiguration(id);
             _logger.Info($"已切换配置{AppLogger.Field("from", ConfigurationName(from))}"
                 + AppLogger.Field("to", ConfigurationName(id)));
-        });
+        }, allowInvalidDraft: true);
 
     internal bool DuplicateConfiguration(Guid id) => ChangeConfiguration(() => {
         var copy = Project!.DuplicateConfiguration(id);
@@ -54,9 +58,6 @@ public sealed partial class TaskPlanEditor
                 + AppLogger.Field("active", ConfigurationName(Project.ActiveConfigurationId)));
         }
     });
-
-    internal bool MoveConfiguration(Guid id, int index) =>
-        ChangeConfiguration(() => Project!.MoveConfiguration(id, index), refreshOnly: true);
 
     internal bool RenameConfiguration(Guid id, string name, bool unattended)
     {
@@ -103,21 +104,17 @@ public sealed partial class TaskPlanEditor
 
     // An unattended activation supplies its own failure reporting, without a dialog nobody can answer.
     internal bool ChangeConfiguration(Action change, Action<Exception>? unattendedFailure = null,
-        bool refreshOnly = false)
+        bool allowInvalidDraft = false)
     {
         try {
-            if (!CanChangeConfiguration()) {
+            if (!CanChangeConfiguration(allowInvalidDraft)) {
                 unattendedFailure?.Invoke(new InvalidOperationException("无法切换到所选配置。"));
                 return false;
             }
             var project = Project!;
             var previous = project.ActiveConfigurationId;
             change();
-            if (refreshOnly) {
-                ConfigurationsRendered?.Invoke(this, project);
-            } else {
-                RenderConfigurationChange(project.ActiveConfigurationId != previous);
-            }
+            RenderConfigurationChange(project.ActiveConfigurationId != previous);
             return true;
         } catch (Exception exception) {
             if (unattendedFailure is not null) {

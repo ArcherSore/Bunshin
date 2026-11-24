@@ -159,7 +159,8 @@ public partial class App : System.Windows.Application
             if (result.Error is { } error) {
                 if (reportError is not null) reportError(error);
                 else await window.ShowErrorPromptAsync(AppIdentity.Name,
-                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。", error, offerLogs: true);
+                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。", error, offerLogs: true,
+                    showWhileClosing: true);
             }
         } finally {
             if (exitStarted && !exitCompleted) {

@@ -3,7 +3,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ProjectModel;
 using Gui.Views;
-using Wpf.Ui.Controls;
+using System.Windows.Controls;
 
 namespace Gui.Infrastructure;
 
@@ -64,10 +64,10 @@ internal static partial class SelfTestRunner
     private static void VerifyProjectIdentityWindow(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "identity-window"), (window, directory) => {
-            var titleBar = Named<TitleBar>(Named<ShellHeader>(window, "Header"), "TitleBar");
+            var configurationTitle = Named<TextBlock>(window.Header, "ConfigurationTitle");
             var project = ProjectOf(window);
             var activeName = project.Configurations.Single(item => item.Id == project.ActiveConfigurationId).Name;
-            Require(window.Title == "项目窗口标题" && titleBar.Title == activeName,
+            Require(window.Title == "项目窗口标题" && configurationTitle.IsVisible && configurationTitle.Text == activeName,
                 "窗口标题应显示 PI title，页眉应显示当前配置。");
             Require(window.Icon is BitmapSource { PixelWidth: FixtureIconSize }, "系统窗口须显示 PI icon。");
             var settings = OpenAboutSection(window);

@@ -94,11 +94,11 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         _followingSettingsScroll = false;
     }
 
-    internal void ShowConfigurations(ProjectPlanModule? project, SchedulePreview? schedule)
+    internal void ShowConfigurations(IReadOnlyList<TaskConfiguration> configurations, Guid? active, SchedulePreview? schedule)
     {
-        ConfigurationList.ShowConfigurations(project?.Configurations ?? [], project?.ActiveConfigurationId, schedule);
+        ConfigurationList.ShowConfigurations(configurations, active, schedule);
         RefreshConfigurationVisibility();
-        ShowConfigurationName(project?.Configurations.FirstOrDefault(c => c.Id == project.ActiveConfigurationId)?.Name);
+        ShowConfigurationName(configurations.FirstOrDefault(c => c.Id == active)?.Name);
     }
 
     private void ShowConfigurationName(string? name)

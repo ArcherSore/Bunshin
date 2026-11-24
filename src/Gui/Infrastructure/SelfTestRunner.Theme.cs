@@ -155,7 +155,7 @@ internal static partial class SelfTestRunner
         RoundTrip(palette => {
             var summary = SettingsVisualDescendants(window.HelpView).OfType<TextBlock>()
                 .First(text => text.Name == "Summary" && text.IsVisible);
-            RequireThemeBrush(summary.Foreground, palette, "Brush.Text.Secondary", "帮助页问题摘要");
+            RequireThemeBrush(summary.Foreground, palette, "Brush.Text.Muted", "帮助页问题摘要");
         });
 
         var settings = OpenAboutSection(window);

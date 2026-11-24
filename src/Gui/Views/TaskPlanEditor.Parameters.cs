@@ -178,9 +178,11 @@ public sealed partial class TaskPlanEditor
             if (!string.IsNullOrWhiteSpace(input.HelpText)) {
                 cell.Children.Add(CreateInspectorNote(input.HelpText, "Inspector.Note"));
             }
-            if (input.Input.IsInteger && input.Input.InputType == ProjectInputType.Text
-                && IntegerHint(input) is { } hint && !input.HelpText.Contains(hint, StringComparison.Ordinal)) {
-                cell.Children.Add(CreateInspectorNote(hint, "Inspector.Note"));
+            if (input.Input.IsInteger && input.Input.InputType == ProjectInputType.Text) {
+                var hint = IntegerHint(input);
+                if (!input.HelpText.Contains(hint, StringComparison.Ordinal)) {
+                    cell.Children.Add(CreateInspectorNote(hint, "Inspector.Note"));
+                }
             }
             cell.Children.Add(notes);
             if (row.Inputs.Count == 1) {
@@ -192,14 +194,14 @@ public sealed partial class TaskPlanEditor
     }
 
     // The project has no independent range field. Use the supplied format hint or a simple one-digit interval.
-    private static string? IntegerHint(InspectorInput input)
+    private static string IntegerHint(InspectorInput input)
     {
         if (input.Input.Verify is ['^', '[', var min, '-', var max, ']', '$']
             && char.IsAsciiDigit(min) && char.IsAsciiDigit(max)) {
             return $"（{min}～{max}）";
         }
-        return input.Input.PatternMessage
-            ?? (input.Input.Verify is null ? "范围 −2147483648～2147483647" : null);
+        const string range = "范围 −2147483648～2147483647";
+        return input.Input.PatternMessage ?? (input.Input.Verify is null ? range : $"{range}，还须符合项目格式要求");
     }
 
     private (WpfTextBox Editor, FrameworkElement Field) CreateInputEditor(InspectorRow row, InspectorInput input)

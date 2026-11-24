@@ -1,7 +1,6 @@
 # Maximum occurrences per source file and normalized call (first duration argument).
 1 src/Gui/Infrastructure/SelfTestRunner.AutoRun.cs PumpOnboarding(500)
 1 src/Gui/Infrastructure/SelfTestRunner.Checkbox.cs PumpOnboarding()
-9 src/Gui/Infrastructure/SelfTestRunner.ConfigurationHeader.cs PumpOnboarding()
 11 src/Gui/Infrastructure/SelfTestRunner.cs PumpOnboarding()
 2 src/Gui/Infrastructure/SelfTestRunner.Help.cs PumpOnboarding()
 1 src/Gui/Infrastructure/SelfTestRunner.Help.cs PumpOnboarding(300)
@@ -24,7 +23,7 @@
 1 src/Gui/Infrastructure/SelfTestRunner.RuntimeWiring.cs Task.Delay(10)
 1 src/Gui/Infrastructure/SelfTestRunner.RuntimeWiring.cs Task.Delay(20)
 3 src/Gui/Infrastructure/SelfTestRunner.ScheduledRun.cs PumpOnboarding()
-10 src/Gui/Infrastructure/SelfTestRunner.Settings.cs PumpOnboarding()
+9 src/Gui/Infrastructure/SelfTestRunner.Settings.cs PumpOnboarding()
 6 src/Gui/Infrastructure/SelfTestRunner.Support.cs PumpOnboarding()
 2 src/Gui/Infrastructure/SelfTestRunner.Support.cs PumpOnboarding(20)
 7 src/Gui/Infrastructure/SelfTestRunner.Welcome.cs PumpOnboarding()

@@ -318,7 +318,7 @@
                                     <ui:SymbolIcon Symbol="Checkmark16" FontSize="13" Margin="0,0,4,0"
                                                    Foreground="{DynamicResource Brush.Primary}" />
                                     <TextBlock x:Name="AddedTasksText" FontSize="12"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                                               Foreground="{DynamicResource Brush.Success.Foreground}" />
                                 </StackPanel>
                             </Grid>
                         </DockPanel>

@@ -40,9 +40,8 @@ internal static partial class SelfTestRunner
             }) {
                 var item = name == "Home" ? sidebar.Home : Named<RailItem>(sidebar, name + "NavigationItem");
                 ClickConfigurationButton(item);
-                PumpOnboarding();
-                Require(item.IsActive && Named<UIElement>(window, view).IsVisible && AutomationProperties.GetName(titleBar) == title,
-                    $"{name} 应显示对应页面、页眉标题和选中状态。");
+                PumpUntil(() => item.IsActive && Named<UIElement>(window, view).IsVisible
+                    && AutomationProperties.GetName(titleBar) == title, $"{name} 应显示对应页面、页眉标题和选中状态。");
             }
             ClickOnboarding(window, "HelpNavigationItem");
             ClickOnboarding(window, "SettingsNavigationItem");

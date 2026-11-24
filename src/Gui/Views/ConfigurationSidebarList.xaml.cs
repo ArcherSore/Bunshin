@@ -190,10 +190,9 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
             }
         };
         row.SelectButton.PreviewMouseLeftButtonDown += (_, e) => {
-            if (ActiveConfigurationId != id && !CanEdit()) {
-                e.Handled = true;
-            } else {
-                _pressed = row;
+            // An invalid draft can block a reorder while the button still receives its normal click.
+            _pressed = ActiveConfigurationId == id || CanEdit() ? row : null;
+            if (_pressed is not null) {
                 _pressPoint = e.GetPosition(this);
             }
         };

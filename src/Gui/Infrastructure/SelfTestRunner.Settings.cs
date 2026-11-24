@@ -287,10 +287,10 @@ internal static partial class SelfTestRunner
             check = new TaskCompletionSource<EngineCheckResult>();
             var failed = action.ExecuteAsync();
             check.SetException(new IOException("测试检查失败"));
-            PumpOnboarding();
+            PumpUntil(() => failed.IsCompleted, "检查更新失败应同步结束设置动作。");
             failed.GetAwaiter().GetResult();
-            if (action.Status != "测试检查失败"
-                || ((TextBlock)window.FindName("UpdateResultMessage")).Text != action.Status) {
+            var errorMessage = Named<TextBlock>(window.UpdateDialog, "ResultMessage");
+            if (action.Status != "测试检查失败" || !errorMessage.IsVisible || errorMessage.Text != action.Status) {
                 throw new InvalidOperationException("Settings 与原更新弹窗必须显示同一检查错误。");
             }
             ClickOnboarding(window, "CloseUpdateButton");

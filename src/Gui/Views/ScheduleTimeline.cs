@@ -261,7 +261,7 @@ internal sealed class ScheduleTimeline : FrameworkElement
     private TimelinePin? HitPin(WpfPoint point) => _pins
         .Select(pin => (Pin: pin, Distance: (PinPoint(pin) - point).Length))
         .Where(item => item.Distance <= 9)
-        .OrderBy(item => item.Distance).ThenBy(item => item.Pin.Role == TimelinePinRole.Active ? 0 : 1)
+        .OrderBy(item => item.Pin.Role == TimelinePinRole.Active ? 0 : 1).ThenBy(item => item.Distance)
         .Select(item => item.Pin).FirstOrDefault();
 
     private DayOfWeek? DayAt(WpfPoint point)

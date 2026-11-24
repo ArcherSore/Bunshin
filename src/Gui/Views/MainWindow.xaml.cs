@@ -181,7 +181,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
             _exitGeneration++;
-            CancelEnvironmentConfirmation();
+            CancelWindowConfirmations();
             _forcedStartCountdown?.TrySetResult(false);
             _workerReadyWait?.Cancel();
             EndOnboarding(handled: false);
@@ -191,13 +191,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         if (!exitInProgress && _closingId is Guid id) {
             _closingId = null;
             _lifecycle.Apply(new LifecycleEvent.ClosingCancelled(id));
+            RefreshWindowPrompts();
         }
     }
 
     internal void CommitExit()
     {
         if (_closingId is Guid id) _lifecycle.Apply(new LifecycleEvent.ClosingCommitted(id));
-        DispatchUnshownErrorsToTray();
+        CloseWindowPrompts();
+        RefreshWindowPrompts();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)

@@ -40,6 +40,7 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifySettingsNavigation), c => VerifySettingsNavigation(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Support, nameof(VerifyProjectAboutContent), c => VerifyProjectAboutContent(c.Directory)),
         new(Group.Support, nameof(VerifyProjectAboutView), c => VerifyProjectAboutView(c.Logger, c.Directory)),
+        new(Group.Support, nameof(VerifyWindowPrompts), c => VerifyWindowPrompts(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyWindowShell), c => VerifyWindowShell(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyHelpPage), c => VerifyHelpPage(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyTrayMenu), _ => VerifyTrayMenu()),
@@ -161,6 +162,7 @@ internal static partial class SelfTestRunner
             c => VerifyInvalidConfigurationIsolation(c.Directory, c.Project)),
         new(Group.Project, nameof(VerifyConfigurationSidebar),
             c => VerifyConfigurationSidebar(c.Logger, c.Directory, c.Project)),
+        new(Group.Project, nameof(VerifySidebarConfigurationOrder), c => VerifySidebarConfigurationOrder(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyConfigurationHeader), c => VerifyConfigurationHeader(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyBlankParameterLabels), c => VerifyBlankParameterLabels(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyDraftSummarySync), c => VerifyDraftSummarySync(c.Logger, c.Directory)),
@@ -682,10 +684,7 @@ internal static partial class SelfTestRunner
             foreach (var group in catalog.Children.OfType<System.Windows.Controls.Expander>()) {
                 group.IsExpanded = true;
             }
-            PumpOnboarding();
-            if (catalogScroll.ScrollableHeight <= 0) {
-                throw new InvalidOperationException("展开所有分类后，可用任务面板应可以独立滚动。");
-            }
+            PumpUntil(() => catalogScroll.ScrollableHeight > 0, "展开所有分类后，可用任务面板应可以独立滚动。");
             first.IsExpanded = false;
             search.Text = "RealTask";
             PumpOnboarding();

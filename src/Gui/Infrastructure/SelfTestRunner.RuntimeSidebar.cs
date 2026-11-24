@@ -128,9 +128,12 @@ internal static partial class SelfTestRunner
             var search = Named<FrameworkElement>(window, "TaskSearchBox");
             var badgeBounds = badge.TransformToAncestor(shelf).TransformBounds(new Rect(badge.RenderSize));
             var searchBounds = search.TransformToAncestor(shelf).TransformBounds(new Rect(search.RenderSize));
-            Require(badgeBounds.Right <= searchBounds.Left + PixelTolerance
-                && searchBounds.Right <= shelf.ActualWidth + PixelTolerance,
-                "最窄任务区中可用任务标题、新增提示和搜索框不能重叠或溢出。");
+            var overlap = Rect.Intersect(badgeBounds, searchBounds);
+            Require((overlap.IsEmpty || overlap.Width <= PixelTolerance || overlap.Height <= PixelTolerance)
+                && new[] { badgeBounds, searchBounds }.All(bounds => bounds.Left >= -PixelTolerance
+                    && bounds.Top >= -PixelTolerance && bounds.Right <= shelf.ActualWidth + PixelTolerance
+                    && bounds.Bottom <= shelf.ActualHeight + PixelTolerance),
+                "最窄任务区中新增提示和搜索框不能重叠或溢出。");
             ClickOnboarding(window, "TaskShelfHeaderButton");
             ClickOnboarding(window, "SettingsNavigationItem");
             Require(column.Width.Value == 0 && splitter.Visibility == Visibility.Collapsed,
