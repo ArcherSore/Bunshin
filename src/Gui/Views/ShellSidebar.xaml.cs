@@ -1,5 +1,7 @@
+using Gui.Settings;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Controls;
 using System.Windows.Input;
 using ProjectModel;
 using Wpf.Ui.Controls;
@@ -21,6 +23,7 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         new PropertyMetadata(false, (d, _) => ((ShellSidebar)d).ApplyCollapsed()));
 
     private UpdateMarker _updateMarker;
+    private bool _followingSettingsScroll;
 
     public ShellSidebar()
     {
@@ -37,7 +40,14 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
     }
 
     internal RailItem Home => IsCollapsed ? HomeNavigationItem : ConfigurationList.ActiveButton ?? HomeNavigationItem;
-    internal void FocusToggle() => SidebarToggleButton.Focus();
+    internal void FocusToggle()
+    {
+        if (SettingsNavigation.IsVisible) {
+            SettingsBackButton.Focus();
+        } else {
+            SidebarToggleButton.Focus();
+        }
+    }
     internal void ApplyConfigurationLock(bool editable, LockReason? reason)
     {
         NewConfigurationItem.IsEnabled = editable;
@@ -48,6 +58,8 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
     internal event EventHandler<MainSection>? SectionRequested;
     internal event EventHandler<RailItem>? NewConfigurationRequested;
     internal event EventHandler? UpdateRequested;
+    internal event EventHandler? SettingsBackRequested;
+    internal event EventHandler<int>? SettingsSectionRequested;
 
     private IEnumerable<RailItem> Items =>
         [NewConfigurationItem, ScheduleNavigationItem, HomeNavigationItem, UpdateNavigationItem,
@@ -59,7 +71,27 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         ConfigurationList.MarkHome(section == MainSection.Home);
         ScheduleNavigationItem.IsActive = section == MainSection.Schedule;
         HelpNavigationItem.IsActive = section == MainSection.Help;
-        SettingsNavigationItem.IsActive = section == MainSection.Settings;
+        var settings = section == MainSection.Settings;
+        SettingsNavigationItem.IsActive = settings;
+        var workspace = settings ? Visibility.Collapsed : Visibility.Visible;
+        SidebarHeader.Visibility = workspace;
+        WorkspaceActions.Visibility = workspace;
+        WorkspaceConfigurations.Visibility = workspace;
+        WorkspaceUtilities.Visibility = workspace;
+        SettingsNavigation.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    internal void ShowSettingsSections(IReadOnlyList<SettingsSectionModel> sections)
+    {
+        SectionNavigation.ItemsSource = sections;
+        MarkSettingsSection(0);
+    }
+
+    internal void MarkSettingsSection(int index)
+    {
+        _followingSettingsScroll = true;
+        SectionNavigation.SelectedIndex = index;
+        _followingSettingsScroll = false;
     }
 
     internal void ShowConfigurations(ProjectPlanModule? project, SchedulePreview? schedule)
@@ -167,6 +199,23 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         NewConfigurationRequested?.Invoke(this, NewConfigurationItem);
 
     private void Update_Click(object sender, RoutedEventArgs e) => UpdateRequested?.Invoke(this, EventArgs.Empty);
+
+    private void SettingsBack_Click(object sender, RoutedEventArgs e) =>
+        SettingsBackRequested?.Invoke(this, EventArgs.Empty);
+
+    private void SettingsSection_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_followingSettingsScroll && SectionNavigation.SelectedIndex >= 0) {
+            SettingsSectionRequested?.Invoke(this, SectionNavigation.SelectedIndex);
+        }
+    }
+
+    private void SelectedSettingsSection_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem { IsSelected: true }) {
+            SettingsSectionRequested?.Invoke(this, SectionNavigation.SelectedIndex);
+        }
+    }
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e) => ToggleRequested?.Invoke(this, EventArgs.Empty);
 

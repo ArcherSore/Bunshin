@@ -20,10 +20,15 @@ public sealed record ProjectInputEditor(
     // Set when the value still fails verify; it may be shown and saved around, but blocks Start.
     public string? Error { get; init; }
     public ProjectInputType InputType { get; init; }
+    public bool IsInteger { get; init; }
     public bool IsPassword => InputType == ProjectInputType.Password;
 }
 
-public sealed record ProjectCaseEditor(string Name, string Label, string Description);
+public sealed record ProjectCaseEditor(string Name, string Label, string Description)
+{
+    // Only selected cases expose editors for their children.
+    public IReadOnlyList<ProjectOptionEditor> ActiveOptions { get; init; } = [];
+}
 
 public sealed record ProjectOptionEditor(
     string Name, string Label, string Description, ProjectOptionKind Kind, bool IsExplicit,

@@ -137,9 +137,9 @@ public sealed partial class TaskPlanEditor
         row.Children.Add(name);
 
         if (state == PlanItemProgress.Running && task is not null) {
-            var preview = new StackPanel {
-                Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(10, 0, 0, 0), ClipToBounds = true
+            var preview = new TextBlock {
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
             };
             FillParameterPreview(preview, GetConfigurationOrEmpty(task.Name, task.Kind));
             row.Children.Add(preview);
@@ -197,9 +197,8 @@ public sealed partial class TaskPlanEditor
 
         card.SetResourceReference(Border.BackgroundProperty, "Brush.Plan.Expanded");
         _runInspectorShown = true;
-        _optionInputEditors.Clear();
         _inspectorRows.Clear();
-        var inspector = CreateParameterInspector(task.Name, configuration, task.Kind);
+        var inspector = CreateParameterInspector(configuration);
         inspector.IsEnabled = false;
         inspector.Margin = new Thickness(36, 2, 12, 12);
         body.Children.Add(inspector);

@@ -10,6 +10,7 @@
                 <ui:ControlsDictionary />
                 <ResourceDictionary Source="Themes/Colors/Light.xaml" />
                 <ResourceDictionary Source="Themes/DesignSystem.xaml" />
+                <ResourceDictionary Source="Views/TaskParameterStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

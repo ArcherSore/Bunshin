@@ -202,7 +202,7 @@ public partial class MainWindow
 
     private enum StatusTone { Idle, Busy, Ok, Run, Bad }
 
-    // Reuse the action chosen by RuntimeControls for the schedule capsule and the panel's supporting text.
+    // Reuse the action chosen by RuntimeControls for the schedule header and the panel's supporting text.
     private void ApplyRuntimeStatus(RuntimeControlState state, RunProgressView? progress)
     {
         var planSummary = _projectPlan is { } project ? $"{project.EnabledItems.Count} 项任务待执行" : "项目未加载";
@@ -234,7 +234,7 @@ public partial class MainWindow
                 RecoveryText(reason), false),
             _ => (StatusTone.Idle, string.Empty, string.Empty, string.Empty, false)
         };
-        ApplyScheduleCapsule(tone, pill);
+        ApplyScheduleHeaderStatus(tone, pill);
         Sidebar.ShowRunning(tone == StatusTone.Run);
         RuntimeSidebar.RuntimeStatusTitle.Text = title;
         RuntimeSidebar.RuntimeStatusDetail.Text = detail;

@@ -6,20 +6,20 @@ namespace Gui.Views;
 public partial class SettingsView : System.Windows.Controls.UserControl
 {
     // A section landed on from the list keeps this gap above it, and counts as current once it passes the line.
-    private const double SectionTopGap = 16;
+    private const double SectionTopGap = 40;
     private const double CurrentSectionLine = 60;
-    private const double ContentBottomMargin = 24;
+    private const double ContentBottomMargin = 80;
 
-    private bool _followingScroll;
+    internal event EventHandler<int>? CurrentSectionChanged;
 
     public SettingsView()
     {
         InitializeComponent();
     }
 
-    private void SectionNavigation_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    internal void ScrollToSection(int index)
     {
-        if (_followingScroll || SectionAt(SectionNavigation.SelectedIndex) is not { } section) { return; }
+        if (SectionAt(index) is not { } section) { return; }
         SectionScroller.ScrollToVerticalOffset(SectionScroller.VerticalOffset + TopOf(section) - SectionTopGap);
     }
 
@@ -30,10 +30,9 @@ public partial class SettingsView : System.Windows.Controls.UserControl
         if (SectionAt(count - 1) is not { } last) { return; }
         // The last section stays tall enough to reach the top, so every list entry has a place to land.
         last.MinHeight = Math.Max(0, e.ViewportHeight - SectionTopGap - ContentBottomMargin);
-        _followingScroll = true;
-        SectionNavigation.SelectedIndex = Enumerable.Range(0, count)
+        var current = Enumerable.Range(0, count)
             .LastOrDefault(index => SectionAt(index) is { } section && TopOf(section) <= CurrentSectionLine);
-        _followingScroll = false;
+        CurrentSectionChanged?.Invoke(this, current);
     }
 
     private FrameworkElement? SectionAt(int index)
