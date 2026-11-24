@@ -15,7 +15,7 @@ namespace Gui.Views;
 // StrongBrushKey colours headings and bold text; without it they keep the body colour.
 internal sealed record MarkdownStyle(
     double FontSize, double LineHeight, double Heading1Size, double HeadingLineHeight, string BrushKey,
-    string? StrongBrushKey = null);
+    string? StrongBrushKey = null, double ParagraphSpacing = 8);
 
 // Render Markdown as native document elements: no HTML, scripts or remote image loading.
 internal static class MarkdownDocument
@@ -102,7 +102,7 @@ internal static class MarkdownDocument
             }
             return section;
         }
-        var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 8), LineHeight = style.LineHeight };
+        var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, style.ParagraphSpacing), LineHeight = style.LineHeight };
         if (block is CodeBlock code) {
             paragraph.Inlines.Add(new Run(code.Lines.ToString()));
             paragraph.FontSize = 12;

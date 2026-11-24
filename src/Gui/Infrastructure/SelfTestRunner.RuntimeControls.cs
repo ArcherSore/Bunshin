@@ -449,7 +449,7 @@ internal static partial class SelfTestRunner
     private static T Named<T>(FrameworkElement owner, string name) where T : class =>
         (owner.FindName(name) ?? (owner is MainWindow window
             ? (window.FindName("Sidebar") as FrameworkElement)?.FindName(name) ?? window.TaskPlanEditor.FindName(name)
-                ?? window.RuntimeSidebar.FindName(name) ?? window.Header.FindName(name)
+                ?? window.RuntimeSidebar.FindName(name) ?? window.Header.FindName(name) ?? window.UpdateDialog.FindName(name)
             : null)) as T
         ?? throw new InvalidOperationException($"{owner.GetType().Name} 缺少控件 {name}。");
 
