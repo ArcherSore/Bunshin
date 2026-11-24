@@ -579,7 +579,8 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Expander}">
                     <StackPanel>
-                        <ToggleButton MinHeight="30" Padding="8,0" Cursor="Hand"
+                        <ToggleButton Content="{TemplateBinding Header}" MinHeight="30" Padding="8,0" Cursor="Hand"
+                                      HorizontalContentAlignment="Stretch"
                                       FocusVisualStyle="{StaticResource ControlFocusVisualStyle}"
                                       AutomationProperties.Name="{Binding (AutomationProperties.Name),
                                           RelativeSource={RelativeSource TemplatedParent}}"
@@ -589,14 +590,16 @@
                                 <ControlTemplate TargetType="ToggleButton">
                                     <Border x:Name="HitTarget" Padding="{TemplateBinding Padding}" CornerRadius="8"
                                             Background="{DynamicResource Brush.Transparent}">
-                                        <DockPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
                                             <ui:SymbolIcon x:Name="Arrow" Symbol="ChevronRight12"
                                                            FontSize="10" Margin="0,0,8,0"
                                                            Foreground="{DynamicResource Brush.Text.Muted}" />
-                                            <ContentPresenter VerticalAlignment="Center"
-                                                              Content="{Binding Header, RelativeSource={
-                                                                  RelativeSource AncestorType=Expander}}" />
-                                        </DockPanel>
+                                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center" />
+                                        </Grid>
                                     </Border>
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsMouseOver" Value="True">
@@ -627,7 +630,6 @@
         <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="12" />
-        <Setter Property="Effect" Value="{DynamicResource Effect.Surface.Popover}" />
     </Style>
 
     <Style x:Key="CompactIconButtonStyle"
@@ -717,6 +719,7 @@
         <Setter Property="Padding" Value="8,0" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
         <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="FontSize" Value="14" />
         <Setter Property="Cursor" Value="Hand" />

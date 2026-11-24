@@ -252,7 +252,7 @@
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M 0,0 L 0,8 L 7,4 Z" Margin="0,0,7,0" VerticalAlignment="Center"
                               Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                        <TextBlock Text="运行" Foreground="{Binding Foreground,
+                        <TextBlock Text="运行" FontSize="14" Foreground="{Binding Foreground,
                                    RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
@@ -261,7 +261,7 @@
                     <StackPanel Orientation="Horizontal">
                         <Border Width="8" Height="8" CornerRadius="1" Margin="0,0,7,0"
                                 Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                        <TextBlock Text="停止" Foreground="{Binding Foreground,
+                        <TextBlock Text="停止" FontSize="14" Foreground="{Binding Foreground,
                                    RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
@@ -269,7 +269,7 @@
                         Click="TaskShelfHeaderButton_Click" AutomationProperties.Name="添加任务">
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="Add16" FontSize="16" Margin="0,0,6,0" />
-                        <TextBlock Text="添加任务" Foreground="{Binding Foreground,
+                        <TextBlock Text="添加任务" FontSize="14" Foreground="{Binding Foreground,
                                    RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
@@ -353,6 +353,14 @@
                 </ScrollViewer>
             </Grid>
 
+            <Border IsHitTestVisible="False"
+                    Width="{Binding ActualWidth, ElementName=TaskShelfContent}"
+                    Height="{Binding ActualHeight, ElementName=TaskShelfContent}"
+                    Visibility="{Binding Visibility, ElementName=TaskShelfContent}"
+                    Margin="{Binding Margin, ElementName=TaskShelfContent}"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" CornerRadius="12"
+                    Background="{DynamicResource Brush.Surface.Popover}"
+                    Effect="{DynamicResource Effect.Surface.Popover}" />
             <Border x:Name="TaskShelfContent" Visibility="Collapsed"
                     Width="362" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8,0,32,0"
                     Style="{StaticResource TaskShelfSurfaceStyle}" AutomationProperties.Name="添加任务">
@@ -363,14 +371,43 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Margin="8,8,8,0">
-                        <ui:TextBox x:Name="TaskSearchBox" Height="36" MinHeight="0"
-                                    Padding="34,0,8,0" VerticalContentAlignment="Center"
-                                    PlaceholderText="搜索任务" ClearButtonEnabled="False"
-                                    AutomationProperties.Name="搜索可用任务"
-                                    TextChanged="TaskSearchBox_TextChanged" />
-                        <ui:SymbolIcon Symbol="Search16" FontSize="16" IsHitTestVisible="False"
-                                       Margin="10,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource Brush.Text.Muted}" />
+                        <TextBox x:Name="TaskSearchBox" Height="38" Padding="36,0,8,0" FontSize="14"
+                                 VerticalContentAlignment="Center" AutomationProperties.Name="搜索可用任务"
+                                 TextChanged="TaskSearchBox_TextChanged">
+                            <TextBox.Template>
+                                <ControlTemplate TargetType="TextBox">
+                                    <Grid>
+                                        <Border x:Name="FocusRing" CornerRadius="11" BorderThickness="3"
+                                                Visibility="Collapsed" Margin="-3"
+                                                BorderBrush="{DynamicResource Brush.Primary.Surface}" />
+                                        <Border x:Name="Field" CornerRadius="8" BorderThickness="1"
+                                                Background="{DynamicResource Brush.Plan.Tag}"
+                                                BorderBrush="{DynamicResource Brush.Transparent}" />
+                                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                                                      VerticalAlignment="Center" />
+                                        <TextBlock x:Name="Placeholder" Text="搜索任务" IsHitTestVisible="False"
+                                                   Margin="{TemplateBinding Padding}" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource Brush.Text.Disabled}"
+                                                   Visibility="Collapsed" FontSize="14" />
+                                        <ui:SymbolIcon Symbol="Search16" FontSize="16" IsHitTestVisible="False"
+                                                       Margin="10,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource Brush.Text.Muted}" />
+                                    </Grid>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="Text" Value="">
+                                            <Setter TargetName="Placeholder" Property="Visibility" Value="Visible" />
+                                        </Trigger>
+                                        <Trigger Property="IsKeyboardFocused" Value="True">
+                                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                                            <Setter TargetName="Field" Property="Background"
+                                                    Value="{DynamicResource Brush.Canvas}" />
+                                            <Setter TargetName="Field" Property="BorderBrush"
+                                                    Value="{DynamicResource Brush.Primary}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </TextBox.Template>
+                        </TextBox>
                     </Grid>
                     <ScrollViewer x:Name="AvailableTasksScroll" Grid.Row="1" Margin="6,2,6,6"
                                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"

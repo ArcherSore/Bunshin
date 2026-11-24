@@ -570,13 +570,13 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         var count = tasks.Count(task => IsInPlan(project, task));
         var header = new DockPanel();
         var counter = new TextBlock {
-            Text = $"{count} / {tasks.Count}", Margin = new Thickness(8, 0, 0, 0),
+            Text = $"{count} / {tasks.Count}", Margin = new Thickness(8, 0, 0, 0), FontSize = 14,
             VerticalAlignment = VerticalAlignment.Center
         };
         counter.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Disabled");
         DockPanel.SetDock(counter, Dock.Right);
         header.Children.Add(counter);
-        header.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
+        header.Children.Add(new TextBlock { Text = label, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
         var section = new Expander {
             Header = header, Tag = name,
             Style = (Style)FindResource("TaskGroupExpanderStyle"),
@@ -602,7 +602,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         foreach (var task in tasks) {
             var added = IsInPlan(project, task);
             var label = new TextBlock {
-                Text = task.Label, VerticalAlignment = VerticalAlignment.Center,
+                Text = task.Label, VerticalAlignment = VerticalAlignment.Center, FontSize = 14,
                 TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(grouped ? 18 : 0, 0, 8, 0)
             };
             var icon = CreateSymbolIcon(added ? WpfSymbolRegular.Checkmark16 : WpfSymbolRegular.Add16);
@@ -811,7 +811,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             information.Tag = task;
             information.Click += TaskDescriptionButton_Click;
             _taskDescriptionButtons[(task.Kind, task.Name)] = information;
-            ShowPlanActionOnInteraction(information, header);
+            ShowPlanActionOnInteraction(information, header, VisibilityProperty, Visibility.Hidden, Visibility.Visible);
             Grid.SetColumn(information, 3);
             header.Children.Add(information);
         }
@@ -831,15 +831,17 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         return header;
     }
 
-    private static void ShowPlanActionOnInteraction(FrameworkElement action, FrameworkElement row)
+    private static void ShowPlanActionOnInteraction(FrameworkElement action, FrameworkElement row,
+        DependencyProperty? property = null, object? hidden = null, object? shown = null)
     {
+        property ??= OpacityProperty;
         var style = new Style(action.GetType(), action.Style);
-        style.Setters.Add(new Setter(OpacityProperty, 0d));
-        foreach (var property in new[] { nameof(IsMouseOver), nameof(IsKeyboardFocusWithin) }) {
+        style.Setters.Add(new Setter(property, hidden ?? 0d));
+        foreach (var interaction in new[] { nameof(IsMouseOver), nameof(IsKeyboardFocusWithin) }) {
             var trigger = new DataTrigger {
-                Binding = new System.Windows.Data.Binding(property) { Source = row }, Value = true
+                Binding = new System.Windows.Data.Binding(interaction) { Source = row }, Value = true
             };
-            trigger.Setters.Add(new Setter(OpacityProperty, 1d));
+            trigger.Setters.Add(new Setter(property, shown ?? 1d));
             style.Triggers.Add(trigger);
         }
         action.Style = style;
@@ -893,6 +895,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     {
         preview.Children.Clear();
         var configurationId = RequireProject().ActiveConfigurationId;
+        var shownOptions = 0;
         foreach (var option in configuration.TaskOptions) {
             var label = ParameterInspector.GetOptionLabel(option);
             var invalid = option.StartBlocker is not null;
@@ -920,19 +923,24 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 value = option.Cases.FirstOrDefault(item => item.Name == option.SelectedCase)?.Label ?? string.Empty;
             }
 
+            if (shownOptions != 0) {
+                preview.Children.Add(new TextBlock {
+                    Text = " · ", FontSize = 14, VerticalAlignment = VerticalAlignment.Center,
+                    Style = (Style)FindResource("MutedTextStyle")
+                });
+            }
             var tag = new TextBlock {
-                FontSize = (double)FindResource("FontSize.Label"), MaxWidth = 140,
+                FontSize = 14, MaxWidth = 160,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
             };
             tag.SetResourceReference(TextBlock.ForegroundProperty,
-                invalid ? "Brush.Error.Foreground" : "Brush.Text.Secondary");
+                invalid ? "Brush.Error.Foreground" : "Brush.Text.Muted");
             if (isSwitch) {
                 tag.Text = ShortenPreview(label, 6);
                 var switchPreview = new StackPanel {
-                    Orientation = WpfOrientation.Horizontal, Margin = new Thickness(0, 0, 8, 0),
-                    ToolTip = tag.ToolTip
+                    Orientation = WpfOrientation.Horizontal, ToolTip = tag.ToolTip
                 };
                 switchPreview.Children.Add(tag);
                 var dot = new Ellipse {
@@ -943,11 +951,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 switchPreview.Children.Add(dot);
                 preview.Children.Add(switchPreview);
             } else {
-                tag.Text = $"{ShortenPreview(label, 4)}：{ShortenPreview(ParameterInspector.ShowValue(value), 6)}";
-                tag.Margin = new Thickness(0, 0, 8, 0);
+                tag.Text = $"{ShortenPreview(label, 8)} {ShortenPreview(ParameterInspector.ShowValue(value), 7)}";
                 preview.Children.Add(tag);
             }
-            if (preview.Children.Count == 3) {
+            if (++shownOptions == 3) {
                 break;
             }
         }
