@@ -26,6 +26,8 @@
     <SolidColorBrush x:Key="Brush.Text.Disabled" Color="#77000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Inverse" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary" Color="#257DE0" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Primary.Foreground" Color="#1757AC" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.RuntimePanel.SwitchOff" Color="#1F000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Hover" Color="#2370CD" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Pressed" Color="#1D5FB0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Surface" Color="#14257DE0" po:Freeze="True" />

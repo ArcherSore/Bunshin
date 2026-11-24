@@ -85,7 +85,7 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
 
     private void SchedulePolicyToggle_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Wpf.Ui.Controls.ToggleSwitch { DataContext: ScheduleRow policy } toggle) {
+        if (sender is ToggleButton { DataContext: ScheduleRow policy } toggle) {
             SchedulePolicyToggleRequested?.Invoke(policy.ConfigurationId, policy.PolicyId, toggle.IsChecked == true);
             // Refresh supplies the saved value. If the write failed, restore the value on the still-bound row.
             if (ReferenceEquals(toggle.DataContext, policy)) {
@@ -113,7 +113,7 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
             Grid.SetRow(section.Container, index);
             KeyboardNavigation.SetTabIndex(section.Container, index);
             section.Body.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
-            section.Toggle.Tag = collapsed;
+            section.Toggle.Tag = collapsed ? "Collapsed" : "Expanded";
             AutomationProperties.SetName(section.Toggle, $"{(collapsed ? "展开" : "收起")}{section.Toggle.Content}");
             Sections.RowDefinitions[index].Height = state.Id == RuntimePanelSection.Activity && !collapsed
                 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;

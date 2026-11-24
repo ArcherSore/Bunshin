@@ -162,7 +162,7 @@ public partial class MainWindow
             : progress.Failed == 0 && progress.Stopped == 0 && progress.NotRun == 0
                 ? $"{progress.EndedAtUtc?.ToLocalTime():HH:mm} 完成"
                 : RunProgress.Caption(progress).Replace("上次运行：", "");
-        RuntimeSidebar.RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active ? "Brush.Primary"
+        RuntimeSidebar.RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active ? "Brush.Text.Muted"
             : progress.Failed > 0 ? "Brush.Error.Foreground" : "Brush.Success.Foreground");
     }
 
@@ -326,13 +326,14 @@ public partial class MainWindow
         }
         for (var item = 0; item < progress.Total; item++) {
             var brush = progress.Items[item].State switch {
-                PlanItemProgress.Succeeded => "Brush.Success",
+                PlanItemProgress.Succeeded => progress.Active ? "Brush.Primary" : "Brush.Success",
                 PlanItemProgress.Failed => "Brush.Error",
-                PlanItemProgress.Running => "Brush.Primary",
                 PlanItemProgress.Stopped => "Brush.Border.Strong",
-                _ => "Brush.Progress.Track"
+                _ => null
             };
-            Add(segment * item, segment, brush);
+            if (brush is not null) {
+                Add(segment * item, segment, brush);
+            }
         }
         RuntimeSidebar.RunProgressBar.Clip = new RectangleGeometry(new Rect(0, 0, width, 3), 1.5, 1.5);
     }

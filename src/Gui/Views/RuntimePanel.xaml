@@ -12,6 +12,7 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="MinHeight" Value="26" />
             <Setter Property="Padding" Value="6,2" />
+            <Setter Property="FontWeight" Value="Normal" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -51,7 +52,7 @@
                             </StackPanel>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="Tag" Value="True">
+                            <Trigger Property="Tag" Value="Collapsed">
                                 <Setter TargetName="Chevron" Property="Symbol" Value="ChevronRight16" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -98,6 +99,28 @@
         <Style x:Key="Panel.Recover" TargetType="Button" BasedOn="{StaticResource Panel.Action}">
             <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
             <Setter Property="Background" Value="{DynamicResource Brush.Error.Surface}" />
+        </Style>
+        <Style x:Key="Panel.ScheduleToggle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Track" Background="{DynamicResource Brush.RuntimePanel.SwitchOff}" CornerRadius="9">
+                            <Ellipse x:Name="Knob" Width="14" Height="14" Margin="2" HorizontalAlignment="Left"
+                                     Fill="{DynamicResource Brush.Text.Inverse}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="{DynamicResource Brush.Primary}" />
+                                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </UserControl.Resources>
     <Border Background="{DynamicResource Brush.Canvas}" BorderBrush="{DynamicResource Brush.Rail.Border}"
@@ -285,7 +308,7 @@
                                     </MenuItem>
                                     <Separator x:Name="SessionMenuSeparator" />
                                     <MenuItem x:Name="AutoSessionMenuItem" IsCheckable="True"
-                                        StaysOpenOnClick="True" 
+                                        StaysOpenOnClick="True"
                                         Header="打开程序时自动启动分身" Tag="不会自动开始任务" />
                                 </ContextMenu>
                             </Button.ContextMenu>
@@ -296,7 +319,8 @@
                         <DockPanel MinHeight="28">
                             <Button x:Name="DesktopViewButton" DockPanel.Dock="Right" Padding="4,2,0,2"
                                     Style="{StaticResource Panel.QuietButton}" ToolTipService.ShowOnDisabled="True">
-                                <TextBlock x:Name="DesktopViewText" Text="显示窗口" TextDecorations="Underline" />
+                                <TextBlock x:Name="DesktopViewText" Text="显示窗口" TextDecorations="Underline"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                             </Button>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <ui:SymbolIcon Symbol="Desktop20" FontSize="16" Margin="0,0,11,0"
@@ -319,7 +343,8 @@
                                        VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}"
                                        ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                         </DockPanel>
-                        <Border x:Name="RunSummaryCard" Visibility="Collapsed" CornerRadius="6" BorderThickness="1">
+                        <Border x:Name="RunSummaryCard" Visibility="Collapsed" CornerRadius="6" BorderThickness="1"
+                                ToolTip="{Binding Text, ElementName=RunProgressElapsed}">
                             <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -337,9 +362,9 @@
                                 <StackPanel x:Name="RunProgressPanel">
                                     <Canvas x:Name="RunProgressBar" Height="3" Margin="27,8,0,4" ClipToBounds="True"
                                             Background="{DynamicResource Brush.Progress.Track}"
+                                            AutomationProperties.HelpText="{Binding Text, ElementName=RunProgressElapsed}"
                                             SizeChanged="RunProgressBar_SizeChanged" />
-                                    <TextBlock x:Name="RunProgressElapsed" Margin="27,0,0,0" FontSize="12"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                                    <TextBlock x:Name="RunProgressElapsed" Visibility="Collapsed" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>
@@ -392,13 +417,13 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <DockPanel MinHeight="32">
-                                            <ui:ToggleSwitch x:Name="PolicyToggle" DockPanel.Dock="Right" Margin="8,0,0,0"
+                                            <ToggleButton DockPanel.Dock="Right" Margin="8,0,0,0"
+                                                Style="{StaticResource Panel.ScheduleToggle}"
                                                 IsChecked="{Binding Enabled, Mode=OneWay}" Click="SchedulePolicyToggle_Click"
-                                                AutomationProperties.Name="{Binding Name}"
-                                                OnContent="{x:Null}" OffContent="{x:Null}" />
+                                                AutomationProperties.Name="{Binding Name}" />
                                             <ui:SymbolIcon DockPanel.Dock="Left" Symbol="CalendarLtr20" FontSize="16"
                                                 Margin="0,0,11,0" Foreground="{DynamicResource Brush.Text.Muted}" />
-                                            <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                            <TextBlock x:Name="PolicyLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                                        ToolTip="{Binding Summary}">
                                                 <Run Text="{Binding Name, Mode=OneWay}" />
                                                 <Run Text=" " />
@@ -408,7 +433,8 @@
                                         </DockPanel>
                                         <DataTemplate.Triggers>
                                             <DataTrigger Binding="{Binding Enabled}" Value="False">
-                                                <Setter TargetName="PolicyToggle" Property="Opacity" Value="0.75" />
+                                                <Setter TargetName="PolicyLabel" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Text.Muted}" />
                                             </DataTrigger>
                                         </DataTemplate.Triggers>
                                     </DataTemplate>
