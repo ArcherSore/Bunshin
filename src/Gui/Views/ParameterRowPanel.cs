@@ -8,7 +8,7 @@ namespace Gui.Views;
 internal sealed class ParameterRowPanel : WpfPanel
 {
     internal const double IndentStep = 18;
-    private const double ColumnGap = 16;
+    private const double ColumnGap = 14;
     private const double MinimumControlWidth = 180;
     private double? _labelWidth;
 
@@ -18,7 +18,7 @@ internal sealed class ParameterRowPanel : WpfPanel
 
     internal static double? CalculateLabelWidth(double width, int depth)
     {
-        var label = depth == 0 ? 112 : 96;
+        var label = depth == 0 ? 114 : 98;
         return width >= label + ColumnGap + MinimumControlWidth ? label : null;
     }
 

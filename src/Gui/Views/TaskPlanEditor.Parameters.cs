@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using ProjectModel;
@@ -35,14 +36,21 @@ public sealed partial class TaskPlanEditor
         var rows = ParameterInspector.Flatten(DeriveInspectorRows(configuration)).ToArray();
         var invalid = rows.Where(row => row.IsInvalid).Select(row => {
             var field = row.Inputs.FirstOrDefault(input => input.Error is not null);
-            var label = field?.Label ?? row.Label;
+            var label = field is null || row.Inputs.Count == 1 ? row.Label : field.Label;
             return row.Option.IsBelowMinimum ? $"{label} 至少选择 {row.Option.MinCount} 项" : $"{label} 格式不对";
         }).Distinct(StringComparer.Ordinal).ToArray();
         if (invalid.Length != 0) {
             container?.SetResourceReference(BackgroundProperty, "Brush.Parameter.InvalidRow");
             preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Error.Foreground");
-            preview.Text = $"ⓘ {string.Join(" · ", invalid)}";
-            preview.ToolTip = preview.Text;
+            var message = string.Join(" · ", invalid);
+            var icon = CreateSymbolIcon(WpfSymbolRegular.ErrorCircle16);
+            icon.Width = icon.Height = icon.FontSize = 14;
+            icon.Margin = new Thickness(0, 0, 6, 0);
+            icon.SetResourceReference(ForegroundProperty, "Brush.Error");
+            preview.Inlines.Clear();
+            preview.Inlines.Add(new InlineUIContainer(icon) { BaselineAlignment = BaselineAlignment.Center });
+            preview.Inlines.Add(new Run(message));
+            preview.ToolTip = message;
         } else {
             container?.ClearValue(BackgroundProperty);
             preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
@@ -51,7 +59,7 @@ public sealed partial class TaskPlanEditor
             preview.ToolTip = values.Length == 0 ? null
                 : string.Join("\n", values.Select(item => $"{item.Label}：{item.Value}"));
         }
-        preview.Visibility = preview.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        preview.Visibility = preview.Inlines.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private static IEnumerable<(string Label, string Value)> PreviewValues(InspectorRow row)
@@ -186,15 +194,12 @@ public sealed partial class TaskPlanEditor
     // The project has no independent range field. Use the supplied format hint or a simple one-digit interval.
     private static string? IntegerHint(InspectorInput input)
     {
-        if (input.Input.PatternMessage is { Length: > 0 } message) {
-            return message;
-        }
         if (input.Input.Verify is ['^', '[', var min, '-', var max, ']', '$']
             && char.IsAsciiDigit(min) && char.IsAsciiDigit(max)) {
             return $"（{min}～{max}）";
         }
-        return string.IsNullOrWhiteSpace(input.HelpText) && input.Input.Verify is null
-            ? "范围 −2147483648～2147483647" : null;
+        return input.Input.PatternMessage
+            ?? (input.Input.Verify is null ? "范围 −2147483648～2147483647" : null);
     }
 
     private (WpfTextBox Editor, FrameworkElement Field) CreateInputEditor(InspectorRow row, InspectorInput input)
@@ -370,6 +375,7 @@ public sealed partial class TaskPlanEditor
         switch (selector) {
         case Wpf.Ui.Controls.ToggleSwitch toggle:
             toggle.IsChecked = row.Option.SelectedCase == GetSwitchCases(row.Option).On.Name;
+            toggle.ToolTip = row.SelectedCase?.Label;
             break;
         case WpfComboBox comboBox:
             comboBox.SelectedItem = comboBox.Items.Cast<ProjectCaseEditor>()

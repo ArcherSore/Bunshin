@@ -306,7 +306,7 @@ internal static partial class SelfTestRunner
             Require(tags.Any(tag => tag.ToolTip is string tip
                 && tip.Contains("ServerRange：978-1012", StringComparison.Ordinal)
                 && tip.Contains("出战队伍：7", StringComparison.Ordinal)
-                && tip.Contains("Nested：Yes", StringComparison.Ordinal)),
+                && tip.Contains("Nested：On", StringComparison.Ordinal)),
                 "折叠预览应保留参数的后备标签以及开关的选中值。");
         });
     }

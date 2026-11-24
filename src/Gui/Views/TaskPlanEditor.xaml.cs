@@ -712,7 +712,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                         .FirstOrDefault()?.Trim() ?? string.Empty,
                     TextWrapping = TextWrapping.Wrap,
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxHeight = 42, Margin = new Thickness(0, 0, 0, 14),
+                    FontSize = 14, LineHeight = 20, MaxHeight = 42, Margin = new Thickness(0, 0, 0, 14),
                     Style = (Style)FindResource("MutedTextStyle")
                 };
                 body.Children.Add(description);
@@ -766,7 +766,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         title.Children.Add(CreatePlanRowTitle(task.Label, task.Kind, expanded));
         if (!expanded && hasParameters) {
             var preview = new TextBlock {
-                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
             _planItemPreviews.Add((preview, container, task));

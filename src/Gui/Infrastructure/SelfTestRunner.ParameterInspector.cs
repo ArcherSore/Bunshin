@@ -183,8 +183,8 @@ internal static partial class SelfTestRunner
     private static void VerifyParameterRowLayout()
     {
         Require(ParameterRowPanel.CalculateLabelWidth(307, 0) is null
-            && ParameterRowPanel.CalculateLabelWidth(308, 0) == 112
-            && ParameterRowPanel.CalculateLabelWidth(1200, 1) == 96, "宽布局为标签和控件两列，窄布局上下堆叠。");
+            && ParameterRowPanel.CalculateLabelWidth(308, 0) == 114
+            && ParameterRowPanel.CalculateLabelWidth(1200, 1) == 98, "宽布局为标签和控件两列，窄布局上下堆叠。");
         Require(ParameterInputsPanel.CalculateColumns(140, 3) == 1 && ParameterInputsPanel.CalculateColumns(300, 3) == 2
             && ParameterInputsPanel.CalculateColumns(900, 3) == 3, "多输入在宽度不足时换行。");
 
