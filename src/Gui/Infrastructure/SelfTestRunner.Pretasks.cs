@@ -214,7 +214,7 @@ internal static partial class SelfTestRunner
             };
             Observe(idle with { RunState = RunState.Running, ActiveRun = filteredRun });
             Require(Named<TextBlock>(window, "RuntimeStatusTitle").Text == "第二个前置"
-                && Named<TextBlock>(window, "RunProgressCaption").Text == "运行中 · 第 1 / 2 项",
+                && Named<TextBlock>(window, "RunProgressCaption").Text == "1 / 2",
                 "跳过前置项后，控制面板应显示实际运行项和过滤后的进度。");
             Observe(idle);
             Select(0, true);

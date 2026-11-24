@@ -191,7 +191,7 @@ internal static partial class SelfTestRunner
         });
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "missing-target"), (window, directory) => {
             StartAutomaticOnboarding(window);
-            ((UIElement)window.FindName("RuntimeControlCard")).Visibility = Visibility.Collapsed;
+            window.RuntimeSidebar.RuntimeControlCard.Visibility = Visibility.Collapsed;
             ClickOnboarding(window, "OnboardingNext");
             if (((UIElement)window.FindName("OnboardingOverlay")).Visibility != Visibility.Collapsed
                 || File.Exists(Path.Combine(directory, "config", "onboarding.txt"))) {

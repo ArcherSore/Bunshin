@@ -260,7 +260,7 @@ internal static partial class SelfTestRunner
                     void StartOnTerminal(object? _, RunTerminalNotification notice)
                     {
                         if (notice.Failed) return;
-                        clickedBeforeQuit = window.StartTaskHeaderButton.IsEnabled && exitRequests == 0;
+                        clickedBeforeQuit = window.RuntimeSidebar.StartTaskHeaderButton.IsEnabled && exitRequests == 0;
                         Click(window, "StartTaskHeaderButton");
                     }
                     void CountStart(object? _, WorkerObservationBatch batch)

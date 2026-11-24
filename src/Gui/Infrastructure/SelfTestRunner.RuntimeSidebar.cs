@@ -10,6 +10,67 @@ namespace Gui.Infrastructure;
 
 internal static partial class SelfTestRunner
 {
+    private static void VerifyRuntimePanelCollapse(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "runtime-panel-collapse");
+        RunOnboardingScenario(logger, directory, (window, _) => {
+            EndTour(window);
+            var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
+            Require(panel.IsVisible, "首页默认显示运行面板。");
+            ClickOnboarding(window, "RuntimePanelToggleButton");
+            Require(!panel.IsVisible, "页眉按钮应收起运行面板。");
+        });
+        RunOnboardingScenario(logger, directory, (window, _) => {
+            EndTour(window);
+            var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
+            Require(!panel.IsVisible, "重启后应保持运行面板收起。");
+            ClickOnboarding(window, "SettingsNavigationItem");
+            Require(!Named<FrameworkElement>(window, "RuntimePanelToggleButton").IsVisible,
+                "设置页应隐藏运行面板按钮。");
+            ClickOnboarding(window, "HomeNavigationItem");
+            Require(!panel.IsVisible, "返回首页应保持运行面板收起。");
+            ClickOnboarding(window, "RuntimePanelToggleButton");
+            Require(panel.IsVisible, "同一个页眉按钮应重新展开运行面板。");
+        });
+    }
+
+    private static void VerifyRuntimePanelSections(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "runtime-panel-sections");
+        RunOnboardingScenario(logger, directory, (window, _) => {
+            EndTour(window);
+            var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
+            var desktop = Named<FrameworkElement>(window, "RuntimeControlCard");
+            var activity = Named<FrameworkElement>(window, "ActivitySectionToggle");
+            var log = Named<FrameworkElement>(window, "HomeLogListBox");
+            Require(log.IsVisible && Top(desktop, panel) < Top(activity, panel),
+                "运行动态初次使用应展开并位于桌面分身下方。");
+            ClickOnboarding(window, "ActivitySectionToggle");
+            Require(!log.IsVisible && activity.IsVisible, "收起区块后应保留其展开入口。");
+
+            var grip = Named<Thumb>(window, "ActivitySectionGrip");
+            grip.RaiseEvent(new DragStartedEventArgs(0, 0) { RoutedEvent = Thumb.DragStartedEvent });
+            grip.RaiseEvent(new DragDeltaEventArgs(0, -Top(activity, panel)) { RoutedEvent = Thumb.DragDeltaEvent });
+            grip.RaiseEvent(new DragCompletedEventArgs(0, -Top(activity, panel), false) {
+                RoutedEvent = Thumb.DragCompletedEvent
+            });
+            PumpUntil(() => Top(activity, panel) < Top(desktop, panel), "拖动区块标题的手柄应改变显示顺序。");
+        });
+        RunOnboardingScenario(logger, directory, (window, _) => {
+            EndTour(window);
+            var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
+            var activity = Named<FrameworkElement>(window, "ActivitySectionToggle");
+            var log = Named<FrameworkElement>(window, "HomeLogListBox");
+            Require(!log.IsVisible && Top(activity, panel) < Top(Named<FrameworkElement>(window, "RuntimeControlCard"), panel),
+                "重启后应恢复区块顺序和折叠状态。");
+            ClickOnboarding(window, "ActivitySectionToggle");
+            Require(log.IsVisible, "用户应能再次展开运行动态。");
+        });
+
+        static double Top(FrameworkElement element, FrameworkElement parent) =>
+            element.TransformToAncestor(parent).Transform(new Point()).Y;
+    }
+
     private static void VerifyRuntimeSidebarResize(AppLogger logger, string testDirectory)
     {
         var persisted = 0.0;

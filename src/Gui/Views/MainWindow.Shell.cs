@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 
@@ -28,6 +29,13 @@ public partial class MainWindow
         };
         Sidebar.ToggleRequested += (_, _) => ToggleSidebar();
         Header.OpenLogsRequested += (_, _) => TryOpenLogsDirectory();
+        RegisterName("RuntimePanelToggleButton", Header.Actions);
+        _settings.RuntimePanelCollapsed.PropertyChanged += (_, e) => {
+            if (e.PropertyName == nameof(_settings.RuntimePanelCollapsed.Value)) {
+                RuntimeSidebarVisibility(_section);
+                UpdateSidebarMode(MainWindowContent.ActualWidth);
+            }
+        };
         MainWindowContent.SizeChanged += (_, e) => UpdateSidebarMode(e.NewSize.Width);
         _scheduleTimer.Tick += (_, _) => RefreshSidebarSchedule();
         ScheduleView.PoliciesChanged += (_, _) => RefreshSidebarSchedule();
@@ -35,8 +43,8 @@ public partial class MainWindow
 
     private void UpdateSidebarMode(double width)
     {
-        var minimumContentWidth = HomeView.ColumnDefinitions[0].MinWidth + MinimumRuntimeSidebarWidth
-            + RuntimeSidebar.Margin.Right;
+        var minimumContentWidth = HomeView.ColumnDefinitions[0].MinWidth
+            + (RuntimePanelHidden ? 0 : MinimumRuntimeSidebarWidth + RuntimeSidebar.Margin.Right);
         var overlay = width < minimumContentWidth + ShellSidebar.ExpandedWidth;
         if (overlay == _sidebarOverlayMode) {
             return;
@@ -45,6 +53,24 @@ public partial class MainWindow
         SidebarColumn.Width = overlay ? new GridLength(ShellSidebar.CompactWidth) : GridLength.Auto;
         Grid.SetColumnSpan(Sidebar, overlay ? 2 : 1);
         ShowSidebar(overlay || _settings.SidebarCollapsed.Value);
+    }
+
+    private bool RuntimePanelCollapsed => _settings.RuntimePanelCollapsed.Value;
+    private bool OnboardingNeedsRuntimePanel => _onboardingActive && _onboardingStep >= 2;
+    private bool RuntimePanelHidden => RuntimePanelCollapsed && !OnboardingNeedsRuntimePanel;
+    private System.Windows.Controls.Button RuntimePanelToggleButton => (System.Windows.Controls.Button)Header.Actions!;
+
+    private void RuntimePanelToggleButton_Click(object sender, RoutedEventArgs e) =>
+        _settings.RuntimePanelCollapsed.Value = !RuntimePanelCollapsed;
+
+    private void ShowRuntimePanelToggle(bool home)
+    {
+        RuntimePanelToggleButton.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
+        var label = RuntimePanelCollapsed ? "展开运行面板" : "收起运行面板";
+        RuntimePanelToggleButton.ToolTip = label;
+        AutomationProperties.SetName(RuntimePanelToggleButton, label);
+        RuntimePanelToggleButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty,
+            RuntimePanelCollapsed ? "Brush.Transparent" : "Brush.Rail.Active");
     }
 
     private void ToggleSidebar()
@@ -112,12 +138,22 @@ public partial class MainWindow
 
     private void RefreshSidebarSchedule()
     {
+        var now = _scheduleClock.GetLocalNow().DateTime;
         if (_projectPlan is not { } project) {
             Sidebar.ShowNextRun(null);
+            RuntimeSidebar.ShowSchedule(null, null, now);
             return;
         }
-        var now = _scheduleClock.GetLocalNow().DateTime;
         var next = new SchedulePreview(project.Configurations, ScheduleInvalidReason, now).NextRun;
         Sidebar.ShowNextRun(next is null ? null : SchedulePreview.WhenText(next.Time, now));
+        RuntimeSidebar.ShowSchedule(project.Configurations.FirstOrDefault(c => c.Id == project.ActiveConfigurationId),
+            next, now);
+    }
+
+    private void RefreshOnboardingRuntimePanel()
+    {
+        RuntimeSidebar.RevealDesktopSection(OnboardingNeedsRuntimePanel);
+        RuntimeSidebarVisibility(_section);
+        UpdateSidebarMode(MainWindowContent.ActualWidth);
     }
 }

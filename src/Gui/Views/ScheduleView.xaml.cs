@@ -699,6 +699,15 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         }
     }
 
+    internal void SetPolicyEnabled(Guid configurationId, Guid policyId, bool enabled)
+    {
+        var policy = Project?.Configurations.FirstOrDefault(configuration => configuration.Id == configurationId)
+            ?.SchedulePolicies.FirstOrDefault(item => item.Id == policyId);
+        if (policy is not null && policy.Enabled != enabled) {
+            Edit("保存定时失败", project => project.UpdateSchedulePolicy(configurationId, policy with { Enabled = enabled }));
+        }
+    }
+
     // An emptied name is not an error worth a message: leaving the box puts the stored name back.
     private void CommitName()
     {
