@@ -185,7 +185,7 @@ internal static partial class SelfTestRunner
 
         var settings = OpenAboutSection(window);
         window.UpdateLayout();
-        var navigation = settings.SectionNavigation;
+        var navigation = window.Sidebar.SectionNavigation;
         var about = SettingsVisualDescendants(settings).OfType<ProjectAboutView>().Single();
         PumpUntil(() => about.TranslatePoint(default, settings).Y is >= 0 and var top && top < settings.ActualHeight,
             "设置页应已滚动到关于项目。");
@@ -193,8 +193,8 @@ internal static partial class SelfTestRunner
             var selected = (ListBoxItem)navigation.ItemContainerGenerator.ContainerFromItem(navigation.SelectedItem);
             var description = (FlowDocumentScrollViewer)about.Description.Content;
             Require(description.IsVisible, "关于页应已显示项目简介。");
-            RequireThemeBrush(selected.Background, palette, "Brush.Primary", "设置页选中的目录项");
-            RequireThemeBrush(description.Document.Foreground, palette, "Brush.Text.Secondary", "关于页项目简介");
+            RequireThemeBrush(selected.Background, palette, "Brush.Rail.Active", "设置页选中的目录项");
+            RequireThemeBrush(description.Document.Foreground, palette, "Brush.Text.Muted", "关于页项目简介");
         });
     }
 

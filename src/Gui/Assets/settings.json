@@ -17,6 +17,7 @@
           "id": "close-to-tray",
           "type": "toggle",
           "icon": "ArrowMinimize20",
+          "joinPrevious": true,
           "title": "关闭窗口时隐藏到托盘",
           "description": "开启时任务和桌面分身继续运行；关闭时退出程序，桌面分身运行中会先确认。",
           "settingKey": "application.closeToTray"
@@ -25,6 +26,7 @@
           "id": "autostart",
           "type": "toggle",
           "icon": "Power20",
+          "joinPrevious": true,
           "title": "开机自启动",
           "description": "登录 Windows 后自动运行本程序，窗口保持在托盘。",
           "settingKey": "application.autostart"
@@ -34,16 +36,15 @@
           "type": "choice",
           "icon": "Play20",
           "title": "启动后自动执行",
-          "description": "选择程序启动后自动准备桌面分身并执行任务的配置。",
-          "choiceKey": "autorun.configuration",
-          "joinPrevious": true
+          "description": "程序启动后自动准备桌面分身并执行这个配置。",
+          "choiceKey": "autorun.configuration"
         },
         {
           "id": "autorun-on-manual-launch",
           "type": "toggle",
           "icon": "Rocket20",
           "title": "手动启动时也自动执行",
-          "description": "每次手动打开程序时，也自动执行上方选定的配置（关闭则仅在开机自启动时触发）。",
+          "description": "关闭时只在开机自启动后执行。",
           "settingKey": "autorun.onManualLaunch",
           "joinPrevious": true
         },
@@ -90,6 +91,7 @@
           "id": "startup-update-check",
           "type": "toggle",
           "icon": "Power20",
+          "joinPrevious": true,
           "title": "启动时检查更新",
           "settingKey": "update.checkOnStartup"
         },
@@ -97,6 +99,7 @@
           "id": "check-update",
           "type": "action",
           "icon": "ArrowSync20",
+          "joinPrevious": true,
           "title": "检查更新",
           "buttonText": "检查更新",
           "actionId": "update.check"
@@ -107,7 +110,7 @@
       "id": "debug",
       "title": "调试",
       "icon": "Bug20",
-      "description": "更改后从下一次识别开始生效，无需结束桌面分身。文件保存在程序目录的 debug 文件夹，超过 7 天的文件会在下次准备运行环境时清理。",
+      "description": "更改从下次识别生效。文件保存在 debug 文件夹，下次准备运行环境时清理超过 7 天的文件。",
       "items": [
         {
           "id": "framework-save-on-error",
@@ -140,7 +143,7 @@
           "type": "action",
           "icon": "Archive20",
           "title": "问题诊断",
-          "description": "打包日志、配置和调试图片，保存到程序目录的 debug\\exports 并定位到文件。可直接上传到 GitHub Issue。",
+          "description": "打包日志、配置和调试图片到 debug\\exports，可上传到 GitHub Issue。",
           "buttonText": "导出诊断包",
           "actionId": "diagnostics.export"
         },
@@ -159,7 +162,7 @@
           "icon": "Power20",
           "joinPrevious": true,
           "title": "启动时自动清理",
-          "description": "每次打开程序时执行上面的清理。上次运行的日志和截图也会被删除，反馈问题前请勿开启。",
+          "description": "上次运行的日志和截图也会被删除，反馈问题前请勿开启。",
           "settingKey": "diagnostics.clearOnStartup"
         }
       ]
@@ -171,16 +174,16 @@
       "items": [
         {
           "id": "about-app",
-          "type": "about"
+          "type": "about",
+          "valueKey": "update.currentVersion"
         },
         {
           "id": "view-welcome",
           "type": "action",
-          "joinPrevious": true,
           "icon": "Sparkle20",
           "title": "欢迎信息",
           "description": "查看项目的欢迎信息和公告。",
-          "buttonText": "查看欢迎信息",
+          "buttonText": "查看",
           "actionId": "welcome.view"
         },
         {
@@ -190,7 +193,7 @@
           "icon": "Code20",
           "title": "项目仓库",
           "description": "在 GitHub 查看项目的源代码。",
-          "buttonText": "前往 GitHub ↗",
+          "buttonText": "GitHub ↗",
           "actionId": "project.openRepository"
         },
         {
@@ -200,7 +203,7 @@
           "icon": "Document20",
           "title": "许可证",
           "description": "项目的开源许可证。",
-          "buttonText": "查看许可证",
+          "buttonText": "查看",
           "actionId": "project.viewLicense"
         },
         {
@@ -224,9 +227,10 @@
           "id": "open-afdian",
           "type": "action",
           "icon": "Heart20",
+          "joinPrevious": true,
           "title": "支持项目",
           "description": "欢迎通过爱发电支持项目的持续开发与维护。",
-          "buttonText": "前往爱发电 ↗",
+          "buttonText": "爱发电 ↗",
           "actionId": "support.openAfdian"
         }
       ]

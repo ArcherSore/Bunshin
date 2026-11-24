@@ -53,6 +53,10 @@
     <SolidColorBrush x:Key="Brush.Rail.Active" Color="#1A000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.UpdateBadge" Color="#257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Rail.UpdateLabel" Color="#1757AC" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.Field" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.Action" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.ActionHover" Color="#13000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Settings.SwitchTrack" Color="#1F000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Dialog.Border" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Console.MenuText" Color="#E6000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Activity.ClearDisabled" Color="#77000000" po:Freeze="True" />

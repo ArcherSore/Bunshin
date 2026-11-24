@@ -332,6 +332,9 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void SwitchSection(MainSection section)
     {
+        if (section == MainSection.Settings && _section != MainSection.Settings) {
+            _sectionBeforeSettings = _section;
+        }
         _section = section;
         CloseTaskDescriptionDrawer();
         HomeView.Visibility = section == MainSection.Home

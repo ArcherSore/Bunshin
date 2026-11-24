@@ -9,6 +9,7 @@ internal enum MainSection { Home, Schedule, Help, Settings }
 public partial class MainWindow
 {
     private bool _sidebarOverlayMode;
+    private MainSection _sectionBeforeSettings;
 
     private void InitializeShell()
     {
@@ -17,6 +18,16 @@ public partial class MainWindow
             DismissSidebarOverlay();
             SwitchSection(section);
         };
+        Sidebar.ShowSettingsSections(_settings.Page.Sections);
+        Sidebar.SettingsBackRequested += (_, _) => {
+            DismissSidebarOverlay();
+            SwitchSection(_sectionBeforeSettings);
+        };
+        Sidebar.SettingsSectionRequested += (_, index) => {
+            DismissSidebarOverlay();
+            SettingsView.ScrollToSection(index);
+        };
+        SettingsView.CurrentSectionChanged += (_, index) => Sidebar.MarkSettingsSection(index);
         InitializeConfigurationList();
         Sidebar.UpdateRequested += (_, _) => {
             DismissSidebarOverlay();
@@ -102,7 +113,7 @@ public partial class MainWindow
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
         var home = _section == MainSection.Home;
-        Header.ShowPage(title, home, home && configuration is not null);
+        Header.ShowPage(title, home, home && configuration is not null, showPageTitle: _section != MainSection.Settings);
         RefreshSidebarSchedule();
     }
 
