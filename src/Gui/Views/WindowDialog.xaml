@@ -1,0 +1,145 @@
+<UserControl x:Class="Gui.Views.WindowDialog"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:Gui.Views"
+             KeyboardNavigation.TabNavigation="Cycle"
+             KeyboardNavigation.ControlTabNavigation="Cycle">
+    <UserControl.Resources>
+        <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource DialogButtonStyle}">
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource DialogButtonStyle}">
+            <Setter Property="Background" Value="{DynamicResource Brush.Error}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Dialog.Danger.Foreground}" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Dialog.Danger.Hover}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+    <views:ShadowBorder Background="{DynamicResource Brush.Surface.Popover}"
+                        BorderBrush="{DynamicResource Brush.Dialog.Border}" BorderThickness="1"
+                        CornerRadius="16" Shadow="{DynamicResource Effect.Dialog.Update}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Orientation="Horizontal" Margin="23,15,11,0" Height="36">
+                <Viewbox x:Name="WarningIcon" Width="18" Height="18" Margin="0,0,8,0" Visibility="Collapsed">
+                    <Canvas Width="16" Height="16">
+                        <Path Data="M8,2.5 L14,13 H2 Z M8,6.5 V9.5 M8,11.3 V11.31"
+                              Stroke="{DynamicResource Brush.Dialog.Warning}" StrokeThickness="1.3"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                    </Canvas>
+                </Viewbox>
+                <Viewbox x:Name="InformationIcon" Width="18" Height="18" Margin="0,0,8,0" Visibility="Collapsed">
+                    <Canvas Width="16" Height="16">
+                        <Ellipse Canvas.Left="2.25" Canvas.Top="2.25" Width="11.5" Height="11.5"
+                                 Stroke="{DynamicResource Brush.Text.Muted}" StrokeThickness="1.3" />
+                        <Path Data="M8,7.3 V10.7 M8,5.2 V5.21"
+                              Stroke="{DynamicResource Brush.Text.Muted}" StrokeThickness="1.3"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    </Canvas>
+                </Viewbox>
+                <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Medium" VerticalAlignment="Center"
+                           Foreground="{DynamicResource Brush.Text.Primary}" />
+            </StackPanel>
+            <ScrollViewer Grid.Row="1" Margin="23,8,23,0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <TextBlock x:Name="MessageText" FontSize="14" LineHeight="22.4" Margin="0,0,0,10"
+                               LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
+                               TextOptions.TextFormattingMode="Ideal" Foreground="{DynamicResource Brush.Text.Muted}" />
+                    <ToggleButton x:Name="DetailsToggle" Content="详细信息" FontSize="13" Margin="0,4,0,0"
+                                  HorizontalAlignment="Left" Foreground="{DynamicResource Brush.Text.Muted}">
+                        <ToggleButton.Template>
+                            <ControlTemplate TargetType="ToggleButton">
+                                <Border Background="{DynamicResource Brush.Transparent}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path x:Name="Marker" Width="8" Height="8" Stretch="Uniform" Margin="0,0,5,0"
+                                              Fill="{TemplateBinding Foreground}" Data="M0,0 L7,4 L0,8 Z"
+                                              RenderTransformOrigin="0.5,0.5" VerticalAlignment="Center">
+                                            <Path.RenderTransform>
+                                                <RotateTransform Angle="0" />
+                                            </Path.RenderTransform>
+                                        </Path>
+                                        <TextBlock Text="{TemplateBinding Content}" FontSize="{TemplateBinding FontSize}"
+                                                   Foreground="{TemplateBinding Foreground}" />
+                                    </StackPanel>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="Marker" Property="RenderTransform">
+                                            <Setter.Value><RotateTransform Angle="90" /></Setter.Value>
+                                        </Setter>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </ToggleButton.Template>
+                    </ToggleButton>
+                    <Border x:Name="DetailsPanel" Margin="0,6,0,0" Padding="10,8" CornerRadius="8"
+                            Background="{DynamicResource Brush.Dialog.Section}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsChecked, ElementName=DetailsToggle}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <TextBox x:Name="DetailsText" IsReadOnly="True" TextWrapping="Wrap"
+                                 Background="{DynamicResource Brush.Transparent}" BorderThickness="0" Padding="0"
+                                 Foreground="{DynamicResource Brush.Text.Muted}" FontSize="12"
+                                 FontFamily="{StaticResource FontFamily.Monospace}"
+                                 AutomationProperties.Name="异常详细信息">
+                            <TextBox.Template>
+                                <ControlTemplate TargetType="TextBox">
+                                    <ScrollViewer x:Name="PART_ContentHost" Focusable="False" />
+                                </ControlTemplate>
+                            </TextBox.Template>
+                        </TextBox>
+                    </Border>
+                    <ProgressBar x:Name="CountdownProgress" Height="4" Margin="0,4,0,0" Maximum="1"
+                                 Visibility="Collapsed" Background="{DynamicResource Brush.Dialog.Field}"
+                                 Foreground="{DynamicResource Brush.Dialog.Warning}"
+                                 AutomationProperties.Name="强制定时启动倒计时进度">
+                        <ProgressBar.Template>
+                            <ControlTemplate TargetType="ProgressBar">
+                                <Grid>
+                                    <Border x:Name="PART_Track" CornerRadius="2" Background="{TemplateBinding Background}" />
+                                    <Border x:Name="PART_Indicator" CornerRadius="2" HorizontalAlignment="Left"
+                                            Background="{TemplateBinding Foreground}" />
+                                </Grid>
+                            </ControlTemplate>
+                        </ProgressBar.Template>
+                    </ProgressBar>
+                </StackPanel>
+            </ScrollViewer>
+            <DockPanel Grid.Row="2" Margin="23,20,23,19" LastChildFill="False">
+                <Button x:Name="LogsButton" DockPanel.Dock="Left" Content="打开日志目录" Click="Logs_Click"
+                        Style="{StaticResource GhostButton}" />
+                <TextBlock x:Name="CountdownNote" DockPanel.Dock="Left" Text="取消后，当前任务继续运行"
+                           FontSize="13" VerticalAlignment="Center" Visibility="Collapsed"
+                           Foreground="{DynamicResource Brush.Text.Muted}" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="CancelButton" Content="取消" Click="Dismiss_Click"
+                            Style="{StaticResource DialogSecondaryButtonStyle}" />
+                    <Button x:Name="ActionButton" Click="Accept_Click" />
+                </StackPanel>
+            </DockPanel>
+        </Grid>
+    </views:ShadowBorder>
+</UserControl>

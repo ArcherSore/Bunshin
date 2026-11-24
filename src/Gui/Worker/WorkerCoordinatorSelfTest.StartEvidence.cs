@@ -637,7 +637,7 @@ internal static partial class WorkerCoordinatorSelfTest
         await using var peer = await f.ConnectAsync();
         var delivered = new List<object>();
         using var host = new RunLifecycleHost(f.Coordinator, Dispatcher.CurrentDispatcher, () => "A",
-            item => { delivered.Add(item); return true; }, () => delivered.Add("quit"), logger, f.Clock);
+            item => { delivered.Add(item); return Task.FromResult(true); }, () => delivered.Add("quit"), logger, f.Clock);
         var intent = new RunIntent(Guid.NewGuid(), RunSource.Launch, "开机运行", new(Guid.NewGuid(), 1, 1), "A", QuitAfterRun: true);
         var submit = host.SubmitAsync(intent, f.Run, f.Attempt);
         var start = await f.ReadAsync(peer, ProtocolOperations.RunStart);
@@ -723,7 +723,7 @@ internal static partial class WorkerCoordinatorSelfTest
         await using var peer = await f.ConnectAsync();
         var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var host = new RunLifecycleHost(f.Coordinator, Dispatcher.CurrentDispatcher, () => "A",
-            _ => presented.TrySetResult(), () => { }, logger);
+            _ => Task.FromResult(presented.TrySetResult()), () => { }, logger);
         var intent = new RunIntent(Guid.NewGuid(), RunSource.Manual, "开始任务", new(Guid.NewGuid(), 1, 1), "A");
         var first = host.SubmitAsync(intent, f.Run, f.Attempt);
         var start = await f.ReadAsync(peer, ProtocolOperations.RunStart);

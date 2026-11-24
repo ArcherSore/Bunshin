@@ -15,6 +15,7 @@ internal sealed record ForcedScheduledStartCountdown(string ConfigurationName, D
 
 public partial class MainWindow
 {
+    private static readonly TimeSpan ForcedStartDuration = TimeSpan.FromSeconds(10);
     private TaskCompletionSource<bool>? _forcedStartCountdown;
     private int _forcedStartsInProgress;
     private int _exitGeneration;
@@ -125,11 +126,10 @@ public partial class MainWindow
 
     private async Task<bool> WaitForForcedScheduledStartAsync(string name, int exitGeneration)
     {
-        var duration = TimeSpan.FromSeconds(10);
         var elapsed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _forcedStartCountdown = elapsed;
-        var deadline = _scheduleClock.GetLocalNow() + duration;
-        using var timer = _scheduleClock.CreateTimer(_ => elapsed.TrySetResult(true), null, duration,
+        var deadline = _scheduleClock.GetLocalNow() + ForcedStartDuration;
+        using var timer = _scheduleClock.CreateTimer(_ => elapsed.TrySetResult(true), null, ForcedStartDuration,
             Timeout.InfiniteTimeSpan);
         try {
             AddScheduleActivity($"「{name}」到点，强制停止当前任务");

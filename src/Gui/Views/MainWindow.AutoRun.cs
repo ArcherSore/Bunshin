@@ -27,13 +27,13 @@ public partial class MainWindow
         _quitAfterRun?.Invoke();
     }
 
-    private bool PresentRunAction(Payload item) => item switch {
-        Present notice => PresentRunOutcome(notice),
-        PresentCleanupFailure failure => Notify(new($"「{failure.Name}」收尾失败", failure.Detail, true)),
+    private Task<bool> PresentRunAction(Payload item) => item switch {
+        Present notice => PresentRunOutcomeAsync(notice),
+        PresentCleanupFailure failure => Task.FromResult(Notify(new($"「{failure.Name}」收尾失败", failure.Detail, true))),
         _ => throw new ArgumentOutOfRangeException(nameof(item))
     };
 
-    private bool PresentRunOutcome(Present notice)
+    private async Task<bool> PresentRunOutcomeAsync(Present notice)
     {
         if (notice.Kind is NoticeKind.Succeeded or NoticeKind.Failed or NoticeKind.Faulted) {
             return Notify(new(notice.Operation, notice.Detail, notice.Kind != NoticeKind.Succeeded));
@@ -49,8 +49,7 @@ public partial class MainWindow
                     NoticeKind.EndUnconfirmed => "运行结果未确认",
                     _ => notice.Operation
                 };
-                PresentOperationError(title, error, detail);
-                return true;
+                return await PresentOperationErrorAsync(title, error, detail);
             }
             _logger.Error($"{notice.Operation}。", error);
             if (notice.ForegroundOnly) return false;

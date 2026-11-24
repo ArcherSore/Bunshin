@@ -80,13 +80,6 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-        <DataTemplate x:Key="Update.ButtonLabel">
-            <TextBlock Text="{Binding}" FontWeight="SemiBold"
-                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-        </DataTemplate>
-        <Style x:Key="Update.PrimaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
-            <Setter Property="ContentTemplate" Value="{StaticResource Update.ButtonLabel}" />
-        </Style>
     </ui:FluentWindow.Resources>
     <Grid x:Name="WindowOverlayRoot">
     <Grid x:Name="MainWindowContent">
@@ -299,38 +292,15 @@
             </views:ShadowBorder>
         </Grid>
 
-        <Grid x:Name="ForcedStartOverlay" Panel.ZIndex="230" Visibility="Collapsed" Focusable="True"
-              KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
+        <Grid x:Name="ForcedStartOverlay" Panel.ZIndex="230" Visibility="Collapsed"
               Background="{DynamicResource Brush.Overlay.Modal}" AutomationProperties.Name="强制定时启动">
-            <views:ShadowBorder Width="400" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Padding="24" Background="{DynamicResource Brush.Surface}"
-                    BorderBrush="{DynamicResource Brush.Dialog.Border}" BorderThickness="1"
-                    CornerRadius="{StaticResource Radius.Section}" Shadow="{DynamicResource Effect.Dialog}">
-                <StackPanel>
-                    <TextBlock Text="强制定时启动" FontSize="16" FontWeight="SemiBold"
-                               Foreground="{DynamicResource Brush.Text.Primary}" />
-                    <TextBlock x:Name="ForcedStartText" Margin="0,8,0,14" TextWrapping="Wrap" LineHeight="22"
-                               Foreground="{DynamicResource Brush.Text.Secondary}" />
-                    <Grid Height="4" Background="{DynamicResource Brush.Progress.Track}">
-                        <Border Background="{DynamicResource Brush.Warning}">
-                            <Border.RenderTransform>
-                                <ScaleTransform x:Name="ForcedStartFillScale" />
-                            </Border.RenderTransform>
-                        </Border>
-                    </Grid>
-                    <Grid Margin="0,16,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="取消后，当前任务继续运行" VerticalAlignment="Center"
-                                   Style="{StaticResource MutedTextStyle}" />
-                        <Button x:Name="ForcedStartCancelButton" Grid.Column="1" Content="取消" MinWidth="88"
-                                Height="36" Style="{StaticResource Update.PrimaryButton}"
-                                Click="ForcedStartCancel_Click" AutomationProperties.Name="取消强制定时启动" />
-                    </Grid>
-                </StackPanel>
-            </views:ShadowBorder>
+            <views:WindowDialog x:Name="ForcedStartDialog" Width="400" MaxHeight="560" Margin="24"
+                                HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Grid>
+        <Grid x:Name="PromptOverlay" Panel.ZIndex="240" Visibility="Collapsed"
+              Background="{DynamicResource Brush.Overlay.Modal}">
+            <views:WindowDialog x:Name="PromptDialog" Width="420" MaxHeight="560" Margin="24"
+                                HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
     </Grid>
 </ui:FluentWindow>

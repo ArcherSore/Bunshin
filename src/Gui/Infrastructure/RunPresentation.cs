@@ -1,4 +1,3 @@
-using System.Windows;
 using Gui.ChildSession;
 
 namespace Gui.Infrastructure;
@@ -8,10 +7,6 @@ internal sealed record RunTerminalNotification(string Title, string Message, boo
 internal sealed class RunPresentation
 {
     internal Func<bool> RequiresWindowsHello { get; init; } = ChildSessionEnvironment.RequiresWindowsHelloSignIn;
-    internal Func<Window?, string, Exception, string, MessageBoxButton, MessageBoxResult> ShowError { get; init; }
-        = (owner, title, _, message, buttons) => owner != null
-            ? System.Windows.MessageBox.Show(owner, message, title, buttons, MessageBoxImage.Error)
-            : System.Windows.MessageBox.Show(message, title, buttons, MessageBoxImage.Error,
-                buttons == MessageBoxButton.YesNo ? MessageBoxResult.No : MessageBoxResult.OK);
+    internal Action<string, Exception, string>? ShowError { get; init; }
     internal Func<RunTerminalNotification, bool>? ShowBalloon { get; init; }
 }

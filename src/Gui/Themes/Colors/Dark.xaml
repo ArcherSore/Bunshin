@@ -13,7 +13,7 @@
     <SolidColorBrush x:Key="Brush.Border.Subtle" Color="#1AFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Border.Strong" Color="#66FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Dim" Color="#80000000" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="#80000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Reader" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Update" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="#80000000" po:Freeze="True" />
@@ -59,6 +59,9 @@
     <SolidColorBrush x:Key="Brush.Dialog.Secondary" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Dialog.Secondary.Hover" Color="#37FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Dialog.Section" Color="#08FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Warning" Color="#E49C06" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Danger.Foreground" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Danger.Hover" Color="#CF3839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Dialog.Field" Color="#0DFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Console.MenuText" Color="#EDFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Activity.ClearDisabled" Color="#66FFFFFF" po:Freeze="True" />
