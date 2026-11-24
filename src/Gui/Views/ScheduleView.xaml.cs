@@ -98,6 +98,14 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         return policy;
     }
 
+    internal void ShowConfiguration(Guid configurationId)
+    {
+        _focus = configurationId;
+        _selected = null;
+        _inspectorCollapsed = false;
+        Refresh();
+    }
+
     internal void Refresh()
     {
         if (Project is not { } project || project.Configurations.Count == 0) {
@@ -153,12 +161,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 item.SetResourceReference(WpfControl.ForegroundProperty,
                     outcome == ScheduleOutcome.Skip ? "Brush.Warning.Foreground" : "Brush.Error.Foreground");
             }
-            item.Click += (_, _) => {
-                _focus = configuration.Id;
-                _selected = null;
-                _inspectorCollapsed = false;
-                Refresh();
-            };
+            item.Click += (_, _) => ShowConfiguration(configuration.Id);
             menu.Items.Add(item);
         }
         menu.IsOpen = true;

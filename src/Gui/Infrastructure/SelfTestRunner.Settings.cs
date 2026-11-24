@@ -299,7 +299,7 @@ internal static partial class SelfTestRunner
                 throw new InvalidOperationException("退出时更新与指引必须保持禁用。");
             }
             window.SetExitInProgress(false);
-            ClickOnboarding(window, "HomeNavigationItem");
+            ClickHome(window);
             var afterProject = ProjectPlanModule.Open(directory, configPath);
             var afterPlan = afterProject.CreateRunStartAttempt(afterProject.ActiveConfigurationId).Plan;
             afterPlan = afterPlan with {

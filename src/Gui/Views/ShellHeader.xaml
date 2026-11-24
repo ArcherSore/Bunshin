@@ -14,7 +14,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}" CornerRadius="8">
-                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -38,21 +39,38 @@
                      ButtonsForeground="{DynamicResource Brush.Text.Primary}"
                      ButtonsBackground="{DynamicResource Brush.Rail.Hover}">
             <ui:TitleBar.Header>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Title, ElementName=TitleBar}" FontWeight="Medium" FontSize="14"
-                               Foreground="{DynamicResource Brush.Text.Primary}" VerticalAlignment="Center"
-                               MaxWidth="400" TextTrimming="CharacterEllipsis" />
-                    <Button x:Name="ScheduleStatusLink" Margin="8,0,0,0" Height="28" Width="Auto"
-                            Visibility="Collapsed" Click="ScheduleStatus_Click" ToolTip="回到首页查看运行控制">
-                        <StackPanel Orientation="Horizontal" Margin="4,0">
-                            <Ellipse x:Name="ScheduleStatusDot" Width="7" Height="7" StrokeThickness="1.3"
-                                     VerticalAlignment="Center" Stroke="{DynamicResource Brush.Text.Muted}" />
-                            <TextBlock x:Name="ScheduleStatusText" Text="桌面分身未启动" FontSize="14" FontWeight="Normal"
-                                       Foreground="{DynamicResource Brush.Text.Muted}" VerticalAlignment="Center"
-                                       Margin="6,0,0,0" MaxWidth="300" TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
+                        <TextBlock x:Name="PageTitle" VerticalAlignment="Center"
+                                   MaxWidth="380" TextTrimming="CharacterEllipsis" />
+                        <Button x:Name="ScheduleStatusLink" Margin="8,0,0,0" Width="Auto"
+                                WindowChrome.IsHitTestVisibleInChrome="True" Visibility="Collapsed"
+                                Click="ScheduleStatus_Click" ToolTip="回到首页查看运行控制">
+                            <StackPanel Orientation="Horizontal" Margin="4,0">
+                                <Ellipse x:Name="ScheduleStatusDot" Width="7" Height="7" StrokeThickness="1.3"
+                                         VerticalAlignment="Center" Stroke="{DynamicResource Brush.Text.Muted}" />
+                                <TextBlock x:Name="ScheduleStatusText" Text="桌面分身未启动" FontSize="14" FontWeight="Normal"
+                                           Foreground="{DynamicResource Brush.Text.Muted}" VerticalAlignment="Center"
+                                           Margin="6,0,0,0" MaxWidth="300" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <Button x:Name="ConfigurationMenuButton" Width="Auto" MaxWidth="400" Margin="12,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True"
+                            Padding="8,0" Click="ConfigurationMenu_Click" Visibility="Collapsed"
+                            PreviewMouseLeftButtonDown="ConfigurationMenu_PreviewMouseLeftButtonDown"
+                            Foreground="{DynamicResource Brush.Text.Primary}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="ConfigurationTitle" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <ui:SymbolIcon Grid.Column="1" Symbol="ChevronDown16" FontSize="12" Margin="6,0,0,0"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
+                        </Grid>
                     </Button>
-                </StackPanel>
+                </Grid>
             </ui:TitleBar.Header>
             <ui:TitleBar.TrailingContent>
                 <Border BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,0,1,0">

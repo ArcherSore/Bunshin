@@ -109,7 +109,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
-            () => CurrentControls.ConfigurationLock, HandleOperationError);
+            HandleOperationError);
         TaskPlanEditor.PlanEdited += (_, _) => {
             _lastStartKey = null;
             _editVersion++;
@@ -287,7 +287,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         Themes.ThemeService.InitializeWindow(this);
         var source = PresentationSource.FromVisual(this) as HwndSource;
         source?.AddHook(_themes.SystemThemeHook);
-        TaskPlanEditor.AddConfigurationWheelHook(source);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
@@ -302,7 +301,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             _onboardingClosed = true;
             EndOnboarding(handled: false);
             RemoveModalWindowHook();
-            TaskPlanEditor.RemoveConfigurationWheelHook();
             _runTimer.Stop();
             _scheduleTimer.Stop();
             _forcedStartTimer.Stop();
@@ -1265,7 +1263,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ApplyPanelSummary(state, progress);
 
         TaskPlanEditor.ApplyConfigurationLock(state.ConfigurationEditable, state.ConfigurationLock);
-        Sidebar.AllowNewConfiguration(state.ConfigurationEditable);
+        ApplyConfigurationLockToShell(state.ConfigurationEditable, state.ConfigurationLock);
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
 

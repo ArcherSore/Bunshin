@@ -173,8 +173,7 @@ internal static partial class SelfTestRunner
                 if (scenario == ScheduleScenario.Disconnected)
                     Require(noticesAtPreparation == 1 && unconfirmedNotices == 1, "确认旧 Worker 退出后应先发出唯一结论，再进入新环境准备。");
                 Require(!exitRequested && workers.Count == 2 && wts.LogoffAttempts.SequenceEqual([sessionId])
-                    && window.TaskPlanEditor.ConfigurationTabs.SelectedItem is TabItem { Tag: Guid shown }
-                    && shown == target,
+                    && window.Sidebar.ConfigurationList.ActiveConfigurationId == target,
                     "新分身应运行所选定时配置。");
             }, session: session, coordinator: coordinator,
                 environment: environment,

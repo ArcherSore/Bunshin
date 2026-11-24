@@ -17,11 +17,7 @@ public partial class MainWindow
             DismissSidebarOverlay();
             SwitchSection(section);
         };
-        Sidebar.NewConfigurationRequested += (_, _) => {
-            DismissSidebarOverlay();
-            SwitchSection(MainSection.Home);
-            TaskPlanEditor.CreateEmptyConfiguration();
-        };
+        InitializeConfigurationList();
         Sidebar.UpdateRequested += (_, _) => {
             DismissSidebarOverlay();
             OpenUpdateDialog();
@@ -90,7 +86,7 @@ public partial class MainWindow
             }
             return true;
         }
-        if (e.Key == Key.Escape && DismissSidebarOverlay()) {
+        if (e.Key == Key.Escape && !Sidebar.ConfigurationList.IsRenaming && DismissSidebarOverlay()) {
             Sidebar.FocusToggle();
             return true;
         }
@@ -100,25 +96,29 @@ public partial class MainWindow
     private void RefreshShellTitles()
     {
         var configuration = _projectPlan is null ? null : ActiveConfigurationName;
-        Sidebar.ShowConfigurationName(configuration);
         var title = _section switch {
             MainSection.Schedule => "定时",
             MainSection.Help => "帮助",
             MainSection.Settings => "设置",
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
-        Header.ShowPage(title, _section == MainSection.Home, _section == MainSection.Schedule);
+        var home = _section == MainSection.Home;
+        Header.ShowPage(title, home, home && configuration is not null, _section == MainSection.Schedule);
         RefreshSidebarSchedule();
     }
 
     private void RefreshSidebarSchedule()
     {
         if (_projectPlan is not { } project) {
+            Sidebar.ShowConfigurations(null, null);
             Sidebar.ShowNextRun(null);
             return;
         }
-        var now = _scheduleClock.GetLocalNow().DateTime;
-        var next = new SchedulePreview(project.Configurations, ScheduleInvalidReason, now).NextRun;
-        Sidebar.ShowNextRun(next is null ? null : SchedulePreview.WhenText(next.Time, now));
+        var preview = CreateSidebarSchedulePreview(project);
+        Sidebar.ShowConfigurations(project, preview);
+        Sidebar.ShowNextRun(preview.NextRun is { } next ? SchedulePreview.WhenText(next.Time, preview.Now) : null);
     }
+
+    private SchedulePreview CreateSidebarSchedulePreview(ProjectModel.ProjectPlanModule project) =>
+        new(project.Configurations, ScheduleInvalidReason, _scheduleClock.GetLocalNow().DateTime);
 }

@@ -603,7 +603,7 @@ internal static partial class SelfTestRunner
     }
 
     private static bool ConfigurationEditable(MainWindow window) =>
-        Named<UIElement>(window, "NewConfigurationButton").IsEnabled;
+        window.Sidebar.NewConfigurationItem.IsEnabled;
 
     private static string? LockText(MainWindow window) =>
         Named<UIElement>(window, "ConfigurationLockBadge").IsVisible

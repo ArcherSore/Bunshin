@@ -23,6 +23,10 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
                             </Trigger>
+                            <DataTrigger Binding="{Binding ContextMenu.IsOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                         Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                            </DataTrigger>
                             <Trigger Property="IsActive" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
                             </Trigger>
@@ -136,6 +140,7 @@
             <StackPanel Grid.Row="1" Margin="0,4,0,0">
                 <views:RailItem x:Name="NewConfigurationItem" Style="{StaticResource Sidebar.Item}" Margin="0,0,0,2"
                                 ToolTip="新建配置" AutomationProperties.Name="新建配置"
+                                PreviewMouseLeftButtonDown="NewConfiguration_PreviewMouseLeftButtonDown"
                                 Click="NewConfiguration_Click">
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="Add24" Style="{StaticResource Sidebar.Icon}" />
@@ -157,23 +162,16 @@
                 </views:RailItem>
             </StackPanel>
 
-            <!-- Host slot for the configuration list. Until it lands, the active configuration is the only entry. -->
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Focusable="False">
-                <StackPanel>
-                    <TextBlock x:Name="ConfigurationCaption" Text="配置" Margin="8,20,8,6"
-                               Foreground="{DynamicResource Brush.Text.Muted}">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
-                                                 Value="True">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+            <Grid Grid.Row="2" Margin="0,20,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="ConfigurationCaption" Text="配置" Margin="8,0,8,9"
+                           Foreground="{DynamicResource Brush.Text.Muted}" />
+                <views:ConfigurationSidebarList x:Name="ConfigurationList" Grid.Row="1" />
                     <views:RailItem x:Name="HomeNavigationItem" Tag="Home" IsActive="True"
+                                    Grid.Row="1" VerticalAlignment="Top"
                                     Style="{StaticResource Sidebar.Item}" Click="Navigation_Click">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -215,10 +213,7 @@
                             </Grid>
                         </Grid>
                     </views:RailItem>
-                    <ContentPresenter x:Name="ConfigurationHost" Content="{Binding ConfigurationContent,
-                        RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}" />
-                </StackPanel>
-            </ScrollViewer>
+            </Grid>
 
             <StackPanel Grid.Row="3">
                 <Border BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,1,0,0" Margin="0,0,0,8" />

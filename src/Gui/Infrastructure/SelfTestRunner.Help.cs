@@ -42,7 +42,7 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "HelpNavigationItem");
             var view = (HelpView)window.FindName("HelpView");
             Require(Named<RailItem>(window, "HelpNavigationItem").IsActive && view.IsVisible
-                && !Named<RailItem>(window, "HomeNavigationItem").IsActive
+                && !window.Sidebar.Home.IsActive
                 && !((UIElement)window.FindName("HomeView")).IsVisible
                 && !((UIElement)window.FindName("RuntimeSidebar")).IsVisible, "点击帮助应切换到常见问题页并标记选中项。");
             var page = (HelpPageModel)view.DataContext;
