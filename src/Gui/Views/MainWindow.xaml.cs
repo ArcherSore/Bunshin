@@ -30,15 +30,8 @@ namespace Gui.Views;
 public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 {
     private const int MaximumGuiLogEntries = 1000;
+    private const double MinimumRuntimeSidebarWidth = 340;
     private HwndSource? _modalWindowSource;
-
-    private enum MainSection
-    {
-        Home,
-        Schedule,
-        Help,
-        Settings
-    }
 
     private readonly AppLogger _logger;
     private readonly Themes.ThemeService _themes;
@@ -110,6 +103,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             CheckUpdateFromSettingsAsync, ExportDiagnosticsFromSettingsAsync, ReplayOnboarding, OpenAfdianAsync,
             ManageChildSessionCredentialsAsync, ClearDebugFilesAsync, ViewWelcome, OpenTaskDescriptionLink,
             ReadLicense, autostart, _themes.Apply);
+        InitializeShell();
         SettingsView.DataContext = _settings.Page;
         HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
@@ -120,13 +114,16 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         TaskPlanEditor.PlanEdited += (_, _) => {
             _lastStartKey = null;
             _editVersion++;
+            RefreshSidebarSchedule();
         };
         TaskPlanEditor.ConfigurationValidated += (_, valid) => {
             _projectConfigurationValid = valid;
             RefreshRuntimeControls();
         };
-        TaskPlanEditor.ConfigurationsRendered += (_, project) => _settings.UpdateAutoRunConfigurations(
-            AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
+        TaskPlanEditor.ConfigurationsRendered += (_, project) => {
+            _settings.UpdateAutoRunConfigurations(AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
+            RefreshShellTitles();
+        };
         TaskPlanEditor.TaskDescriptionRequested += (_, task) => OpenTaskDescriptionDrawer(task);
         TaskPlanEditor.TaskDescriptionCloseRequested += (_, _) => CloseTaskDescriptionDrawer();
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
@@ -335,14 +332,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         HiddenToTray?.Invoke(this, EventArgs.Empty);
     }
 
-    private void NavigationItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is RailItem { Tag: string sectionName }
-            && Enum.TryParse(sectionName, ignoreCase: false, out MainSection section)) {
-            SwitchSection(section);
-        }
-    }
-
     private void SwitchSection(MainSection section)
     {
         _section = section;
@@ -361,10 +350,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             RefreshDebugFileUsage();
         }
 
-        HomeNavigationItem.IsActive = section == MainSection.Home;
-        ScheduleNavigationItem.IsActive = section == MainSection.Schedule;
-        HelpNavigationItem.IsActive = section == MainSection.Help;
-        SettingsNavigationItem.IsActive = section == MainSection.Settings;
+        Sidebar.MarkActive(section);
+        RefreshShellTitles();
         ReevaluateOnboarding();
     }
 
@@ -426,7 +413,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         try {
             // ActualWidth can exceed the allotted space when the columns' minimum sizes no longer fit.
             var homeWidth = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(HomeView).Width;
-            var minimum = visible ? 340 + RuntimeSidebar.Margin.Right : 0;
+            var minimum = visible ? MinimumRuntimeSidebarWidth + RuntimeSidebar.Margin.Right : 0;
             var maximum = visible ? Math.Max(minimum, Math.Min(540 + RuntimeSidebar.Margin.Right,
                 homeWidth - HomeView.ColumnDefinitions[0].MinWidth)) : 0;
             RuntimeSidebarColumn.MinWidth = minimum;
@@ -520,7 +507,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     }
 
     // The console takes about a third of the home page, bounded so neither it nor the task area gets cramped.
-    internal static double SidebarWidth(double homeWidth) => Math.Clamp(Math.Round(homeWidth * 0.35), 340, 540);
+    internal static double SidebarWidth(double homeWidth) =>
+        Math.Clamp(Math.Round(homeWidth * 0.35), MinimumRuntimeSidebarWidth, 540);
 
     private void RuntimeMoreButton_Click(object sender, RoutedEventArgs e)
     {
@@ -737,6 +725,11 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void MainWindow_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (!IsOnboardingVisible && !IsGlobalModalOpen && TaskDescriptionOverlay.Visibility != Visibility.Visible
+            && HandleSidebarShortcut(e)) {
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Escape && ForcedStartOverlay.Visibility == Visibility.Visible) {
             e.Handled = true;
             return;
@@ -985,6 +978,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         string emptyStateDetail)
     {
         _projectPlan = null;
+        RefreshShellTitles();
         _settings.ViewWelcome.IsVisible = false;
         ShowProjectIdentity(null);
         _lastStartKey = null;
@@ -1272,6 +1266,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ApplyPanelSummary(state, progress);
 
         TaskPlanEditor.ApplyConfigurationLock(state.ConfigurationEditable, state.ConfigurationLock);
+        Sidebar.AllowNewConfiguration(state.ConfigurationEditable);
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1439,6 +1434,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         RuntimeStatusText.Text = pill;
         AutomationProperties.SetName(RuntimeStatusPill, $"运行状态：{pill}");
         ApplyScheduleCapsule(tone);
+        Sidebar.ShowRunning(tone == StatusTone.Run);
         RuntimeStatusTitle.Text = title;
         RuntimeStatusDetail.Text = detail;
         RuntimeStatusDetail.Visibility = detail.Length == 0 ? Visibility.Collapsed : Visibility.Visible;

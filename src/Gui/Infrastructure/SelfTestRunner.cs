@@ -40,7 +40,7 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifySettingsNavigation), c => VerifySettingsNavigation(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Support, nameof(VerifyProjectAboutContent), c => VerifyProjectAboutContent(c.Directory)),
         new(Group.Support, nameof(VerifyProjectAboutView), c => VerifyProjectAboutView(c.Logger, c.Directory)),
-        new(Group.Support, nameof(VerifyNavigationRail), c => VerifyNavigationRail(c.Logger, c.Directory)),
+        new(Group.Support, nameof(VerifyWindowShell), c => VerifyWindowShell(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyHelpPage), c => VerifyHelpPage(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyPreparationGuidance), _ => VerifyPreparationGuidance()),
         new(Group.Support, nameof(VerifyLaunchCommand), _ => VerifyLaunchCommand()),

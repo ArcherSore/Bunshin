@@ -26,7 +26,7 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "ScheduleNavigationItem");
             var view = (ScheduleView)window.FindName("ScheduleView");
             Require(view.IsVisible && !((UIElement)window.FindName("HomeView")).IsVisible
-                && ((RailItem)window.FindName("ScheduleNavigationItem")).IsActive,
+                && Named<RailItem>(window, "ScheduleNavigationItem").IsActive,
                 "点击定时应切换到定时页。");
             var preview = (SchedulePreview)Field(view, "_preview")!;
             var b = project.Configurations.Single(c => c.Id == empty);

@@ -1,0 +1,281 @@
+<UserControl x:Class="Gui.Views.ShellSidebar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:views="clr-namespace:Gui.Views"
+             AutomationProperties.Name="导航">
+    <UserControl.Resources>
+        <!-- A 32 DIP row: icon, label and trailing content. Compact keeps only the icon. -->
+        <Style x:Key="Sidebar.Item" TargetType="views:RailItem">
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="views:RailItem">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="8,0">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsActive" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsCompact" Value="True">
+                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Sidebar.Icon" TargetType="ui:SymbolIcon">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=views:RailItem}}"
+                             Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- Hidden while the item is compact. -->
+        <Style x:Key="Sidebar.Label" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompact, RelativeSource={RelativeSource AncestorType=views:RailItem}}"
+                             Value="True">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Sidebar.Trailing" TargetType="TextBlock" BasedOn="{StaticResource Sidebar.Label}">
+            <Setter Property="Margin" Value="8,0,0,0" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+        </Style>
+        <Style x:Key="Sidebar.ToggleButton" TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+    <Border x:Name="Frame" Background="{DynamicResource Brush.Surface.Subdued}"
+            BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,0,1,0">
+        <Border.Style>
+            <Style TargetType="Border">
+                <Setter Property="Width" Value="{x:Static views:ShellSidebar.ExpandedWidth}" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
+                                 Value="True">
+                        <Setter Property="Width" Value="{x:Static views:ShellSidebar.CompactWidth}" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
+        <Grid Margin="8,0,8,8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Drags the window like the header beside it. -->
+            <Grid x:Name="SidebarHeader" Grid.Row="0" Background="{DynamicResource Brush.Transparent}"
+                  MouseLeftButtonDown="SidebarHeader_MouseLeftButtonDown">
+                <TextBlock x:Name="Wordmark" Text="Bunshin" Margin="8,0,0,0" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" FontFamily="{StaticResource FontFamily.Wordmark}"
+                           FontSize="20" FontWeight="Normal" Foreground="{DynamicResource Brush.Text.Primary}"
+                           IsHitTestVisible="False">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
+                                             Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Button x:Name="SidebarToggleButton" HorizontalAlignment="Right"
+                        Style="{StaticResource Sidebar.ToggleButton}" Click="SidebarToggle_Click">
+                    <ui:SymbolIcon x:Name="SidebarToggleIcon" Symbol="PanelLeftContract24" FontSize="16" />
+                </Button>
+            </Grid>
+
+            <StackPanel Grid.Row="1" Margin="0,4,0,0">
+                <views:RailItem x:Name="NewConfigurationItem" Style="{StaticResource Sidebar.Item}" Margin="0,0,0,2"
+                                ToolTip="新建配置" AutomationProperties.Name="新建配置"
+                                Click="NewConfiguration_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="Add24" Style="{StaticResource Sidebar.Icon}" />
+                        <TextBlock Text="新建配置" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
+                    </StackPanel>
+                </views:RailItem>
+                <views:RailItem x:Name="ScheduleNavigationItem" Tag="Schedule" Style="{StaticResource Sidebar.Item}"
+                                Click="Navigation_Click">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ui:SymbolIcon Symbol="Clock24" Style="{StaticResource Sidebar.Icon}" />
+                        <TextBlock Grid.Column="1" Text="定时" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
+                        <TextBlock x:Name="ScheduleNextRunText" Grid.Column="2" Style="{StaticResource Sidebar.Trailing}" />
+                    </Grid>
+                </views:RailItem>
+            </StackPanel>
+
+            <!-- Host slot for the configuration list. Until it lands, the active configuration is the only entry. -->
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Focusable="False">
+                <StackPanel>
+                    <TextBlock x:Name="ConfigurationCaption" Text="配置" Margin="8,20,8,6"
+                               Foreground="{DynamicResource Brush.Text.Muted}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
+                                                 Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <views:RailItem x:Name="HomeNavigationItem" Tag="Home" IsActive="True"
+                                    Style="{StaticResource Sidebar.Item}" Click="Navigation_Click">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ui:SymbolIcon Symbol="Home24">
+                                <ui:SymbolIcon.Style>
+                                    <Style TargetType="ui:SymbolIcon" BasedOn="{StaticResource Sidebar.Icon}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCompact, RelativeSource={RelativeSource AncestorType=views:RailItem}}"
+                                                         Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ui:SymbolIcon.Style>
+                            </ui:SymbolIcon>
+                            <TextBlock x:Name="HomeNavigationLabel" Grid.Column="1" Text="首页"
+                                       Style="{StaticResource Sidebar.Label}" />
+                            <Grid Grid.Column="2">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCompact, RelativeSource={RelativeSource AncestorType=views:RailItem}}"
+                                                         Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <StackPanel x:Name="HomeRunningIndicator" Orientation="Horizontal"
+                                            Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <Ellipse Width="7" Height="7" Margin="0,0,6,0" Fill="{DynamicResource Brush.Success}" />
+                                    <TextBlock Text="运行中" Foreground="{DynamicResource Brush.Rail.Running}" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </views:RailItem>
+                    <ContentPresenter x:Name="ConfigurationHost" Content="{Binding ConfigurationContent,
+                        RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <StackPanel Grid.Row="3">
+                <Border BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,1,0,0" Margin="0,0,0,8" />
+                <views:RailItem x:Name="UpdateNavigationItem" Style="{StaticResource Sidebar.Item}" Margin="0,0,0,2"
+                                Click="Update_Click">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid Width="16" Height="16">
+                            <ui:SymbolIcon Symbol="ArrowDownload24" Style="{StaticResource Sidebar.Icon}" />
+                            <!-- Compact only: the marker that the expanded row shows on its right. -->
+                            <Ellipse x:Name="UpdateNavigationCornerDot" Width="7" Height="7"
+                                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-3,0"
+                                     Fill="{DynamicResource Brush.Rail.UpdateBadge}"
+                                     Stroke="{DynamicResource Brush.Surface.Subdued}" StrokeThickness="1.5"
+                                     Visibility="Collapsed" />
+                        </Grid>
+                        <TextBlock Grid.Column="1" Text="更新" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
+                        <StackPanel x:Name="UpdateNavigationTrailing" Grid.Column="2" Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsCompact, RelativeSource={RelativeSource AncestorType=views:RailItem}}"
+                                                     Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <Ellipse x:Name="UpdateNavigationBadge" Width="6" Height="6" Margin="0,0,6,0"
+                                     Fill="{DynamicResource Brush.Rail.UpdateBadge}" Visibility="Collapsed" />
+                            <ui:ProgressRing x:Name="UpdateNavigationLoading" Width="12" Height="12" Margin="0,0,6,0"
+                                             IsIndeterminate="True" Visibility="Collapsed"
+                                             Foreground="{DynamicResource Brush.Primary}" />
+                            <TextBlock x:Name="UpdateNavigationText" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource Brush.Primary}" />
+                        </StackPanel>
+                    </Grid>
+                </views:RailItem>
+                <views:RailItem x:Name="HelpNavigationItem" Tag="Help" Style="{StaticResource Sidebar.Item}"
+                                ToolTip="帮助" AutomationProperties.Name="帮助"
+                                Margin="0,0,0,2" Click="Navigation_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="QuestionCircle24" Style="{StaticResource Sidebar.Icon}" />
+                        <TextBlock Text="帮助" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
+                    </StackPanel>
+                </views:RailItem>
+                <views:RailItem x:Name="SettingsNavigationItem" Tag="Settings" Style="{StaticResource Sidebar.Item}"
+                                ToolTip="设置" AutomationProperties.Name="设置"
+                                Click="Navigation_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="Settings24" Style="{StaticResource Sidebar.Icon}" />
+                        <TextBlock Text="设置" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
+                    </StackPanel>
+                </views:RailItem>
+            </StackPanel>
+        </Grid>
+    </Border>
+</UserControl>

@@ -22,50 +22,6 @@
                  TextOptions.TextRenderingMode="ClearType"
                  WindowStartupLocation="CenterScreen">
     <ui:FluentWindow.Resources>
-        <Style x:Key="Rail.Label" TargetType="TextBlock">
-            <Setter Property="Margin" Value="0,3,0,0" />
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="Foreground"
-                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=views:RailItem}}" />
-            <Setter Property="FontWeight"
-                    Value="{Binding FontWeight, RelativeSource={RelativeSource AncestorType=views:RailItem}}" />
-        </Style>
-        <Style x:Key="Rail.Item" TargetType="views:RailItem">
-            <Setter Property="Width" Value="54" />
-            <Setter Property="Height" Value="52" />
-            <Setter Property="Margin" Value="0,0,0,4" />
-            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-            <Setter Property="FontWeight" Value="Normal" />
-            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="views:RailItem">
-                        <Grid>
-                            <Border Background="{TemplateBinding Background}" CornerRadius="8">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                            <Border x:Name="Indicator" Width="3" Height="20" Margin="-5,0,0,0" CornerRadius="1.5"
-                                    HorizontalAlignment="Left" Visibility="Collapsed"
-                                    Background="{DynamicResource Brush.Primary}" />
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-                            </Trigger>
-                            <Trigger Property="IsActive" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.Primary}" />
-                                <Setter Property="FontWeight" Value="SemiBold" />
-                                <Setter TargetName="Indicator" Property="Visibility" Value="Visible" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
         <views:LatestActivityConverter x:Key="Activity.IsLatest" />
         <Style x:Key="Activity.ClearButton" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
             <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
@@ -542,83 +498,22 @@
                 </Style.Triggers>
             </Style>
         </Grid.Style>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="SidebarColumn" Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <ui:TitleBar x:Name="AppTitleBar"
-                     Grid.Row="0"
-                     Title="{x:Static protocol:AppIdentity.Name}"
-                     Background="{DynamicResource Brush.Canvas}">
-            <ui:TitleBar.Icon>
-                <ui:ImageIcon x:Name="AppTitleBarIcon" Source="pack://application:,,,/Assets/app.png" />
-            </ui:TitleBar.Icon>
-        </ui:TitleBar>
+        <!-- Shell: the sidebar on the left; header and the page host (ShellContent) on the right. -->
+        <views:ShellSidebar x:Name="Sidebar" Grid.Column="0" HorizontalAlignment="Left" Panel.ZIndex="2" />
 
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="64" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <!-- A fixed 64 px rail on every page: icon above label, home on top, update, help, settings below. -->
-            <Border x:Name="MainNavigation" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource Brush.Rail.Border}"
-                    Background="{DynamicResource Brush.Canvas}" AutomationProperties.Name="导航">
-                <DockPanel Margin="0,6,0,10">
-                    <views:RailItem x:Name="HomeNavigationItem" DockPanel.Dock="Top" Tag="Home" IsActive="True"
-                                    Style="{StaticResource Rail.Item}" ToolTip="首页"
-                                    AutomationProperties.Name="首页" Click="NavigationItem_Click">
-                        <StackPanel>
-                            <ui:SymbolIcon Symbol="Home24" FontSize="20" HorizontalAlignment="Center" />
-                            <TextBlock Text="首页" Style="{StaticResource Rail.Label}" />
-                        </StackPanel>
-                    </views:RailItem>
-                    <views:RailItem x:Name="ScheduleNavigationItem" DockPanel.Dock="Top" Tag="Schedule"
-                                    Style="{StaticResource Rail.Item}" ToolTip="定时"
-                                    AutomationProperties.Name="定时" Click="NavigationItem_Click">
-                        <StackPanel>
-                            <ui:SymbolIcon Symbol="Clock24" FontSize="20" HorizontalAlignment="Center" />
-                            <TextBlock Text="定时" Style="{StaticResource Rail.Label}" />
-                        </StackPanel>
-                    </views:RailItem>
-                    <views:RailItem x:Name="SettingsNavigationItem" DockPanel.Dock="Bottom" Tag="Settings"
-                                    Style="{StaticResource Rail.Item}" ToolTip="设置"
-                                    AutomationProperties.Name="设置" Click="NavigationItem_Click">
-                        <StackPanel>
-                            <ui:SymbolIcon Symbol="Settings24" FontSize="20" HorizontalAlignment="Center" />
-                            <TextBlock Text="设置" Style="{StaticResource Rail.Label}" />
-                        </StackPanel>
-                    </views:RailItem>
-                    <views:RailItem x:Name="HelpNavigationItem" DockPanel.Dock="Bottom" Tag="Help"
-                                    Style="{StaticResource Rail.Item}" ToolTip="帮助"
-                                    AutomationProperties.Name="帮助" Click="NavigationItem_Click">
-                        <StackPanel>
-                            <ui:SymbolIcon Symbol="QuestionCircle24" FontSize="20" HorizontalAlignment="Center" />
-                            <TextBlock Text="帮助" Style="{StaticResource Rail.Label}" />
-                        </StackPanel>
-                    </views:RailItem>
-                    <views:RailItem x:Name="UpdateNavigationItem" DockPanel.Dock="Bottom"
-                                    Style="{StaticResource Rail.Item}" Click="ViewUpdate_Click">
-                        <StackPanel>
-                            <Grid Width="20" Height="20" HorizontalAlignment="Center" IsHitTestVisible="False">
-                                <ui:SymbolIcon x:Name="UpdateNavigationIcon" Symbol="Alert24" FontSize="20" />
-                                <Ellipse x:Name="UpdateNavigationBadge" Width="7" Height="7"
-                                         HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-1,-2,0"
-                                         Fill="{DynamicResource Brush.Rail.UpdateBadge}"
-                                         Stroke="{DynamicResource Brush.Canvas}" StrokeThickness="1.5"
-                                         Visibility="Collapsed" />
-                                <ui:ProgressRing x:Name="UpdateNavigationLoading" Width="14" Height="14"
-                                                 IsIndeterminate="True" Visibility="Collapsed"
-                                                 Foreground="{DynamicResource Brush.Primary}" />
-                            </Grid>
-                            <TextBlock Text="更新" Style="{StaticResource Rail.Label}" />
-                        </StackPanel>
-                    </views:RailItem>
-                    <Border />
-                </DockPanel>
-            </Border>
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <views:ShellHeader x:Name="Header" Grid.Row="0" />
 
-            <Grid Grid.Column="1">
+            <Grid x:Name="ShellContent" Grid.Row="1">
                 <Grid Background="{DynamicResource Brush.Canvas}">
                     <!-- Settings owns its definition-driven view and namescope. -->
                     <Grid x:Name="HomeView">
@@ -1293,6 +1188,9 @@
                     <views:ScheduleView x:Name="ScheduleView" Visibility="Collapsed" />
                     <views:SettingsView x:Name="SettingsView" Visibility="Collapsed" />
                     <views:HelpView x:Name="HelpView" Visibility="Collapsed" />
+                    <Border x:Name="SidebarDismissLayer" Background="{DynamicResource Brush.Overlay.Dim}"
+                            Panel.ZIndex="1" Visibility="Collapsed"
+                            MouseLeftButtonDown="SidebarDismissLayer_MouseLeftButtonDown" />
 
                     <Grid x:Name="TaskDescriptionOverlay"
                           Panel.ZIndex="100"

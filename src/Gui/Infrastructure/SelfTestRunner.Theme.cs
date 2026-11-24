@@ -60,7 +60,7 @@ internal static partial class SelfTestRunner
                     && bar.Color == Expected("Brush.Configuration.Bar"),
                     "任务计划编辑器中已显示的配置标签栏应跟随当前配色。");
                 Require(window.Foreground is SolidColorBrush body && body.Color == Expected("Brush.Text.Body")
-                    && window.UpdateNavigationBadge.Fill is SolidColorBrush badge
+                    && Named<System.Windows.Shapes.Ellipse>(window, "UpdateNavigationBadge").Fill is SolidColorBrush badge
                     && badge.Color == Expected("Brush.Rail.UpdateBadge")
                     && window.UpdateDialog.Shadow?.Color == ((DropShadowEffect)palette["Effect.Dialog"]).Color,
                     "主窗口正文、更新提示点和对话框阴影应跟随配色切换。");

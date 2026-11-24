@@ -315,7 +315,7 @@ internal static partial class SelfTestRunner
 
     private static void ClickOnboarding(MainWindow window, string name)
     {
-        var element = (UIElement)(window.FindName(name) ?? window.TaskPlanEditor.FindName(name));
+        var element = Named<UIElement>(window, name);
         element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
         PumpOnboarding();
     }
@@ -408,8 +408,8 @@ internal static partial class SelfTestRunner
         var root = (FrameworkElement)window.FindName("WindowOverlayRoot");
         var popover = (FrameworkElement)window.FindName("OnboardingPopover");
         var bounds = popover.TransformToAncestor(root).TransformBounds(new Rect(popover.RenderSize));
-        var navigation = (FrameworkElement)window.FindName("MainNavigation");
-        var contentTop = navigation.TransformToAncestor(root).Transform(new System.Windows.Point()).Y;
+        var content = Named<FrameworkElement>(window, "ShellContent");
+        var contentTop = content.TransformToAncestor(root).Transform(new System.Windows.Point()).Y;
         if (bounds.Left < -PixelTolerance || bounds.Top < contentTop + 16 - PixelTolerance
             || bounds.Right > root.ActualWidth + PixelTolerance
             || bounds.Bottom > root.ActualHeight + PixelTolerance) {
