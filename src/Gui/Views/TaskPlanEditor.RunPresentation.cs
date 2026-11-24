@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Shapes;
 using ProjectModel;
 using Protocol;
+using WpfButton = System.Windows.Controls.Button;
 using WpfSymbolRegular = Wpf.Ui.Controls.SymbolRegular;
 
 namespace Gui.Views;
@@ -12,6 +13,8 @@ public sealed partial class TaskPlanEditor
 {
     private RunProgressView? _shownRun;
     private Guid? _shownRunConfiguration;
+    private (PlanItemKind Kind, string Name)? _expandedRunTask;
+    private bool _runInspectorShown;
     private readonly List<(TextBlock Text, PlanItemProgressView Item)> _runTimers = [];
 
     internal void ApplyRunPresentation(RuntimeControlState state, RunProgressView? progress, string? startBlocker)
@@ -40,9 +43,16 @@ public sealed partial class TaskPlanEditor
                 RunItemsPanel.Visibility = Visibility.Collapsed;
                 RunRows.Children.Clear();
                 _runTimers.Clear();
+                var restoreInspector = _runInspectorShown;
+                _expandedRunTask = null;
+                _runInspectorShown = false;
                 PlanScroll.Visibility = Visibility.Visible;
                 if (project is not null) {
-                    UpdateIdlePlanCount(project);
+                    if (restoreInspector) {
+                        RenderPlanItems(project);
+                    } else {
+                        UpdateIdlePlanCount(project);
+                    }
                 }
             }
             return;
@@ -134,13 +144,70 @@ public sealed partial class TaskPlanEditor
             row.LastChildFill = false;
         }
         var card = new Border {
-            Height = 40, Margin = new Thickness(0, 0, 0, 2), CornerRadius = new CornerRadius(8), Child = row
+            MinHeight = 40, Margin = new Thickness(0, 0, 0, 2), CornerRadius = new CornerRadius(8), Child = row
         };
         if (state == PlanItemProgress.Running) {
             card.SetResourceReference(Border.BackgroundProperty, "Brush.Plan.Current");
         }
-        AutomationProperties.SetName(card, $"{label}，{AccessibleRunItemStatus(state)}");
+        var accessibleName = $"{label}，{AccessibleRunItemStatus(state)}";
+        AutomationProperties.SetName(card, accessibleName);
+        if (task is not null) {
+            AttachRunItemDetails(card, row, task, accessibleName);
+        }
         return card;
+    }
+
+    private void AttachRunItemDetails(Border card, DockPanel row, ProjectTaskChoice task, string accessibleName)
+    {
+        var configuration = GetConfigurationOrEmpty(task.Name, task.Kind);
+        var hasParameters = HasParameters(configuration);
+        if (!hasParameters && string.IsNullOrWhiteSpace(task.Description)) {
+            return;
+        }
+
+        var key = (task.Kind, task.Name);
+        var expanded = _expandedRunTask == key;
+        card.Child = null;
+        var header = new WpfButton {
+            Padding = new Thickness(0), Content = row,
+            Style = (Style)FindResource("PlanHeaderButtonStyle"), Tag = task
+        };
+        AutomationProperties.SetName(header, accessibleName);
+        AutomationProperties.SetHelpText(header, hasParameters ? (expanded ? "收起参数" : "查看参数") : "查看任务说明");
+        header.Click += (_, _) => {
+            if (!hasParameters) {
+                TaskDescriptionRequested?.Invoke(this, task);
+            } else if (_shownRun is { } run) {
+                _expandedRunTask = expanded ? null : key;
+                RenderRunRows(Project, run);
+                var replacement = RunRows.Children.OfType<Border>()
+                    .Select(border => (border.Child as StackPanel)?.Children[0])
+                    .OfType<WpfButton>().FirstOrDefault(button => Equals(button.Tag, task));
+                replacement?.Focus();
+            }
+        };
+        var body = new StackPanel { Children = { header } };
+        card.Child = body;
+        if (!expanded) {
+            return;
+        }
+
+        card.SetResourceReference(Border.BackgroundProperty, "Brush.Plan.Expanded");
+        _runInspectorShown = true;
+        _optionInputEditors.Clear();
+        _inspectorRows.Clear();
+        var inspector = CreateParameterInspector(task.Name, configuration, task.Kind);
+        inspector.IsEnabled = false;
+        inspector.Margin = new Thickness(36, 2, 12, 12);
+        body.Children.Add(inspector);
+        if (!string.IsNullOrWhiteSpace(task.Description)) {
+            var information = CreateIconButton(WpfSymbolRegular.Info16, $"查看 {task.Label} 的任务描述", "查看任务说明");
+            information.Tag = task;
+            information.Margin = new Thickness(0, 0, 12, 8);
+            information.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
+            information.Click += TaskDescriptionButton_Click;
+            body.Children.Add(information);
+        }
     }
 
     private FrameworkElement CreateRunIcon(PlanItemProgress state)
