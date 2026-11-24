@@ -111,10 +111,16 @@ public partial class App : System.Windows.Application
             + $"[args={string.Join(' ', Environment.GetCommandLineArgs().Skip(1))}]");
     }
 
-    internal Task RequestExitAsync() => ExitAsync(ConfirmExit);
+    internal Task RequestExitAsync() => ExitWithConfirmationAsync(
+        () => ConfirmInMainWindowAsync(window => window.ConfirmExitAsync()));
 
-    internal async Task ExitAsync(Func<bool>? confirm, RuntimeEnvironment? environment = null, MainWindow? window = null,
-        Action<Exception>? reportError = null, Action? shutdown = null)
+    internal Task ExitAsync(Func<bool>? confirm, RuntimeEnvironment? environment = null, MainWindow? window = null,
+        Action<Exception>? reportError = null, Action? shutdown = null) =>
+        ExitWithConfirmationAsync(confirm is null ? null : () => Task.FromResult(confirm()), environment, window,
+            reportError, shutdown);
+
+    private async Task ExitWithConfirmationAsync(Func<Task<bool>>? confirm, RuntimeEnvironment? environment = null,
+        MainWindow? window = null, Action<Exception>? reportError = null, Action? shutdown = null)
     {
         environment ??= _environment;
         window ??= _mainWindow;
@@ -126,7 +132,7 @@ public partial class App : System.Windows.Application
         var exitStarted = false;
         var exitCompleted = false;
         try {
-            var result = await environment.EndAsync(confirm, async ended => {
+            var result = await environment.EndWithConfirmationAsync(confirm, async ended => {
                 if (ended.Outcome != EnvironmentEndOutcome.Ended) return;
 
                 window.CommitExit();
@@ -150,7 +156,11 @@ public partial class App : System.Windows.Application
                 environment.Closing = true;
                 window.SetExitInProgress(true);
             });
-            if (result.Error is { } error) (reportError ?? ShowExitError)(error);
+            if (result.Error is { } error) {
+                if (reportError is not null) reportError(error);
+                else await window.ShowErrorPromptAsync(AppIdentity.Name,
+                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。", error, offerLogs: true);
+            }
         } finally {
             if (exitStarted && !exitCompleted) {
                 environment.Closing = false;
@@ -160,14 +170,12 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private static void ShowExitError(Exception error) => WpfMessageBox.Show(
-        $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。",
-        AppIdentity.Name, MessageBoxButton.OK, MessageBoxImage.Error);
-
-    private static bool ConfirmExit() => WpfMessageBox.Show(
-        "桌面分身仍在运行。退出程序将先停止正在运行的任务，再注销该 Session，并结束其中的游戏和自动化程序。\n\n确认退出吗？",
-        "确认退出",
-        MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+    private Task<bool> ConfirmInMainWindowAsync(Func<MainWindow, Task<bool>> confirm)
+    {
+        if (_mainWindow is not { } window) return Task.FromResult(false);
+        if (!window.IsActive || !window.IsVisible || window.WindowState == WindowState.Minimized) ShowMainWindow();
+        return confirm(window);
+    }
 
     // The tray and the main window share this confirmation and report any teardown error once.
     internal async Task EndEnvironmentAsync()
@@ -178,11 +186,8 @@ public partial class App : System.Windows.Application
 
         EnvironmentEndResult ended;
         try {
-            if (_environment.RequestEnd(() => WpfMessageBox.Show(
-                "结束桌面分身将先停止正在运行的任务，再注销 Session，并结束其中运行的程序。确认继续吗？",
-                "结束桌面分身",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes)
-                is not { } request) {
+            if (_environment.RequestEndWithConfirmation(
+                () => ConfirmInMainWindowAsync(window => window.ConfirmEndEnvironmentAsync())) is not { } request) {
                 return;
             }
             ended = await request;
@@ -190,14 +195,11 @@ public partial class App : System.Windows.Application
             // Only an exit refuses the request; the exit may have finished asking by the time this resumes.
             return;
         }
-        if (ended.Error is not { } error) {
-            return;
+        if (ended.Error is { } error && _mainWindow is { } window) {
+            await window.ShowErrorPromptAsync("结束桌面分身未确认",
+                $"{error.Message}已保留 Worker Admission，可再次结束桌面分身；详细信息已写入日志。",
+                error, offerLogs: true);
         }
-        ShowMainWindow();
-        WpfMessageBox.Show(
-            $"{error.Message}已保留 Worker Admission，可再次结束桌面分身；详细信息已写入日志。",
-            "结束桌面分身未确认",
-            MessageBoxButton.OK, MessageBoxImage.Error);
     }
 
     private bool IsExiting => _environment?.Closing == true;
@@ -348,11 +350,11 @@ public partial class App : System.Windows.Application
             return;
         } catch (Exception exception) {
             _logger.Error("从托盘显示子桌面失败。", exception);
-            ShowMainWindow();
-            WpfMessageBox.Show(
-                $"{exception.GetBaseException().Message}\n\n请在主窗口检查桌面分身状态后重试；详细信息已写入日志。",
-                "显示子桌面失败",
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            if (_mainWindow is { } window) {
+                await window.ShowErrorPromptAsync("显示子桌面失败",
+                    $"{exception.GetBaseException().Message}\n\n请在主窗口检查桌面分身状态后重试；详细信息已写入日志。",
+                    exception, offerLogs: true);
+            }
         }
     }
 
@@ -362,10 +364,12 @@ public partial class App : System.Windows.Application
         {
             logger.Critical("GUI 线程发生未处理异常，应用将继续运行。", args.Exception);
             args.Handled = true;
-            WpfMessageBox.Show(
-                $"操作发生异常，但程序仍在运行：\n{args.Exception.GetBaseException().Message}\n\n请查看日志。",
-                AppIdentity.Name,
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            var message = $"操作发生异常，但程序仍在运行：\n{args.Exception.GetBaseException().Message}\n\n请查看日志。";
+            if (_mainWindow is { } window) {
+                _ = window.ShowErrorPromptAsync(AppIdentity.Name, message, args.Exception, offerLogs: true);
+            } else {
+                WpfMessageBox.Show(message, AppIdentity.Name, MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             logger.Critical("进程发生不可恢复的未处理异常。", args.ExceptionObject as Exception);

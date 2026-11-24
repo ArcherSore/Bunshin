@@ -68,9 +68,7 @@ internal static partial class SelfTestRunner
                 listed = false;
                 using var saved = JsonDocument.Parse(File.ReadAllBytes(configPath));
                 activatedBeforeLogoff = saved.RootElement.GetProperty("ActiveConfigurationId").GetGuid() == target.Id
-                    && window.Dispatcher.Invoke(() => window.TaskPlanEditor.ConfigurationTabs.SelectedItem
-                        is System.Windows.Controls.TabItem
-                        { Tag: Guid selected } && selected == target.Id
+                    && window.Dispatcher.Invoke(() => window.Sidebar.ConfigurationList.ActiveConfigurationId == target.Id
                         && window.LogLines.OfType<LogEntry>()
                             .Any(e => e.TaskLabel == "定时" && e.Message == $"启动「{target.Name}」"));
             };

@@ -11,7 +11,7 @@ internal sealed record ProjectIdentity(string Name, string? IconPath);
 public partial class MainWindow
 {
     private const string ApplicationName = AppIdentity.Name;
-    private (ImageSource? Window, ImageSource? TitleBar)? _defaultIcons;
+    private ImageSource? _defaultIcon;
 
     // The tray follows the project name and icon; IconPath is null while the default icon is shown.
     internal event EventHandler<ProjectIdentity>? ProjectIdentityChanged;
@@ -24,8 +24,8 @@ public partial class MainWindow
     // Project title, icon and About, reapplied on every load; without a project the application's own are shown.
     private void ShowProjectIdentity(ProjectPlanModule? project)
     {
-        Title = AppTitleBar.Title = project?.Title ?? ApplicationName;
-        _defaultIcons ??= (Icon, AppTitleBarIcon.Source);
+        Title = project?.Title ?? ApplicationName;
+        _defaultIcon ??= Icon;
         string? path = null;
         ImageSource? icon = null;
         try {
@@ -36,8 +36,7 @@ public partial class MainWindow
             _logger.Warn($"加载项目图标失败，已使用默认图标。path={path}", exception);
             path = null;
         }
-        Icon = icon ?? _defaultIcons.Value.Window;
-        AppTitleBarIcon.Source = icon ?? _defaultIcons.Value.TitleBar;
+        Icon = icon ?? _defaultIcon;
         _settings.ShowProjectAbout(project?.About, icon);
         var telemetry = project is null ? null : TelemetryOptionsFor(project);
         _settings.ShowTelemetryAvailability(telemetry is not null);

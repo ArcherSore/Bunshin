@@ -34,15 +34,15 @@ internal static partial class SelfTestRunner
             "Windows Hello 指引不应出现在与登录无关的操作上。");
     }
 
-    // Help sits between Update and Settings, and each answer opens on its own.
+    // Help sits between Update and Settings, and at most one answer is open.
     private static void VerifyHelpPage(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "help-page"), (window, _) => {
 
             ClickOnboarding(window, "HelpNavigationItem");
             var view = (HelpView)window.FindName("HelpView");
-            Require(((RailItem)window.FindName("HelpNavigationItem")).IsActive && view.IsVisible
-                && !((RailItem)window.FindName("HomeNavigationItem")).IsActive
+            Require(Named<RailItem>(window, "HelpNavigationItem").IsActive && view.IsVisible
+                && !window.Sidebar.Home.IsActive
                 && !((UIElement)window.FindName("HomeView")).IsVisible
                 && !((UIElement)window.FindName("RuntimeSidebar")).IsVisible, "点击帮助应切换到常见问题页并标记选中项。");
             var page = (HelpPageModel)view.DataContext;
@@ -51,20 +51,20 @@ internal static partial class SelfTestRunner
             var answers = SettingsVisualDescendants(view).OfType<RevealDecorator>().ToArray();
             Require(headers.Length >= 3 && answers.All(answer => answer.ActualHeight == 0), "问题默认应全部收起。");
             Capture("collapsed");
-            headers[1].IsChecked = true;
+            headers[1].SetCurrentValue(ToggleButton.IsCheckedProperty, true);
             PumpUntil(() => answers[1].ActualHeight > 0, "展开一个问题应显示它的答案。");
             Require(page.Sections[0].Questions[1].IsExpanded && answers[0].ActualHeight == 0
                 && answers[2].ActualHeight == 0, "展开一个问题不应显示其他答案。");
-            headers[2].IsChecked = true;
-            PumpUntil(() => answers[2].ActualHeight > 0 && answers[1].ActualHeight > 0, "多个问题应可同时展开。");
             Capture("expanded");
             SettingsVisualDescendants(view).OfType<ScrollViewer>().First().ScrollToEnd();
             PumpOnboarding();
             Capture("bottom");
-            headers[1].IsChecked = false;
-            PumpUntil(() => answers[1].ActualHeight == 0, "收起问题后应隐藏它的答案。");
-            Require(!page.Sections[0].Questions[1].IsExpanded && answers[2].ActualHeight > 0,
-                "收起一个问题不应影响其他问题。");
+            headers[2].SetCurrentValue(ToggleButton.IsCheckedProperty, true);
+            PumpUntil(() => answers[2].ActualHeight > 0 && answers[1].ActualHeight == 0, "展开新问题时应收起旧答案。");
+            Require(headers[1].IsChecked == false && !page.Sections[0].Questions[1].IsExpanded,
+                "切换问题后，旧问题应恢复收起状态。");
+            headers[2].SetCurrentValue(ToggleButton.IsCheckedProperty, false);
+            PumpUntil(() => answers.All(answer => answer.ActualHeight == 0), "当前问题应可单独收起。");
 
             void Capture(string suffix)
             {

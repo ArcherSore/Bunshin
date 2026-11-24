@@ -87,6 +87,7 @@ public partial class MainWindow
                     new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(60)));
                 await Task.Delay(60, cancellation.Token);
             }
+            RefreshOnboardingRuntimePanel();
             if (_onboardingStep == 0 || _onboardingStep == 1 && _projectPlan!.SelectedItemCount == 0) {
                 TaskPlanEditor.OpenTaskShelf();
             }
@@ -147,10 +148,10 @@ public partial class MainWindow
             return TaskPlanEditor.Workspace;
         }
         if (step == 2) {
-            return RuntimeControlCard;
+            return RuntimeSidebar.RuntimeControlCard;
         }
         if (step == 3) {
-            return DesktopViewButton;
+            return RuntimeSidebar.DesktopViewButton;
         }
         var first = _projectPlan?.SelectedItems.FirstOrDefault();
         if (first is not null && TaskPlanEditor.PlanItemCard(first) is { } card) {
@@ -250,7 +251,7 @@ public partial class MainWindow
     {
         const double inset = 16;
         const double gap = 12;
-        var topInset = Math.Max(inset, OnboardingBounds(MainNavigation).Top + inset);
+        var topInset = Math.Max(inset, OnboardingBounds(ShellContent).Top + inset);
         OnboardingPopover.Width = Math.Min(312, Math.Max(1, window.Width - inset * 2));
         OnboardingPopover.MaxHeight = Math.Max(1, window.Height - topInset - inset);
         OnboardingPopover.Measure(new WpfSize(OnboardingPopover.Width, OnboardingPopover.MaxHeight));
@@ -458,6 +459,7 @@ public partial class MainWindow
         SystemParameters.StaticPropertyChanged -= Onboarding_SystemParametersChanged;
         OnboardingOverlay.Visibility = Visibility.Collapsed;
         _onboardingTargetBounds = Rect.Empty;
+        RefreshOnboardingRuntimePanel();
         try {
             if (restoreReplay) {
                 TaskPlanEditor.RestoreView(_onboardingPreviousView!);
@@ -468,7 +470,7 @@ public partial class MainWindow
                     element) {
                     element.Focus();
                 } else {
-                    HomeNavigationItem.Focus();
+                    Sidebar.Home.Focus();
                 }
             }
         } catch (Exception exception) {

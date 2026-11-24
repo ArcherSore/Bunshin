@@ -1,9 +1,8 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows;
-using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -18,11 +17,8 @@ using Gui.Settings;
 using Gui.Runtime;
 using Updates;
 using Gui.Worker;
-using WpfControl = System.Windows.Controls.Control;
-using Shape = System.Windows.Shapes.Shape;
 using WpfSymbol = Wpf.Ui.Controls.SymbolRegular;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
-using WpfMessageBox = System.Windows.MessageBox;
 using FluentWindow = Wpf.Ui.Controls.FluentWindow;
 
 namespace Gui.Views;
@@ -31,14 +27,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 {
     private const int MaximumGuiLogEntries = 1000;
     private HwndSource? _modalWindowSource;
-
-    private enum MainSection
-    {
-        Home,
-        Schedule,
-        Help,
-        Settings
-    }
 
     private readonly AppLogger _logger;
     private readonly Themes.ThemeService _themes;
@@ -70,13 +58,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private bool _exitInProgress;
     private bool _followLogs = true;
     private bool _projectConfigurationValid;
-    private double? _preferredRuntimeSidebarWidth;
-    private double? _savedRuntimeSidebarWidth;
-    private bool _updatingRuntimeSidebarWidth;
-    private bool _runtimeSidebarDragging;
-    private bool _runtimeSidebarKeyboardCue;
-    private static readonly DependencyPropertyDescriptor RuntimeSidebarWidthProperty =
-        DependencyPropertyDescriptor.FromProperty(ColumnDefinition.WidthProperty, typeof(ColumnDefinition));
     private IInputElement? _descriptionDrawerPreviousFocus;
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -110,25 +91,31 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             CheckUpdateFromSettingsAsync, ExportDiagnosticsFromSettingsAsync, ReplayOnboarding, OpenAfdianAsync,
             ManageChildSessionCredentialsAsync, ClearDebugFilesAsync, ViewWelcome, OpenTaskDescriptionLink,
             ReadLicense, autostart, _themes.Apply);
+        InitializeShell();
+        InitializeRuntimePanel();
         SettingsView.DataContext = _settings.Page;
         HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
-        ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
-            () => CurrentControls.ConfigurationLock, HandleOperationError);
+            HandleOperationError);
         TaskPlanEditor.PlanEdited += (_, _) => {
             _lastStartKey = null;
             _editVersion++;
+            RefreshSidebarSchedule();
         };
         TaskPlanEditor.ConfigurationValidated += (_, valid) => {
             _projectConfigurationValid = valid;
             RefreshRuntimeControls();
         };
-        TaskPlanEditor.ConfigurationsRendered += (_, project) => _settings.UpdateAutoRunConfigurations(
-            AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
+        TaskPlanEditor.ConfigurationsRendered += (_, project) => {
+            _settings.UpdateAutoRunConfigurations(AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
+            RefreshShellTitles();
+        };
         TaskPlanEditor.TaskDescriptionRequested += (_, task) => OpenTaskDescriptionDrawer(task);
         TaskPlanEditor.TaskDescriptionCloseRequested += (_, _) => CloseTaskDescriptionDrawer();
+        TaskPlanEditor.StartRequested += StartPlanButton_Click;
+        TaskPlanEditor.StopRequested += StopRunButton_Click;
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
         _sessionManager = sessionManager;
         _workerCoordinator = workerCoordinator;
@@ -153,7 +140,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _endEnvironmentAsync = endEnvironmentAsync;
         _installUpdateAsync = installUpdateAsync;
         _sessionSnapshot = sessionManager.Snapshot;
-        HomeLogListBox.AddHandler(
+        RuntimeSidebar.HomeLogListBox.AddHandler(
             ScrollViewer.ScrollChangedEvent,
             new ScrollChangedEventHandler(LogListBox_ScrollChanged));
         _sessionManager.StateChanged += OnSessionStateChanged;
@@ -161,22 +148,16 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _environment.StateChanged += OnEnvironmentStateChanged;
         _workerCoordinator.LogReceived += OnWorkerLogReceived;
         _workerSnapshot = workerCoordinator.Snapshot;
+        _runLog.Observe(_workerSnapshot.WorkerSnapshot);
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        InitializeWindowPrompts();
         InitializeForcedStartDialog();
         KeyDown += MainWindow_KeyDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
         StateChanged += MainWindow_StateChanged;
-        SizeChanged += (_, _) => TaskPlanEditor.UpdateConfigurationLockText();
-        RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
-        foreach (var routedEvent in new[] {
-            MouseEnterEvent, MouseLeaveEvent, MouseMoveEvent, GotKeyboardFocusEvent, LostKeyboardFocusEvent,
-            PreviewKeyDownEvent, SizeChangedEvent, System.Windows.Controls.Primitives.Thumb.DragStartedEvent,
-            System.Windows.Controls.Primitives.Thumb.DragCompletedEvent }) {
-            RuntimeSidebarSplitter.AddHandler(routedEvent, new RoutedEventHandler(RuntimeSidebarHandle_Update), true);
-        }
         HomeView.SizeChanged += (_, _) => RuntimeSidebarVisibility(_section);
         _runTimer.Tick += (_, _) => RefreshRunTiming();
         SwitchSection(MainSection.Home);
@@ -199,6 +180,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _exitInProgress = exitInProgress;
         if (exitInProgress) {
             _exitGeneration++;
+            CancelEnvironmentConfirmation();
             _forcedStartCountdown?.TrySetResult(false);
             _workerReadyWait?.Cancel();
             EndOnboarding(handled: false);
@@ -214,6 +196,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     internal void CommitExit()
     {
         if (_closingId is Guid id) _lifecycle.Apply(new LifecycleEvent.ClosingCommitted(id));
+        DispatchUnshownErrorsToTray();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -226,13 +209,13 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             return;
         }
         try {
-            AutoSessionMenuItem.IsChecked = File.Exists(AutoSessionPath)
+            RuntimeSidebar.AutoSessionMenuItem.IsChecked = File.Exists(AutoSessionPath)
                 && File.ReadAllText(AutoSessionPath).Trim() == "true";
             // An auto-run prepares the environment itself, so the preparation below would only repeat it.
             if (await AutoRunOnLaunchAsync()) {
                 return;
             }
-            if (AutoSessionMenuItem.IsChecked && CurrentControls.Action is RuntimeAction.Prepare { Enabled: true }) {
+            if (RuntimeSidebar.AutoSessionMenuItem.IsChecked && CurrentControls.Action is RuntimeAction.Prepare { Enabled: true }) {
                 await PrepareFromPanelAsync();
             }
         } catch (Exception exception) {
@@ -242,7 +225,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private async Task InitializeStartupAsync(Func<Task> restoreExistingSession)
     {
-        _homeLogScrollViewer = FindVisualChild<ScrollViewer>(HomeLogListBox);
+        _homeLogScrollViewer = FindVisualChild<ScrollViewer>(RuntimeSidebar.HomeLogListBox);
         try {
             LoadProject();
         } catch (Exception exception) {
@@ -291,7 +274,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         Themes.ThemeService.InitializeWindow(this);
         var source = PresentationSource.FromVisual(this) as HwndSource;
         source?.AddHook(_themes.SystemThemeHook);
-        TaskPlanEditor.AddConfigurationWheelHook(source);
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
@@ -302,16 +284,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
         if (_allowClose) {
             _lifecycle.Dispose();
+            CloseWindowPrompts();
             _environment.PendingLifecycleStart = null;
             _onboardingClosed = true;
             EndOnboarding(handled: false);
             RemoveModalWindowHook();
-            TaskPlanEditor.RemoveConfigurationWheelHook();
             _runTimer.Stop();
             _scheduleTimer.Stop();
             _forcedStartTimer.Stop();
             _forcedStartCountdown?.TrySetResult(false);
-            RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;
             _workerCoordinator.StateChanged -= OnWorkerStateChanged;
@@ -335,16 +316,12 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         HiddenToTray?.Invoke(this, EventArgs.Empty);
     }
 
-    private void NavigationItem_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is RailItem { Tag: string sectionName }
-            && Enum.TryParse(sectionName, ignoreCase: false, out MainSection section)) {
-            SwitchSection(section);
-        }
-    }
-
     private void SwitchSection(MainSection section)
     {
+        CancelRuntimeSidebarDrag();
+        if (section == MainSection.Settings && _section != MainSection.Settings) {
+            _sectionBeforeSettings = _section;
+        }
         _section = section;
         CloseTaskDescriptionDrawer();
         HomeView.Visibility = section == MainSection.Home
@@ -361,10 +338,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             RefreshDebugFileUsage();
         }
 
-        HomeNavigationItem.IsActive = section == MainSection.Home;
-        ScheduleNavigationItem.IsActive = section == MainSection.Schedule;
-        HelpNavigationItem.IsActive = section == MainSection.Help;
-        SettingsNavigationItem.IsActive = section == MainSection.Settings;
+        Sidebar.MarkActive(section);
+        RefreshShellTitles();
         ReevaluateOnboarding();
     }
 
@@ -417,118 +392,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
     }
 
-    private void RuntimeSidebarVisibility(MainSection section)
-    {
-        var visible = section == MainSection.Home;
-        RuntimeSidebar.Visibility = RuntimeSidebarSplitter.Visibility = visible
-            ? Visibility.Visible : Visibility.Collapsed;
-        _updatingRuntimeSidebarWidth = true;
-        try {
-            // ActualWidth can exceed the allotted space when the columns' minimum sizes no longer fit.
-            var homeWidth = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(HomeView).Width;
-            var minimum = visible ? 340 + RuntimeSidebar.Margin.Right : 0;
-            var maximum = visible ? Math.Max(minimum, Math.Min(540 + RuntimeSidebar.Margin.Right,
-                homeWidth - HomeView.ColumnDefinitions[0].MinWidth)) : 0;
-            RuntimeSidebarColumn.MinWidth = minimum;
-            RuntimeSidebarColumn.MaxWidth = maximum;
-            var preferred = _preferredRuntimeSidebarWidth
-                ?? SidebarWidth(homeWidth) + RuntimeSidebar.Margin.Right;
-            RuntimeSidebarColumn.Width = new GridLength(Math.Clamp(preferred, minimum, maximum));
-        } finally {
-            _updatingRuntimeSidebarWidth = false;
-        }
-    }
-
-    private void RuntimeSidebarColumn_WidthChanged(object? sender, EventArgs e)
-    {
-        // Observe native mouse, keyboard and automation resizing; automatic layout never replaces the preference.
-        if (!_updatingRuntimeSidebarWidth) {
-            _preferredRuntimeSidebarWidth = RuntimeSidebarColumn.Width.Value;
-        }
-    }
-
-    // The GridSplitter does all resizing; this only places its handle and picks the visual state.
-    private void RuntimeSidebarHandle_Update(object sender, RoutedEventArgs e)
-    {
-        var splitter = RuntimeSidebarSplitter;
-        if (e.RoutedEvent == System.Windows.Controls.Primitives.Thumb.DragStartedEvent) {
-            _runtimeSidebarDragging = true;
-            _runtimeSidebarKeyboardCue = false;
-        } else if (e.RoutedEvent == System.Windows.Controls.Primitives.Thumb.DragCompletedEvent) {
-            _runtimeSidebarDragging = false;
-            SaveRuntimeSidebarWidth();
-        } else if (e is KeyboardEventArgs) {
-            if (e.RoutedEvent == LostKeyboardFocusEvent) {
-                // Arrow-key resizing has no drag end; leaving the splitter finishes it.
-                SaveRuntimeSidebarWidth();
-            }
-            // Like a focus rectangle, focus shows the handle only when it came from the keyboard.
-            _runtimeSidebarKeyboardCue = e.RoutedEvent != LostKeyboardFocusEvent
-                && InputManager.Current.MostRecentInputDevice is KeyboardDevice;
-        }
-        var pointer = _runtimeSidebarDragging || splitter.IsMouseOver;
-        var keyboard = _runtimeSidebarKeyboardCue && splitter.IsKeyboardFocused;
-        if ((pointer || keyboard) && splitter.Template.FindName("Handle", splitter) is FrameworkElement handle
-            && splitter.Template.FindName("Tether", splitter) is FrameworkElement tether) {
-            // Follow the pointer, kept 24 DIP from the console's ends so it clears the rounded corners.
-            var y = Math.Clamp(pointer ? Mouse.GetPosition(splitter).Y : splitter.ActualHeight / 2,
-                24, Math.Max(24, splitter.ActualHeight - 24));
-            handle.Margin = new Thickness(0, y - handle.Height / 2, 0, 0);
-            // The edge segment's clip starts 10 DIP down, below the corner radius.
-            tether.Margin = new Thickness(0, y - 10 - tether.Height / 2, 0, 0);
-        }
-        VisualStateManager.GoToState(splitter, _runtimeSidebarDragging ? "Dragging"
-            : splitter.IsMouseOver ? "Hover" : keyboard ? "Keyboard" : "Hidden", true);
-    }
-
-    private string RuntimeSidebarWidthPath =>
-        Path.Combine(_applicationDirectory, "config", "runtime-sidebar-width.txt");
-
-    // The saved width is the user's preference; layout still clamps it to the space each window size allows.
-    private double? LoadRuntimeSidebarWidth()
-    {
-        try {
-            if (!File.Exists(RuntimeSidebarWidthPath)) {
-                return null;
-            }
-            var text = File.ReadAllText(RuntimeSidebarWidthPath).Trim();
-            if (!double.TryParse(text, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var width)
-                || !double.IsFinite(width) || width <= 0) {
-                throw new InvalidDataException($"侧栏宽度必须为正数：{text}");
-            }
-            return width;
-        } catch (Exception exception) {
-            _logger.Warn("读取运行控制栏宽度失败，已使用默认宽度。", exception);
-            return null;
-        }
-    }
-
-    private void SaveRuntimeSidebarWidth()
-    {
-        if (_preferredRuntimeSidebarWidth is not { } width || width == _savedRuntimeSidebarWidth) {
-            return;
-        }
-        try {
-            Directory.CreateDirectory(Path.GetDirectoryName(RuntimeSidebarWidthPath)!);
-            File.WriteAllText(RuntimeSidebarWidthPath,
-                width.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
-            _savedRuntimeSidebarWidth = width;
-        } catch (Exception exception) {
-            _logger.Warn("保存运行控制栏宽度失败。", exception);
-        }
-    }
-
-    // The console takes about a third of the home page, bounded so neither it nor the task area gets cramped.
-    internal static double SidebarWidth(double homeWidth) => Math.Clamp(Math.Round(homeWidth * 0.35), 340, 540);
-
-    private void RuntimeMoreButton_Click(object sender, RoutedEventArgs e)
-    {
-        RuntimeMoreMenu.PlacementTarget = RuntimeMoreButton;
-        RuntimeMoreMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-        RuntimeMoreMenu.IsOpen = true;
-    }
-
     private void OpenLogsMenuItem_Click(object sender, RoutedEventArgs e) => TryOpenLogsDirectory();
 
     // The same routine as the tray's "结束桌面分身", including its confirmation.
@@ -551,14 +414,41 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     {
         try {
             Directory.CreateDirectory(Path.GetDirectoryName(AutoSessionPath)!);
-            File.WriteAllText(AutoSessionPath, AutoSessionMenuItem.IsChecked ? "true" : "false");
-            _settings.LogToggleChanged("application.autoSession", AutoSessionMenuItem.IsChecked);
+            File.WriteAllText(AutoSessionPath, RuntimeSidebar.AutoSessionMenuItem.IsChecked ? "true" : "false");
+            _settings.LogToggleChanged("application.autoSession", RuntimeSidebar.AutoSessionMenuItem.IsChecked);
         } catch (Exception exception) {
             _logger.Warn("保存自动启动分身设置失败。", exception);
-            AutoSessionMenuItem.IsChecked = !AutoSessionMenuItem.IsChecked;
+            RuntimeSidebar.AutoSessionMenuItem.IsChecked = !RuntimeSidebar.AutoSessionMenuItem.IsChecked;
             ShowActionableError("保存自动启动分身设置失败", exception, "请检查配置目录写入权限。", offerLogDirectory: false);
         }
     }
+
+    private void StartPlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        switch (CurrentControls.Action) {
+            case RuntimeAction.Prepare { Enabled: true } when PlanStartBlocker(CurrentControls.Action) is null:
+                PrepareAndRunButton_Click(sender, e);
+                break;
+            case RuntimeAction.Start { Enabled: true }:
+                StartRunButton_Click(sender, e);
+                break;
+            case RuntimeAction.Retry { Enabled: true }:
+                RetryRuntimeHeaderButton_Click(sender, e);
+                break;
+            default:
+                LogIgnoredAction();
+                break;
+        }
+    }
+
+    private StartBlocker? PlanStartBlocker(RuntimeAction action) => action switch {
+        RuntimeAction.Start start => start.Blocker,
+        RuntimeAction.Retry retry => retry.Blocker,
+        RuntimeAction.Prepare { Enabled: false } => StartBlocker.CommandsUnavailable,
+        RuntimeAction.Prepare when _projectPlan?.EnabledItems.Count is null or 0 => StartBlocker.NoTasks,
+        RuntimeAction.Prepare when !_projectConfigurationValid => StartBlocker.ConfigurationInvalid,
+        _ => null
+    };
 
     private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
     {
@@ -737,6 +627,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void MainWindow_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
+        if (PromptOverlay.Visibility == Visibility.Visible) {
+            e.Handled = HandleWindowPromptKey(e);
+            return;
+        }
+        if (!IsOnboardingVisible && !IsGlobalModalOpen && TaskDescriptionOverlay.Visibility != Visibility.Visible
+            && HandleSidebarShortcut(e)) {
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Escape && ForcedStartOverlay.Visibility == Visibility.Visible) {
             e.Handled = true;
             return;
@@ -756,8 +655,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Escape && WelcomeOverlay.Visibility == Visibility.Visible) {
-            CloseWelcome();
+        if (e.Key == Key.Escape && ProjectReader.Visibility == Visibility.Visible) {
+            CloseProjectReader();
             e.Handled = true;
             return;
         }
@@ -817,8 +716,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         } catch (Exception exception) {
             _settings.OpenAfdian.Status = "无法打开爱发电，请检查默认浏览器设置。";
             _logger.Warn("打开爱发电赞助页面失败。", exception);
-            WpfMessageBox.Show(this, $"请手动访问：{address}\n\n按 Ctrl+C 可复制此提示中的网址。",
-                "无法打开爱发电", MessageBoxButton.OK, MessageBoxImage.Information);
+            return QueueWindowPrompt(new("无法打开爱发电",
+                $"请手动访问：{address}\n\n按 Ctrl+C 可复制此提示中的网址。", CopyText: address));
         }
         return Task.CompletedTask;
     }
@@ -885,7 +784,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         } catch (Exception exception) when (unattended) {
             ReportUnattendedFailure($"{OperationLabel(pending)}失败", exception);
         } catch (Exception exception) {
-            HandleOperationError($"{OperationLabel(pending)}失败", exception);
+            await PresentOperationErrorAsync($"{OperationLabel(pending)}失败", exception);
         } finally {
             SetPendingOperation(PendingOperation.None);
         }
@@ -902,18 +801,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     };
 
     private void HandleOperationError(string operation, Exception exception) =>
-        PresentOperationError(operation, exception);
+        _ = PresentOperationErrorAsync(operation, exception);
 
-    private void PresentOperationError(string operation, Exception exception, string? detail = null)
+    private Task<bool> PresentOperationErrorAsync(string operation, Exception exception, string? detail = null)
     {
         _logger.Error($"{operation}。", exception);
-        var helloGuidance = GetWindowsHelloGuidance(
-            operation, exception, _presentation.RequiresWindowsHello());
-        if (helloGuidance is not null) {
-            _presentation.ShowError(this, operation, exception, helloGuidance, MessageBoxButton.OK);
-            return;
-        }
-        ShowActionableError(operation, exception, GetRecoveryGuidance(operation), offerLogDirectory: true, detail);
+        var helloGuidance = CanShowWindowPrompt
+            ? GetWindowsHelloGuidance(operation, exception, _presentation.RequiresWindowsHello()) : null;
+        var message = helloGuidance ?? $"{detail ?? exception.GetBaseException().Message}\n\n{GetRecoveryGuidance(operation)}";
+        return ShowErrorPromptAsync(operation, message, exception, offerLogs: true);
     }
 
     internal static string? GetWindowsHelloGuidance(string operation, Exception exception, bool windowsHelloOnly)
@@ -985,6 +881,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         string emptyStateDetail)
     {
         _projectPlan = null;
+        RefreshShellTitles();
         _settings.ViewWelcome.IsVisible = false;
         ShowProjectIdentity(null);
         _lastStartKey = null;
@@ -1042,7 +939,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         var shouldFollow = _followLogs && IsLogNearTop();
         var previousOffset = _homeLogScrollViewer?.VerticalOffset ?? 0;
         var inserted = _runLog.Add(entry);
-        UpdateRunLogCount();
         if (!shouldFollow && _runLog.EntryCount > 1) {
             _homeLogScrollViewer?.ScrollToVerticalOffset(previousOffset + inserted);
         }
@@ -1065,21 +961,28 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         // A change raised on another thread runs here late, possibly after a newer one raised on this thread, so the
         // coordinator's current snapshot is applied rather than the one the event carried.
         _workerSnapshot = _workerCoordinator.Snapshot;
+        _runLog.Observe(_workerSnapshot.WorkerSnapshot);
         RefreshRuntimeControls();
     }
 
     private void MainWindow_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
+        RefreshWindowPrompts();
         ReevaluateOnboarding();
         if (IsVisible) {
             _ = CheckScheduledRunsAsync();
         }
     }
 
-    private void MainWindow_StateChanged(object? sender, EventArgs e) => ReevaluateOnboarding();
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        RefreshWindowPrompts();
+        ReevaluateOnboarding();
+    }
 
     private bool IsGlobalModalOpen => UpdateOverlay.Visibility == Visibility.Visible
-        || WelcomeOverlay.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible;
+        || ProjectReader.Visibility == Visibility.Visible || ForcedStartOverlay.Visibility == Visibility.Visible
+        || PromptOverlay.Visibility == Visibility.Visible;
 
     private void EnsureModalWindowHook()
     {
@@ -1153,23 +1056,19 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private void ClearActivity_Click(object sender, RoutedEventArgs e)
     {
         _runLog.Clear();
-        UpdateRunLogCount();
         _followLogs = true;
     }
 
-    private void UpdateRunLogCount() =>
-        RunLogCountText.Text = _runLog.EntryCount == 0 ? string.Empty : $"{_runLog.EntryCount} 条";
-
     private bool IsLogNearTop()
     {
-        _homeLogScrollViewer ??= FindVisualChild<ScrollViewer>(HomeLogListBox);
+        _homeLogScrollViewer ??= FindVisualChild<ScrollViewer>(RuntimeSidebar.HomeLogListBox);
         return _homeLogScrollViewer is null || _homeLogScrollViewer.VerticalOffset <= 0.1;
     }
 
     private void ScrollLogsToLatest()
     {
         if (_followLogs && LogLines.FirstOrDefault() is { } latestHeading) {
-            HomeLogListBox.ScrollIntoView(latestHeading);
+            RuntimeSidebar.HomeLogListBox.ScrollIntoView(latestHeading);
         }
     }
 
@@ -1226,335 +1125,11 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ApplyRuntimeControls(CurrentControls);
     }
 
-    internal void ApplyRuntimeControls(RuntimeControlState state)
-    {
-        ApplyDesktopToggle(state.Desktop);
-
-        var action = state.Action;
-        PrepareEnvironmentButton.Visibility = Visible(action is RuntimeAction.Prepare);
-        PrepareEnvironmentButton.IsEnabled = action is RuntimeAction.Prepare { Enabled: true };
-        RetryEnvironmentButton.Visibility = Visible(action is RuntimeAction.Retry);
-        RetryEnvironmentButton.IsEnabled = action is RuntimeAction.Retry { Enabled: true };
-        StartTaskHeaderButton.Visibility = Visible(action is RuntimeAction.Start);
-        StartTaskHeaderButton.IsEnabled = action is RuntimeAction.Start { Enabled: true };
-        Explain(StartTaskHeaderButton, (action as RuntimeAction.Start)?.Blocker);
-        Explain(RetryEnvironmentButton, (action as RuntimeAction.Retry)?.Blocker);
-        if (action is RuntimeAction.Retry { Target: var retryTarget }) {
-            var retryText = retryTarget == RetryTarget.Prepare ? "重试准备运行环境" : "重试开始任务";
-            RetryEnvironmentText.Text = retryText;
-            AutomationProperties.SetName(RetryEnvironmentButton, retryText);
-        }
-        StopTaskHeaderButton.Visibility = Visible(action is RuntimeAction.Stop);
-        StopTaskHeaderButton.IsEnabled = action is RuntimeAction.Stop { Enabled: true };
-        RecoverEnvironmentButton.Visibility = Visible(action is RuntimeAction.Recover);
-        RecoverEnvironmentButton.IsEnabled = action is RuntimeAction.Recover { Enabled: true };
-        if (action is RuntimeAction.Recover { Reason: var recovery }) {
-            var reason = RecoveryText(recovery);
-            RecoverEnvironmentButton.ToolTip = reason;
-            AutomationProperties.SetHelpText(RecoverEnvironmentButton, reason);
-        }
-        RuntimeHeaderProgressRing.Visibility = Visible(action is RuntimeAction.InProgress);
-        if (action is RuntimeAction.InProgress { Kind: var kind }) {
-            var operation = kind switch {
-                ProgressKind.StoppingRun => PendingOperation.StoppingRun,
-                ProgressKind.StartingRun => PendingOperation.StartingRun,
-                _ => PendingOperation.PreparingEnvironment
-            };
-            var progressText = kind == ProgressKind.EndingEnvironment
-                ? "正在结束桌面分身" : $"正在{OperationLabel(operation)}";
-            AutomationProperties.SetName(RuntimeHeaderProgressRing, progressText);
-            RuntimeProgressText.Text = $"{progressText}…";
-        }
-        ApplyMoreMenu(state);
-        var progress = CurrentRunProgress;
-        ApplyRuntimeStatus(state, progress);
-        ApplyRunProgress(progress);
-        ApplyPanelSummary(state, progress);
-
-        TaskPlanEditor.ApplyConfigurationLock(state.ConfigurationEditable, state.ConfigurationLock);
-
-        static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
-
-        // A blocked Start, or a Retry that would start, says why on hover and to screen readers; the task area
-        // holds the detailed message. The visible label needs no tooltip of its own.
-        static void Explain(FrameworkElement button, StartBlocker? blocker)
-        {
-            var reason = blocker is { } value ? StartBlockerText(value) : null;
-            button.ToolTip = reason;
-            AutomationProperties.SetHelpText(button, reason ?? string.Empty);
-        }
-    }
-
-    private void ApplyPanelSummary(RuntimeControlState state, RunProgressView? progress)
-    {
-        var running = state.Desktop.Status is DesktopStatus.Background or DesktopStatus.Viewing
-            or DesktopStatus.Interactive;
-        RuntimeStatusText.Text = running ? "已启动" : state.Desktop.Status switch {
-            DesktopStatus.Connecting => "启动中",
-            DesktopStatus.Ending => "正在结束",
-            DesktopStatus.Disconnected => "已断开",
-            _ => "未启动"
-        };
-        RuntimeStatusPill.Background = System.Windows.Media.Brushes.Transparent;
-        RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
-        if (running) {
-            SessionStatusDot.SetResourceReference(Shape.FillProperty, "Brush.Success");
-            SessionStatusDot.Stroke = null;
-        } else {
-            SessionStatusDot.Fill = System.Windows.Media.Brushes.Transparent;
-            SessionStatusDot.SetResourceReference(Shape.StrokeProperty, "Brush.Border.Strong");
-        }
-        SessionStatusDot.StrokeThickness = running ? 0 : 1.5;
-        AutomationProperties.SetName(RuntimeStatusPill, $"桌面分身：{RuntimeStatusText.Text}");
-        DesktopViewText.Text = state.Desktop.Action == DesktopAction.Hide ? "隐藏窗口" : "显示窗口";
-        DesktopViewButton.ToolTip = state.Desktop.Action == DesktopAction.Hide
-            ? "隐藏窗口，分身和任务继续运行" : "显示分身窗口，默认只读";
-        StartSessionMenuItem.Visibility = running ? Visibility.Collapsed : Visibility.Visible;
-        StartSessionMenuItem.IsEnabled = state.Action is RuntimeAction.Prepare { Enabled: true };
-        RuntimeStatusPill.ToolTip = state.Desktop.Status == DesktopStatus.Connecting ? PreparationStage() : null;
-        EndEnvironmentMenuItem.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-        SessionMenuSeparator.Visibility = StartSessionMenuItem.Visibility == Visibility.Visible || running
-            ? Visibility.Visible : Visibility.Collapsed;
-        if (state.Action is RuntimeAction.InProgress { Kind: var busyKind }) {
-            RuntimeProgressText.Text = busyKind == ProgressKind.StoppingRun ? "正在停止…"
-                : busyKind == ProgressKind.EndingEnvironment ? "正在结束…" : "启动中…";
-        }
-        RunSummaryCard.Visibility = progress is not null || state.Action is RuntimeAction.Recover
-            ? Visibility.Visible : Visibility.Collapsed;
-        if (progress is null || state.Action is RuntimeAction.Recover) {
-            return;
-        }
-        RunSummaryCard.SetResourceReference(Border.BackgroundProperty,
-            progress.Failed > 0 ? "Brush.RunSummary.FailureSurface" : "Brush.Surface.Subdued");
-        RunSummaryCard.SetResourceReference(Border.BorderBrushProperty,
-            progress.Failed > 0 ? "Brush.RunSummary.FailureBorder" : "Brush.Border.Subtle");
-        RuntimeStatusDetail.Visibility = Visibility.Collapsed;
-        RuntimeStatusTitle.Text = progress.Current?.TaskLabel
-            ?? progress.Items.FirstOrDefault(item => item.State == PlanItemProgress.Failed)?.TaskLabel
-            ?? (progress.Stopped > 0 ? "任务已停止" : $"{progress.Succeeded} 项全部成功");
-        RunProgressCaption.Text = progress.Active
-            ? $"{(state.Action is RuntimeAction.InProgress { Kind: ProgressKind.StoppingRun } ? "停止中" : "运行中")}"
-                + $" · 第 {(progress.CurrentIndex ?? 0) + 1} / {progress.Total} 项"
-            : progress.Failed == 0 && progress.Stopped == 0 && progress.NotRun == 0
-                ? $"{progress.EndedAtUtc?.ToLocalTime():HH:mm} 完成"
-                : RunProgress.Caption(progress).Replace("上次运行：", "");
-        RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active ? "Brush.Primary"
-            : progress.Failed > 0 ? "Brush.Error.Foreground" : "Brush.Success");
-        RunProgressCaption.FontWeight = FontWeights.SemiBold;
-    }
-
-    private static string StartBlockerText(StartBlocker blocker) => blocker switch {
-        StartBlocker.CommandsUnavailable => "当前操作完成后可开始任务",
-        StartBlocker.ProjectNotLoaded => "项目未加载，无法开始任务",
-        StartBlocker.NoTasks => "请先添加或勾选要执行的任务",
-        StartBlocker.ConfigurationInvalid => "当前配置未通过校验，请先修正任务参数",
-        _ => "运行环境尚未就绪，请稍候"
-    };
-
-    private static string RecoveryText(RecoveryReason reason) => reason switch {
-        RecoveryReason.StopUnconfirmed => "任务未能确认结束，任务可能仍在运行",
-        RecoveryReason.RuntimeFaulted => "运行环境故障，Worker 无法继续执行任务",
-        RecoveryReason.WorkerLost => "Worker 失联且未确认已退出；也可以等待它重新连接",
-        _ => "上次结束桌面分身未确认"
-    };
-
-    // The glyph and dot report the Child Session and the fill marks an open viewer; it deliberately has no tooltip.
-    // The dot takes the status pill's tone colours, so both agree on what amber, green, blue and red mean.
-    private void ApplyDesktopToggle(DesktopToggle desktop)
-    {
-        DesktopViewIcon.Data = Geometry.Parse(desktop.Action == DesktopAction.Hide
-            ? "M2.6 10s2.7-5 7.4-5c1.5 0 2.8.5 3.9 1.2M17.4 10s-2.7 5-7.4 5c-1.5 0-2.8-.5-3.9-1.2M3.5 16.5l13-13"
-            : "M2.6 10s2.7-5 7.4-5 7.4 5 7.4 5-2.7 5-7.4 5-7.4-5-7.4-5Z"
-                + "M12.3 10A2.3 2.3 0 1 1 7.7 10A2.3 2.3 0 1 1 12.3 10");
-        DesktopViewButton.IsEnabled = desktop.Enabled;
-        if (desktop.Status == DesktopStatus.Interactive) {
-            DesktopViewButton.SetResourceReference(WpfControl.BackgroundProperty, "Brush.Warning.Surface");
-            DesktopViewButton.SetResourceReference(WpfControl.ForegroundProperty, "Brush.Warning.Foreground");
-        } else {
-            DesktopViewButton.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
-            DesktopViewButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
-        }
-        AutomationProperties.SetName(DesktopViewButton,
-            desktop.Action == DesktopAction.Hide ? "隐藏窗口" : "显示窗口");
-    }
-
-    private void ApplyMoreMenu(RuntimeControlState state)
-    {
-        var endBlocker = state.Action is RuntimeAction.Stop ? "请先停止任务" : EndEnvironmentBlocker(state);
-        EndEnvironmentMenuItem.IsEnabled = endBlocker is null;
-        EndEnvironmentMenuItem.InputGestureText = endBlocker ?? string.Empty;
-        EndEnvironmentMenuItem.Tag = endBlocker ?? "注销分身，游戏随之关闭";
-    }
-
-    private RunProgressView? CurrentRunProgress => _projectPlan is { } project
-        ? RunProgress.Derive(_workerSnapshot.WorkerSnapshot,
-            project.EnabledItems
-                .Select(item => (item.Kind, item.Name)).ToArray()) : null;
-
-    private enum StatusTone { Idle, Busy, Ok, Run, Bad }
-
-    private static (string Surface, string Foreground) ToneBrushes(StatusTone tone) => tone switch {
-        StatusTone.Busy => ("Brush.Warning.Surface", "Brush.Warning.Foreground"),
-        StatusTone.Ok => ("Brush.Tasks.Accent.Surface", "Brush.Success"),
-        StatusTone.Run => ("Brush.Primary.Surface", "Brush.Primary"),
-        StatusTone.Bad => ("Brush.Error.Surface", "Brush.Error"),
-        _ => ("Brush.Surface.Disabled", "Brush.Text.Secondary")
-    };
-
-    // The pill, title and detail restate the action RuntimeControls chose; progress only adds the current item.
-    private void ApplyRuntimeStatus(RuntimeControlState state, RunProgressView? progress)
-    {
-        var planSummary = _projectPlan is { } project ? $"{project.EnabledItems.Count} 项任务待执行" : "项目未加载";
-        var current = progress?.Current;
-        var (tone, pill, title, detail, warn) = state.Action switch {
-            RuntimeAction.Prepare => (StatusTone.Idle, "未准备", "开始任务前需要准备运行环境",
-                "将准备桌面分身和 Worker", false),
-            RuntimeAction.InProgress { Kind: ProgressKind.PreparingEnvironment } => (StatusTone.Busy, "准备中",
-                "正在准备运行环境", PreparationStage(), false),
-            RuntimeAction.InProgress { Kind: ProgressKind.StartingRun } => (StatusTone.Busy, "启动中", "正在开始任务",
-                "正在把执行计划交给 Worker…", false),
-            RuntimeAction.InProgress { Kind: ProgressKind.StoppingRun } => (StatusTone.Busy, "停止中", "正在停止任务",
-                "等待当前任务安全结束…", false),
-            RuntimeAction.InProgress => (StatusTone.Busy, "处理中", "正在结束桌面分身", "正在注销 Child Session…", false),
-            RuntimeAction.Stop when current is not null => (StatusTone.Run, "运行中",
-                $"第 {progress!.CurrentIndex + 1} / {progress.Total} 项：{current.TaskLabel}",
-                $"本项已运行 {ElapsedText(current.StartedAtUtc, null)}", false),
-            RuntimeAction.Stop => (StatusTone.Run, "运行中", "任务运行中", string.Empty, false),
-            RuntimeAction.Start { Blocker: { } blocker } => (StatusTone.Ok, "就绪", planSummary,
-                StartBlockerText(blocker), true),
-            RuntimeAction.Start => (StatusTone.Ok, "就绪", planSummary,
-                $"{ActiveConfigurationName} · 运行环境已就绪{(progress is null ? "" : "，可以再次开始")}", false),
-            RuntimeAction.Retry { Target: RetryTarget.Prepare } => (StatusTone.Bad, "需重试", "运行环境未就绪",
-                "重新准备运行环境后再开始任务", false),
-            RuntimeAction.Retry retry => (StatusTone.Bad, "需重试", "上次运行失败",
-                retry.Blocker is { } blocker ? StartBlockerText(blocker) : "修正后可以重新开始任务",
-                retry.Blocker is not null),
-            RuntimeAction.Recover { Reason: var reason } => (StatusTone.Bad, "故障", RecoveryTitle(reason),
-                RecoveryText(reason), false),
-            _ => (StatusTone.Idle, string.Empty, string.Empty, string.Empty, false)
-        };
-        var (surface, foreground) = ToneBrushes(tone);
-        RuntimeStatusPill.SetResourceReference(Border.BackgroundProperty, surface);
-        RuntimeStatusText.SetResourceReference(TextBlock.ForegroundProperty, foreground);
-        RuntimeStatusText.Text = pill;
-        AutomationProperties.SetName(RuntimeStatusPill, $"运行状态：{pill}");
-        ApplyScheduleCapsule(tone);
-        RuntimeStatusTitle.Text = title;
-        RuntimeStatusDetail.Text = detail;
-        RuntimeStatusDetail.Visibility = detail.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        RuntimeStatusDetail.SetResourceReference(TextBlock.ForegroundProperty,
-            warn ? "Brush.Warning.Foreground" : "Brush.Text.Secondary");
-
-        static string RecoveryTitle(RecoveryReason reason) => reason switch {
-            RecoveryReason.StopUnconfirmed => "任务未能确认结束",
-            RecoveryReason.RuntimeFaulted => "运行环境故障",
-            RecoveryReason.WorkerLost => "Worker 失联",
-            _ => "结束桌面分身未确认"
-        };
-    }
-
-    // Preparation does not launch the game; describe only the stages Session and Worker observations confirm.
-    private string PreparationStage() =>
-        _sessionSnapshot.State != ChildSessionState.Connected
-            ? "正在连接桌面分身…"
-            : _workerSnapshot.Observation == WorkerObservation.WorkerNotStarted ? "桌面分身已连接，等待 Worker 启动…"
-            : _workerSnapshot.Observation == WorkerObservation.WorkerStarting ? "正在启动 Worker…"
-            : _workerSnapshot.Resynchronising
-                ? "正在同步 Worker 状态…" : "正在完成运行环境准备…";
-
     private string ActiveConfigurationName => _projectPlan is { } project
         ? project.Configurations.Single(item => item.Id == project.ActiveConfigurationId).Name : string.Empty;
 
-    private static string ElapsedText(DateTime? startedAtUtc, DateTime? endedAtUtc) =>
-        RunProgress.Elapsed(startedAtUtc, endedAtUtc, DateTime.UtcNow) is { } elapsed
-            ? RunProgress.FormatDuration(elapsed) : "00:00";
-
-    // RunProgress already hides a Last Run whose plan does not match the configuration on screen.
-    private void ApplyRunProgress(RunProgressView? progress)
-    {
-        var shown = progress is not null;
-        RunProgressPanel.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
-        if (progress is not null) {
-            RunProgressCaption.Text = RunProgress.Caption(progress);
-            ApplyRunElapsed(progress);
-            AutomationProperties.SetName(RunProgressBar, RunProgress.AccessibleCaption(progress));
-        }
-        _displayedProgress = shown ? progress : null;
-        DrawRunProgressBar();
-        if (progress is { Active: true }) {
-            _runTimer.Start();
-        } else {
-            _runTimer.Stop();
-        }
-    }
-
-    private RunProgressView? _displayedProgress;
-
-    private void RefreshRunTiming()
-    {
-        var progress = CurrentRunProgress;
-        if (progress is not { Active: true }) {
-            return;
-        }
-        ApplyRunElapsed(progress);
-        if (CurrentControls.Action is RuntimeAction.Stop && progress.Current is { } current) {
-            RuntimeStatusDetail.Text = $"本项已运行 {ElapsedText(current.StartedAtUtc, null)}";
-        }
-    }
-
-    private void ApplyRunElapsed(RunProgressView progress) => RunProgressElapsed.Text = progress.Active
-        ? $"总用时 {ElapsedText(progress.StartedAtUtc, null)}"
-        : $"用时 {ElapsedText(progress.StartedAtUtc, progress.EndedAtUtc)}";
-
-    private void RunProgressBar_SizeChanged(object sender, SizeChangedEventArgs e) => DrawRunProgressBar();
-
-    // Fill covers finished items only; the running item is marked by its position, never by an invented percentage.
-    private void DrawRunProgressBar()
-    {
-        RunProgressBar.Children.Clear();
-        if (_displayedProgress is not { Total: > 0 } progress || RunProgressBar.ActualWidth <= 0) {
-            return;
-        }
-        var width = RunProgressBar.ActualWidth;
-        var gap = progress.Total > 20 ? 0 : 2;
-        var segment = (width - gap * (progress.Total - 1)) / progress.Total;
-        void Add(double left, double size, string brush)
-        {
-            var bar = new System.Windows.Shapes.Rectangle {
-                Width = Math.Max(0, size), Height = 6,
-                RadiusX = gap == 0 ? 0 : 3, RadiusY = gap == 0 ? 0 : 3
-            };
-            bar.SetResourceReference(Shape.FillProperty, brush);
-            Canvas.SetLeft(bar, left);
-            RunProgressBar.Children.Add(bar);
-        }
-        for (var item = 0; item < progress.Total; item++) {
-            var brush = progress.Items[item].State switch {
-                PlanItemProgress.Succeeded => "Brush.Success",
-                PlanItemProgress.Failed => "Brush.Error",
-                PlanItemProgress.Running => "Brush.Primary",
-                PlanItemProgress.Stopped => "Brush.Border.Strong",
-                _ => "Brush.Progress.Track"
-            };
-            Add((segment + gap) * item, segment, brush);
-        }
-        RunProgressBar.Clip = new RectangleGeometry(new Rect(0, 0, width, 6), 3, 3);
-    }
-
-    private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory, string? detail = null)
-    {
-        var message = $"{detail ?? exception.GetBaseException().Message}\n\n{recovery}";
-        if (!offerLogDirectory) {
-            _presentation.ShowError(null, title, exception, message, MessageBoxButton.OK);
-            return;
-        }
-
-        var answer = _presentation.ShowError(null, title, exception, $"{message}\n\n是否打开日志目录查看详细信息？",
-            MessageBoxButton.YesNo);
-        if (answer == MessageBoxResult.Yes) {
-            TryOpenLogsDirectory();
-        }
-    }
+    private void ShowActionableError(string title, Exception exception, string recovery, bool offerLogDirectory) =>
+        _ = ShowErrorPromptAsync(title, $"{exception.GetBaseException().Message}\n\n{recovery}", exception, offerLogDirectory);
 
     private static T? FindVisualChild<T>(DependencyObject parent)
         where T : DependencyObject

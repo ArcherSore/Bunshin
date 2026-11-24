@@ -85,7 +85,7 @@ internal static partial class SelfTestRunner
                             && warning.Contains("第一班") && warning.Contains("点击打开窗口可取消"),
                             "主窗口在托盘时，提示应说明何时顶替、目标配置和取消入口。");
                         PumpUntil(DialogShown, "倒计时期间主窗口内应已备好倒计时对话框。");
-                        var dialogText = Named<System.Windows.Controls.TextBlock>(window, "ForcedStartText").Text;
+                        var dialogText = window.ForcedStartDialog.MessageText.Text;
                         Require(dialogText.Contains("第一班"), "倒计时对话框应指明即将启动的配置。");
                         if (scenario == "cancel") {
                             Require(countdowns is [{ ConfigurationName: "第一班" } countdown]
@@ -100,7 +100,7 @@ internal static partial class SelfTestRunner
                             var hit = overlayRoot.InputHitTest(scrimPoint) as DependencyObject;
                             Require(hit == overlay || hit is not null && overlay.IsAncestorOf(hit),
                                 "点击对话框外的遮罩不能命中底层主窗口控件。");
-                            ClickOnboarding(window, "ForcedStartCancelButton");
+                            ClickOnboarding(window.ForcedStartDialog, "CancelButton");
                         } else {
                             clock.Advance(TimeSpan.FromSeconds(9));
                             Require(!check.IsCompleted && wts.LogoffAttempts.Count == 0

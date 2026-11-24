@@ -16,7 +16,7 @@ internal sealed class RunLifecycleHost : IDisposable
     private readonly WorkerCoordinator _worker;
     private readonly Dispatcher _dispatcher;
     private readonly Func<string> _configurationName;
-    private readonly Func<Payload, bool> _present;
+    private readonly Func<Payload, Task<bool>> _present;
     private readonly Action _requestQuit;
     private readonly AppLogger _logger;
     private readonly TimeProvider _clock;
@@ -36,7 +36,7 @@ internal sealed class RunLifecycleHost : IDisposable
     internal event Action? Changed;
 
     internal RunLifecycleHost(WorkerCoordinator worker, Dispatcher dispatcher, Func<string> configurationName,
-        Func<Payload, bool> present, Action requestQuit, AppLogger logger, TimeProvider? clock = null)
+        Func<Payload, Task<bool>> present, Action requestQuit, AppLogger logger, TimeProvider? clock = null)
     {
         _worker = worker;
         _dispatcher = dispatcher;
@@ -97,8 +97,7 @@ internal sealed class RunLifecycleHost : IDisposable
         return CleanupPending?.Invoke(own) ?? Task.CompletedTask;
     }
 
-    // A modal presenter pumps the Dispatcher. Signal entry, so a replacement can proceed
-    // inside that frame and never depends on a user's receipt.
+    // Signal entry, so a replacement can proceed while a prompt is awaiting the user's response.
     internal async Task IssuePendingPresentationsAsync()
     {
         CommitEvidence();
@@ -192,19 +191,24 @@ internal sealed class RunLifecycleHost : IDisposable
                     _logger.Info($"启动确认 {result.Conclusion}：runId={result.Submission.Run.RunId:D}。");
                     break;
                 case Deliver delivery:
-                    var presented = false;
-                    try {
-                        if (delivery.Item is RequestQuit) _requestQuit();
-                    else presented = _present(delivery.Item);
-                    } catch (Exception error) {
-                        _logger.Error($"交付 {delivery.Item.GetType().Name} 失败：Run {delivery.Item.Key.RunId:D}。", error);
-                    } finally {
-                        Apply(new LifecycleEvent.Delivered(delivery.Id, presented));
-                    }
+                    _ = DeliverAsync(delivery);
                     break;
             }
         }
         Changed?.Invoke();
+    }
+
+    private async Task DeliverAsync(Deliver delivery)
+    {
+        var presented = false;
+        try {
+            if (delivery.Item is RequestQuit) _requestQuit();
+            else presented = await _present(delivery.Item);
+        } catch (Exception error) {
+            _logger.Error($"交付 {delivery.Item.GetType().Name} 失败：Run {delivery.Item.Key.RunId:D}。", error);
+        } finally {
+            if (!_disposed) Apply(new LifecycleEvent.Delivered(delivery.Id, presented));
+        }
     }
 
     // Reuse an in-flight ordered read and its original deadline. During backoff, issue one now.

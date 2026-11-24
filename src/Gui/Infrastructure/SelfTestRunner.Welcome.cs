@@ -85,12 +85,14 @@ internal static partial class SelfTestRunner
         Require(hash != ResolveFixtureWelcome(directory)!.Hash, "路径不变但文件内容更新时必须再次提示。");
     }
 
+    private static ProjectReaderView ReaderOf(MainWindow window) => Named<ProjectReaderView>(window, "ProjectReader");
+
     private static void VerifyWelcomeDialog(AppLogger logger, string testDirectory)
     {
-        static Visibility OverlayOf(MainWindow window) => Named<UIElement>(window, "WelcomeOverlay").Visibility;
+        static Visibility OverlayOf(MainWindow window) => ReaderOf(window).Visibility;
         static string DocumentText(MainWindow window)
         {
-            var document = Named<FlowDocumentScrollViewer>(window, "WelcomeViewer").Document;
+            var document = Named<FlowDocumentScrollViewer>(ReaderOf(window), "ReaderViewer").Document;
             return new TextRange(document.ContentStart, document.ContentEnd).Text;
         }
         var longNotice = string.Join("\n\n", Enumerable.Range(1, 40).Select(line => $"第 {line} 行公告内容"));
@@ -104,15 +106,17 @@ internal static partial class SelfTestRunner
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "welcome-first"), (window, directory) => {
             var hashPath = Path.Combine(directory, "config", "welcome-shown.txt");
             Require(OverlayOf(window) == Visibility.Visible, "内容未读时启动必须弹出公告。");
-            Require(Named<TextBlock>(window, "WelcomeTitle").Text == "项目标题", "弹窗标题应显示项目 label。");
+            var reader = ReaderOf(window);
+            Require(Named<TextBlock>(reader, "ReaderTitle").Text.Contains("项目标题", StringComparison.Ordinal),
+                "弹窗标题应显示项目 label。");
             var text = DocumentText(window);
             Require(text.IndexOf("第一条公告", StringComparison.Ordinal) >= 0
                 && text.IndexOf("第一条公告", StringComparison.Ordinal) < text.IndexOf("第二条公告", StringComparison.Ordinal),
                 "多条公告必须按声明顺序显示。");
             Require(!File.Exists(hashPath), "尚未关闭的公告不得记为已读。");
-            var dismiss = Named<System.Windows.Controls.Button>(window, "WelcomeDismissButton");
+            var dismiss = Named<System.Windows.Controls.Button>(reader, "ReaderDismissButton");
             Require(SettingsVisualDescendants(dismiss).OfType<TextBlock>().Single().Foreground == dismiss.Foreground,
-                "“我知道了”的文字必须使用按钮前景色，否则在主色背景上不可读。");
+                "“我知道了”的文字必须使用按钮前景色，保证与按钮背景的对比度。");
 
             CompleteOnboardingStartup(window);
             InvokeOnboarding(window, "ReevaluateOnboarding");
@@ -120,7 +124,7 @@ internal static partial class SelfTestRunner
             Require(Named<UIElement>(window, "OnboardingOverlay").Visibility == Visibility.Collapsed,
                 "公告打开时不得出现新手指引。");
 
-            ClickOnboarding(window, "WelcomeDismissButton");
+            ClickOnboarding(reader, "ReaderDismissButton");
             Require(OverlayOf(window) == Visibility.Collapsed, "点击“我知道了”必须关闭公告。");
             acknowledged = File.ReadAllText(hashPath);
             Require(acknowledged.Length > 0, "关闭公告必须记录已读。");
@@ -135,13 +139,13 @@ internal static partial class SelfTestRunner
             PumpOnboarding();
             Require(OverlayOf(window) == Visibility.Visible, "设置页入口必须打开公告。");
             CaptureWelcome(window, "manual");
-            ClickOnboarding(window, "WelcomeCloseButton");
+            ClickOnboarding(reader, "ReaderCloseButton");
             Require(OverlayOf(window) == Visibility.Collapsed
                 && File.ReadAllText(hashPath) == "manual-view-must-not-change-this", "手动查看不得改变已读记录。");
 
             view.Execute(null);
             PumpOnboarding();
-            ClickOnboarding(window, "WelcomeScrim");
+            ClickOnboarding(reader, "ReaderScrim");
             Require(OverlayOf(window) == Visibility.Collapsed, "点击遮罩必须关闭公告。");
 
             view.Execute(null);
@@ -185,16 +189,16 @@ internal static partial class SelfTestRunner
                 window.Width = width;
                 window.Height = height;
                 PumpOnboarding(300);
-                var overlay = Named<FrameworkElement>(window, "WelcomeOverlay");
-                var dialog = Named<FrameworkElement>(window, "WelcomeDialog");
-                var dismiss = Named<FrameworkElement>(window, "WelcomeDismissButton");
+                var overlay = ReaderOf(window);
+                var dialog = Named<FrameworkElement>(overlay, "ReaderDialog");
+                var dismiss = Named<FrameworkElement>(overlay, "ReaderDismissButton");
                 var bounds = dismiss.TransformToAncestor(overlay).TransformBounds(new Rect(dismiss.RenderSize));
                 Require(dialog.ActualHeight <= overlay.ActualHeight * 0.8 + PixelTolerance,
                     $"长公告不得超过窗口高度的 80%：{width}x{height}。");
                 Require(bounds.Top >= 0 && bounds.Bottom <= overlay.ActualHeight + PixelTolerance && dismiss.IsVisible,
                     $"长公告时“我知道了”必须完整可见：{width}x{height}。");
                 CaptureWelcome(window, $"long-{width}");
-                var viewer = Named<FlowDocumentScrollViewer>(window, "WelcomeViewer");
+                var viewer = Named<FlowDocumentScrollViewer>(overlay, "ReaderViewer");
                 Require(SettingsVisualDescendants(viewer).OfType<ScrollViewer>().Single() is { ScrollableHeight: > 0 },
                     $"长公告正文必须可以滚动：{width}x{height}。");
             }

@@ -149,7 +149,7 @@ internal static partial class SelfTestRunner
         });
     }
 
-    // Run information belongs to the control panel; task cards stay unchanged as snapshots and timers advance.
+    // The plan shows active item progress while the control panel continues to show total progress.
     private static void VerifyRunProgressWiring(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "run-progress-wiring"), (window, _) => {
@@ -180,14 +180,19 @@ internal static partial class SelfTestRunner
             string CardText() => string.Join("\n", ConfigurationDescendants(items).OfType<TextBlock>()
                 .Select(text => text.Text));
             var idleCardText = CardText();
+            var runningItems = Named<System.Windows.Controls.Panel>(window, "RunRows");
 
             Observe(idle with { RunState = RunState.Running, ActiveRun = run });
-            var card = items.Children.OfType<System.Windows.Controls.Border>().Single(border => border.Tag is not null);
-            Require(CardText() == idleCardText && timer.IsEnabled
-                && Named<TextBlock>(window, "RunProgressCaption").Text == "运行中 · 第 1 / 1 项"
+            var card = runningItems.Children.OfType<System.Windows.Controls.Border>().Single();
+            Require(runningItems.IsVisible && timer.IsEnabled
+                && Named<System.Windows.Controls.Button>(window, "StopPlanButton").IsVisible
+                && !Named<System.Windows.Controls.Button>(window, "TaskShelfHeaderButton").IsEnabled
+                && ConfigurationDescendants(card).OfType<TextBlock>()
+                    .Any(text => text.Text.StartsWith("进行中 · 1:", StringComparison.Ordinal))
+                && Named<TextBlock>(window, "RunProgressCaption").Text == "1 / 1"
                 && Named<TextBlock>(window, "RunProgressElapsed").Text.StartsWith("总用时 01:", StringComparison.Ordinal)
                 && Named<UIElement>(window, "RunProgressPanel").IsVisible,
-                "任务卡片不显示运行信息，控制台保留进度与总用时。");
+                "计划显示当前项状态和用时，控制台显示进度与总用时。");
             Require(Named<TextBlock>(window, "RuntimeStatusTitle").Text == "Real task",
                 "运行状态应显示 Worker 当前项的序号与标签。");
             var screenshots = Environment.GetEnvironmentVariable("BUNSHIN_PANEL_SCREENSHOTS");
@@ -199,9 +204,8 @@ internal static partial class SelfTestRunner
                 SaveScreenshot(window, Path.Combine(screenshots, "panel-running.png"));
             }
             InvokeOnboarding(window, "RefreshRunTiming");
-            Require(CardText() == idleCardText && ReferenceEquals(card,
-                items.Children.OfType<System.Windows.Controls.Border>().Single(border => border.Tag is not null)),
-                "计时刷新不得重建执行计划卡片或添加运行信息。");
+            Require(ReferenceEquals(card, runningItems.Children.OfType<System.Windows.Controls.Border>().Single()),
+                "计时刷新应更新用时且保留运行中的任务卡片。");
 
             var resources = System.Windows.Application.Current.Resources;
             var light = ThemeService.FindPalette(resources);
@@ -211,7 +215,7 @@ internal static partial class SelfTestRunner
             });
             void CheckSummary(string surfaceKey, string borderKey)
             {
-                var summary = window.RunSummaryCard;
+                var summary = window.RuntimeSidebar.RunSummaryCard;
                 try {
                     themes.Apply(AppThemeMode.Dark);
                     Check(alternate);
@@ -229,6 +233,14 @@ internal static partial class SelfTestRunner
                 LastRun = run with { State = RunState.Succeeded, Items = [Item(PlanItemState.Succeeded, started)] }
             });
             CheckSummary("Brush.Surface.Subdued", "Brush.Border.Subtle");
+            RequireReadableText(window.RuntimeSidebar.RunProgressCaption, window.RuntimeSidebar.RunSummaryCard);
+            var shippedThemes = ((App)System.Windows.Application.Current).Themes;
+            try {
+                shippedThemes.Apply(AppThemeMode.Dark);
+                RequireReadableText(window.RuntimeSidebar.RunProgressCaption, window.RuntimeSidebar.RunSummaryCard);
+            } finally {
+                shippedThemes.Apply(AppThemeMode.Light);
+            }
             Require(CardText() == idleCardText && !timer.IsEnabled, "Run 结束后卡片不展示结果，控制台计时停止。");
             window.ApplyRuntimeControls(new(new RuntimeAction.Prepare(true), true, null,
                 new DesktopToggle(DesktopAction.Show, false, DesktopStatus.NotRunning), true));

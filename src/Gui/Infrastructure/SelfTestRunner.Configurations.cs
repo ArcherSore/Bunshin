@@ -70,22 +70,19 @@ internal static partial class SelfTestRunner
         }
     }
 
-    private static void VerifyConfigurationTabs(AppLogger logger, string testDirectory, string projectDirectory)
+    private static void VerifyConfigurationSidebar(AppLogger logger, string testDirectory, string projectDirectory)
     {
-        var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "tabs.json"));
+        var project = ProjectPlanModule.Open(projectDirectory, Path.Combine(testDirectory, "sidebar.json"));
         WithPlanWindow(logger, testDirectory, project, (window, items) => {
             InvokeEditor(window, "RenderTaskPlan");
-            var tabs = window.TaskPlanEditor.FindName("ConfigurationTabs") as System.Windows.Controls.TabControl
-                ?? throw new InvalidOperationException("任务工作区需要配置 Tab 控件。");
-            var add = (System.Windows.Controls.Button)window.TaskPlanEditor.FindName("NewConfigurationButton");
-            add.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-            if (project.Configurations.Count != 2 || tabs.Items.Count != 2 || tabs.SelectedIndex != 1) {
-                throw new InvalidOperationException("新建按钮必须创建并激活第二份空配置。");
-            }
-            tabs.SelectedIndex = 0;
-            if (project.ActiveConfigurationId != project.Configurations[0].Id) {
-                throw new InvalidOperationException("Tab 选择必须保存 Active。");
-            }
+            var list = window.Sidebar.ConfigurationList;
+            var add = window.Sidebar.NewConfigurationItem;
+            CreateEmptyConfigurationFromSidebar(window);
+            Require(project.Configurations.Count == 2 && ConfigurationRows(window).Count() == 2
+                && list.ActiveConfigurationId == project.Configurations[1].Id,
+                "侧栏新建空配置后应选中它。");
+            ClickConfiguration(window, project.Configurations[0].Id);
+            Require(project.ActiveConfigurationId == project.Configurations[0].Id, "侧栏选择必须保存激活配置。");
             project.AddItem(Protocol.PlanItemKind.MaaTask, "RealTask");
             SetExpandedTask(window, "RealTask");
             InvokeEditor(window, "RenderTaskPlan");
@@ -94,7 +91,7 @@ internal static partial class SelfTestRunner
                     == "Server range · Retry count");
             retry.Text = "3";
             retry.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
-                System.Windows.Input.Keyboard.PrimaryDevice, 0, retry, tabs) {
+                System.Windows.Input.Keyboard.PrimaryDevice, 0, retry, list) {
                 RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
             });
             if (project.Configurations[0].ExplicitOptions["ServerRange"].GetProperty("Inputs")
@@ -105,9 +102,9 @@ internal static partial class SelfTestRunner
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
             input.Text = "979";
-            tabs.SelectedIndex = 1;
+            ClickConfiguration(window, project.Configurations[1].Id);
             input.RaiseEvent(new System.Windows.Input.KeyboardFocusChangedEventArgs(
-                System.Windows.Input.Keyboard.PrimaryDevice, 0, input, tabs) {
+                System.Windows.Input.Keyboard.PrimaryDevice, 0, input, list) {
                 RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
             });
             if (project.Configurations[0].ExplicitOptions["ServerRange"].GetProperty("Inputs")
@@ -115,7 +112,7 @@ internal static partial class SelfTestRunner
                 || project.Configurations[1].ExplicitOptions.Count != 0) {
                 throw new InvalidOperationException("旧控件失焦只能写回其来源配置。");
             }
-            tabs.SelectedIndex = 0;
+            ClickConfiguration(window, project.Configurations[0].Id);
             VerifyInlineOptionEditing(window, project, items);
             void SetBusy(bool busy)
             {
@@ -129,13 +126,12 @@ internal static partial class SelfTestRunner
                     or Wpf.Ui.Controls.ToggleSwitch).ToArray();
             SetBusy(true);
             add.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-            tabs.SelectedIndex = 1;
-            if (!tabs.IsEnabled || add.IsEnabled || project.Configurations.Count != 2 || tabs.SelectedIndex != 0
-                || project.ActiveConfigurationId != project.Configurations[0].Id
-                || ConfigurationDescendants(tabs).OfType<System.Windows.Controls.Button>()
-                    .Any(button => button.IsEnabled)) {
-                throw new InvalidOperationException("Start in-flight 必须锁住新增、切换与删除，但标签条保持可用。");
-            }
+            ClickConfiguration(window, project.Configurations[1].Id);
+            Require(list.IsEnabled && !add.IsEnabled && project.Configurations.Count == 2
+                && list.ActiveConfigurationId == project.Configurations[0].Id
+                && project.ActiveConfigurationId == project.Configurations[0].Id
+                && ConfigurationRows(window).All(row => !row.MenuButton.IsEnabled),
+                "准备环境时应锁住新建、切换和管理配置，并保留列表滚动。");
             var buttons = ConfigurationDescendants(items).OfType<System.Windows.Controls.Button>().ToArray();
             string NameOf(System.Windows.DependencyObject element) =>
                 System.Windows.Automation.AutomationProperties.GetName(element);
@@ -161,7 +157,7 @@ internal static partial class SelfTestRunner
     private static void VerifyAddedTasksPerConfiguration(Views.MainWindow window)
     {
         var project = ProjectOf(window);
-        var tabs = (System.Windows.Controls.TabControl)window.TaskPlanEditor.FindName("ConfigurationTabs");
+        var list = window.Sidebar.ConfigurationList;
         var catalog = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("AvailableTasksPanel");
         var badge = (System.Windows.UIElement)window.TaskPlanEditor.FindName("AddedTasksBadge");
         var text = (System.Windows.Controls.TextBlock)window.TaskPlanEditor.FindName("AddedTasksText");
@@ -170,18 +166,19 @@ internal static partial class SelfTestRunner
                 .StartsWith("添加任务：", StringComparison.Ordinal))
             .RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
 
-        ClickOnboarding(window, "NewConfigurationButton");
+        CreateEmptyConfigurationFromSidebar(window);
         AddFirstAvailable();
         AddFirstAvailable();
         var second = project.Configurations[1].SelectedTasks.ToArray();
-        if (tabs.SelectedIndex != 1 || text.Text != "已添加 2 项" || second.Length != 2) {
+        if (list.ActiveConfigurationId != project.Configurations[1].Id || text.Text != "已添加 2 项" || second.Length != 2) {
             throw new InvalidOperationException("在第二份配置中连续添加应统计 2 项。");
         }
+        var shelf = (System.Windows.Controls.Border)window.TaskPlanEditor.FindName("TaskShelfContent");
+        RequireReadableText(text, shelf);
         var first = project.Configurations[0].SelectedTasks.ToArray();
-        tabs.SelectedIndex = 0;
+        ClickConfiguration(window, project.Configurations[0].Id);
         if (badge.Visibility != System.Windows.Visibility.Collapsed
-            || ((System.Windows.UIElement)window.TaskPlanEditor.FindName("TaskShelfContent")).Visibility
-                != System.Windows.Visibility.Visible
+            || shelf.Visibility != System.Windows.Visibility.Visible
             || !project.Configurations[1].SelectedTasks.SequenceEqual(second)
             || !project.Configurations[0].SelectedTasks.SequenceEqual(first)) {
             throw new InvalidOperationException("切换配置应清零已添加统计、保持面板打开，且不改动任一配置的任务。");
@@ -191,6 +188,34 @@ internal static partial class SelfTestRunner
             throw new InvalidOperationException("切换后只应统计当前配置的添加。");
         }
     }
+
+    private static IEnumerable<Views.ConfigurationSidebarRow> ConfigurationRows(Views.MainWindow window) =>
+        window.Sidebar.ConfigurationList.Rows.Children.OfType<Views.ConfigurationSidebarRow>();
+
+    private static void ClickConfiguration(Views.MainWindow window, Guid id) =>
+        ClickConfigurationButton(ConfigurationRows(window).Single(row => row.Id == id).SelectButton);
+
+    private static void ClickConfigurationButton(System.Windows.Controls.Button button) =>
+        button.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+
+    private static void ClickHome(Views.MainWindow window)
+    {
+        ClickConfigurationButton(window.Sidebar.Home);
+        PumpOnboarding();
+    }
+
+    private static void CreateEmptyConfigurationFromSidebar(Views.MainWindow window)
+    {
+        var button = window.Sidebar.NewConfigurationItem;
+        ClickConfigurationButton(button);
+        var menu = button.ContextMenu ?? throw new InvalidOperationException("侧栏新建配置菜单未打开。");
+        InvokeConfigurationMenuItem(menu.Items.OfType<System.Windows.Controls.MenuItem>()
+            .Single(item => item.Name == "CreateEmptyConfigurationMenuItem"));
+        menu.IsOpen = false;
+    }
+
+    private static void InvokeConfigurationMenuItem(System.Windows.Controls.MenuItem item) =>
+        item.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.MenuItem.ClickEvent));
 
     private static void VerifyInlineOptionEditing(
         Views.MainWindow window, ProjectPlanModule project, System.Windows.DependencyObject items)
@@ -278,18 +303,11 @@ internal static partial class SelfTestRunner
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
             var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
-            Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
-                && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7")),
-                "折叠预览应优先显示首个输入的标签，两级标签均为空时显示选项名称。");
-            var switchLabel = tags.Single(tag => Equals(tag.ToolTip, "Nested：开"));
-            var switchPreview = (System.Windows.FrameworkElement)switchLabel.Parent;
-            var dot = ConfigurationDescendants(switchPreview).OfType<System.Windows.Shapes.Ellipse>().Single();
-            switchPreview.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
-            switchPreview.Arrange(new System.Windows.Rect(switchPreview.DesiredSize));
-            double CenterY(System.Windows.FrameworkElement element) =>
-                element.TranslatePoint(new System.Windows.Point(0, element.ActualHeight / 2), switchPreview).Y;
-            Require(Math.Abs(CenterY(switchLabel) - CenterY(dot)) <= PixelTolerance,
-                "开关预览圆点应与文字垂直居中。");
+            Require(tags.Any(tag => tag.ToolTip is string tip
+                && tip.Contains("ServerRange：978-1012", StringComparison.Ordinal)
+                && tip.Contains("出战队伍：7", StringComparison.Ordinal)
+                && tip.Contains("Nested：On", StringComparison.Ordinal)),
+                "折叠预览应保留参数的后备标签以及开关的选中值。");
         });
     }
 
@@ -310,7 +328,8 @@ internal static partial class SelfTestRunner
             SetExpandedTask(window, "RealTask");
             InvokeEditor(window, "RenderTaskPlan");
             System.Windows.Controls.TextBlock? OtherPreview(string text) => ConfigurationDescendants(items)
-                .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => Equals(tag.ToolTip, text));
+                .OfType<System.Windows.Controls.TextBlock>().SingleOrDefault(tag => tag.ToolTip is string tip
+                    && tip.Contains(text, StringComparison.Ordinal));
             var input = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>()
                 .Single(item => System.Windows.Automation.AutomationProperties.GetName(item)
                     == "Server range · Server");
@@ -319,7 +338,7 @@ internal static partial class SelfTestRunner
                 System.Windows.Input.Keyboard.PrimaryDevice, 0, input, null) {
                 RoutedEvent = System.Windows.Input.Keyboard.LostKeyboardFocusEvent
             });
-            if (OtherPreview("Server range：978-,")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
+            if (OtherPreview("Server 格式不对")?.Foreground != window.FindResource("Brush.Error.Foreground")) {
                 throw new InvalidOperationException("共享参数的非法草稿必须立即以错误色同步到其他折叠任务的预览。");
             }
             using (var source = new System.Windows.Interop.HwndSource(
@@ -329,7 +348,7 @@ internal static partial class SelfTestRunner
                     RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
                 });
             }
-            if (OtherPreview("Server range：978-1012") is not { } restored
+            if (OtherPreview("Server：978-1012") is not { } restored
                 || restored.Foreground == window.FindResource("Brush.Error.Foreground")
                 || !ConfigurationDescendants(items).Contains(input)) {
                 throw new InvalidOperationException("Esc 必须立即恢复其他摘要的已保存值，且不重建正在编辑的输入框。");

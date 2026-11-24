@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Input;
 using Gui.Infrastructure;
 using Updates;
-using Border = System.Windows.Controls.Border;
 
 namespace Gui.Views;
 
@@ -20,6 +19,7 @@ public partial class MainWindow
 
     private UpdateCheckState _updateCheckState;
     private string? _renderedUpdateNotes;
+    private string _updateOperationStatus = "";
 
     // Presentation only; download, preparation and installation retain their existing operation gates.
     private enum UpdateCheckState
@@ -29,6 +29,15 @@ public partial class MainWindow
 
     private void InitializeUpdates()
     {
+        UpdateDialog.CloseUpdateButton.Click += CloseUpdate_Click;
+        UpdateDialog.CheckingCloseButton.Click += CloseUpdate_Click;
+        UpdateDialog.LaterUpdateButton.Click += CloseUpdate_Click;
+        UpdateDialog.DialogCheckUpdateButton.Click += CheckUpdate_Click;
+        UpdateDialog.ReleaseNotesButton.Click += ReleaseNotes_Click;
+        UpdateDialog.DownloadUpdateButton.Click += DownloadUpdate_Click;
+        UpdateDialog.CancelDownloadButton.Click += CancelDownload_Click;
+        UpdateDialog.InstallUpdateButton.Click += InstallUpdate_Click;
+
         _settings.CurrentVersion.Text = _projectPlan?.ProjectVersion ?? "—";
         try {
             _settings.LoadUpdatePreference();
@@ -62,8 +71,7 @@ public partial class MainWindow
         _updateCheck = null;
         _preparedReference = null;
         _updateCheckState = UpdateCheckState.Checking;
-        UpdateDownloadStatus.Text = "";
-        UpdateDownloadStatus.Visibility = Visibility.Collapsed;
+        _updateOperationStatus = "";
         RefreshUpdateNotes();
         UpdateUpdaterControls();
         _settings.CheckUpdate.Status = "正在检查更新…";
@@ -130,15 +138,7 @@ public partial class MainWindow
             return;
         }
         _renderedUpdateNotes = notes;
-        UpdateNotesViewer.Document = MarkdownDocument.Create(
-            string.IsNullOrWhiteSpace(notes) ? "此版本暂无更新说明。" : notes, OpenUpdateLink);
-    }
-
-    private void ViewUpdate_Click(object sender, RoutedEventArgs e)
-    {
-        // This footer action opens a dialog, not a navigation destination.
-        e.Handled = true;
-        OpenUpdateDialog();
+        UpdateDialog.SetNotes(string.IsNullOrWhiteSpace(notes) ? "此版本暂无更新说明。" : notes, OpenUpdateLink);
     }
 
     private void OpenUpdateDialog()
@@ -171,7 +171,7 @@ public partial class MainWindow
 
     private void UpdateDialogSize()
     {
-        UpdateDialog.Width = Math.Min(440, Math.Max(1, UpdateOverlay.ActualWidth - 48));
+        UpdateDialog.MaxWidth = Math.Max(1, UpdateOverlay.ActualWidth - 48);
         UpdateDialog.MaxHeight = Math.Max(1, Math.Min(600, UpdateOverlay.ActualHeight * 0.8));
     }
 
@@ -181,8 +181,7 @@ public partial class MainWindow
             OpenUpdateLink(uri);
         } else {
             // Older V2 engines can still display their notes without a separate release URL.
-            UpdateNotesPanel.BringIntoView();
-            UpdateNotesViewer.Focus();
+            UpdateDialog.FocusNotes();
         }
     }
 
@@ -194,8 +193,8 @@ public partial class MainWindow
         try {
             Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
         } catch (Exception exception) {
-            UpdateDownloadStatus.Text = "无法打开链接，请检查默认浏览器设置。";
-            UpdateDownloadStatus.Visibility = Visibility.Visible;
+            _updateOperationStatus = "无法打开链接，请检查默认浏览器设置。";
+            UpdateUpdaterControls();
             _logger.Warn("打开更新链接失败。", exception);
         }
     }
@@ -206,33 +205,25 @@ public partial class MainWindow
         _updateBusy = _preparingUpdate = true;
         _preparedReference = null;
         _updateCancellation = new CancellationTokenSource();
+        _updateOperationStatus = "";
+        UpdateDialog.StartProgress(update.Version);
         UpdateUpdaterControls();
-        UpdateDownloadStatus.Text = "正在准备更新…";
-        UpdateDownloadStatus.Visibility = Visibility.Visible;
-        UpdateProgressBar.IsIndeterminate = true;
-        UpdateProgressBar.Value = 0;
         var target = AppLogger.Field("target", update.Version);
+        var cancellation = _updateCancellation.Token;
         var progress = new DownloadProgress(value => {
-            if (!_preparingUpdate || _exitInProgress) { return; }
-            UpdateProgressBar.IsIndeterminate = value.Phase != "download" || value.Total <= 0;
-            UpdateProgressBar.Value = value.Total > 0 ? 100.0 * value.Bytes / value.Total : 0;
-            UpdateDownloadStatus.Text = value.Phase == "download"
-                ? $"已下载 {value.Bytes / 1048576.0:F1} / {value.Total / 1048576.0:F1} MB"
-                    + $" · {value.BytesPerSecond / 1048576.0:F1} MB/s"
-                : "正在校验并解压完整包…";
+            if (!_preparingUpdate || _exitInProgress || cancellation != _updateCancellation?.Token) { return; }
+            UpdateDialog.ShowProgress(update.Version, value);
         });
         try {
             using var scope = _logger.Scope($"准备更新{target}");
-            _preparedReference = await _prepareUpdate(update.Descriptor, progress, _updateCancellation.Token);
+            _preparedReference = await _prepareUpdate(update.Descriptor, progress, cancellation);
             _logger.Info($"更新已准备好{target}{progress.Downloaded}");
-            UpdateDownloadStatus.Text = "";
-            UpdateDownloadStatus.Visibility = Visibility.Collapsed;
         } catch (OperationCanceledException) {
             _logger.Info($"准备更新已取消{target}{progress.Downloaded}");
-            UpdateDownloadStatus.Text = "已取消，可重新下载。";
+            _updateOperationStatus = "已取消，可重新下载。";
         } catch (Exception exception) {
             _logger.Warn($"准备更新失败{target}{progress.Downloaded}{EngineDiagnostics(exception)}", exception);
-            UpdateDownloadStatus.Text = exception.Message;
+            _updateOperationStatus = exception.Message;
         } finally {
             _updateCancellation.Dispose();
             _updateCancellation = null;
@@ -245,6 +236,7 @@ public partial class MainWindow
     {
         if (_updateBusy || _exitInProgress || _preparedReference is null) { return; }
         _updateBusy = true;
+        _updateOperationStatus = "";
         UpdateUpdaterControls();
         var target = AppLogger.Field("target", _updateCheck?.Update?.Version);
         _logger.Info($"开始安装更新{target}");
@@ -252,8 +244,7 @@ public partial class MainWindow
             await _installUpdateAsync(_preparedReference);
         } catch (Exception exception) {
             _logger.Warn($"安装交接失败{target}{EngineDiagnostics(exception)}", exception);
-            UpdateDownloadStatus.Text = exception.Message;
-            UpdateDownloadStatus.Visibility = Visibility.Visible;
+            _updateOperationStatus = exception.Message;
         } finally {
             _updateBusy = false;
             UpdateUpdaterControls();
@@ -265,65 +256,24 @@ public partial class MainWindow
     private void UpdateUpdaterControls()
     {
         _settings.CheckUpdate.IsEnabled = !_updateBusy && !_exitInProgress;
-        DialogCheckUpdateButton.IsEnabled = _settings.CheckUpdate.IsEnabled;
-        CloseUpdateButton.IsEnabled = !_exitInProgress;
-        CancelDownloadButton.IsEnabled = !_exitInProgress;
-        DownloadUpdateButton.IsEnabled = !_updateBusy && !_exitInProgress && _updateCheck?.Update is not null;
-        DownloadUpdateButton.Visibility = _preparedReference is null ? Visibility.Visible : Visibility.Collapsed;
-        InstallUpdateButton.IsEnabled = !_updateBusy && !_exitInProgress;
-        InstallUpdateButton.Visibility = _preparedReference is not null ? Visibility.Visible : Visibility.Collapsed;
-        CancelDownloadButton.Visibility = _preparingUpdate ? Visibility.Visible : Visibility.Collapsed;
-        UpdateProgressBar.Visibility = _preparingUpdate ? Visibility.Visible : Visibility.Collapsed;
-        RefreshUpdatePresentation();
-    }
-
-    private string CurrentUpdateVersion => _updateCheck?.CurrentVersion ?? _projectPlan?.ProjectVersion ?? "—";
-
-    private void RefreshUpdatePresentation()
-    {
         var checking = _updateCheckState == UpdateCheckState.Checking;
         var available = _updateCheckState == UpdateCheckState.UpdateAvailable;
-        var latest = _updateCheckState == UpdateCheckState.UpToDate;
-        var failed = _updateCheckState == UpdateCheckState.CheckFailed;
-        var ready = available && _preparedReference is not null;
-        UpdateNavigationBadge.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
-        UpdateNavigationLoading.Visibility = checking ? Visibility.Visible : Visibility.Collapsed;
-        UpdateNavigationIcon.Visibility = checking ? Visibility.Hidden : Visibility.Visible;
-        UpdateNavigationItem.ToolTip = checking ? "正在检查更新…" : available ? "发现新版本" : "软件更新";
-        System.Windows.Automation.AutomationProperties.SetName(
-            UpdateNavigationItem, $"更新，{UpdateNavigationItem.ToolTip}");
-        UpdateCheckingPanel.Visibility = checking ? Visibility.Visible : Visibility.Collapsed;
-        UpdateResultPanel.Visibility = checking ? Visibility.Collapsed : Visibility.Visible;
-        DialogCheckUpdateButton.Visibility = checking || available ? Visibility.Collapsed : Visibility.Visible;
-        DialogCheckUpdateButton.Content = failed ? "重试" : "检查更新";
-        UpdateAvailableActions.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
-        UpdateAppIcon.Visibility = available && !ready ? Visibility.Visible : Visibility.Collapsed;
-        UpdateStateIconBackground.Visibility = available && !ready ? Visibility.Collapsed : Visibility.Visible;
-        UpdateStateIconBackground.SetResourceReference(Border.BackgroundProperty,
-            latest || ready ? "Brush.Success" : "Brush.Primary.Surface");
-        UpdateStateIcon.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty,
-            latest || ready ? "Brush.Text.Inverse" : "Brush.Primary");
-        UpdateStateIcon.Symbol = latest || ready ? Wpf.Ui.Controls.SymbolRegular.Checkmark24
-            : failed ? Wpf.Ui.Controls.SymbolRegular.Warning24 : Wpf.Ui.Controls.SymbolRegular.ArrowSync24;
-        UpdateStateTitle.Text = ready ? "更新已就绪" : available ? "发现新版本"
-            : latest ? "已是最新版本" : failed ? "检查更新失败" : "检查软件更新";
-        UpdateStateTitle.Visibility = available && !ready ? Visibility.Collapsed : Visibility.Visible;
-        UpdateVersionBadge.Visibility = available && !ready ? Visibility.Visible : Visibility.Collapsed;
-        UpdateVersionText.Text = available ? _updateCheck?.Update?.Version : CurrentUpdateVersion;
-        UpdateInstalledVersionText.Text = available ? $"当前版本：{CurrentUpdateVersion}" : "";
-        UpdateInstalledVersionText.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
-        UpdateResultMessage.Text = ready ? "安装将关闭桌面分身并重启，配置会保留。" : _updateCheckState switch {
-            UpdateCheckState.CheckFailed => _settings.CheckUpdate.Status,
-            UpdateCheckState.UpToDate => "当前已是最新版本，感谢使用！",
-            UpdateCheckState.UpdateAvailable => "",
-            _ => "查看是否有可用的新版本。"
+        Sidebar.ShowUpdate(_preparingUpdate ? UpdateMarker.Downloading
+            : checking ? UpdateMarker.Checking : available ? UpdateMarker.Available : UpdateMarker.None);
+
+        var state = _updateCheckState switch {
+            UpdateCheckState.Checking => UpdateDialogState.Checking,
+            UpdateCheckState.UpToDate => UpdateDialogState.Latest,
+            UpdateCheckState.CheckFailed => UpdateDialogState.CheckFailed,
+            UpdateCheckState.UpdateAvailable when _preparingUpdate => UpdateDialogState.Preparing,
+            UpdateCheckState.UpdateAvailable when _preparedReference is not null =>
+                _updateBusy ? UpdateDialogState.Installing : UpdateDialogState.Ready,
+            UpdateCheckState.UpdateAvailable => UpdateDialogState.Available,
+            _ => UpdateDialogState.Idle
         };
-        UpdateResultMessage.Visibility = available && !ready ? Visibility.Collapsed : Visibility.Visible;
-        UpdateNotesPanel.Visibility = available && !ready ? Visibility.Visible : Visibility.Collapsed;
-        ReleaseNotesButton.Visibility = _preparingUpdate || _preparedReference is not null
-            ? Visibility.Collapsed : Visibility.Visible;
-        LaterUpdateButton.Visibility = _preparedReference is not null ? Visibility.Visible : Visibility.Collapsed;
-        LaterUpdateButton.IsEnabled = !_updateBusy && !_exitInProgress;
+        var currentVersion = _updateCheck?.CurrentVersion ?? _projectPlan?.ProjectVersion ?? "—";
+        UpdateDialog.Present(state, currentVersion, _updateCheck?.Update?.Version, _settings.CheckUpdate.Status,
+            _updateOperationStatus, _exitInProgress);
         RefreshUpdateNotes();
     }
 

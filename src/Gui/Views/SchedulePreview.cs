@@ -105,7 +105,16 @@ internal sealed class SchedulePreview
         return issues;
     }
 
-    // The configuration list shows one short state; the reason is in the editor.
+    internal string? ConflictSummary(TaskConfiguration configuration, SchedulePolicy policy)
+    {
+        if (Conflicts(configuration, policy).FirstOrDefault() is not { } conflict) {
+            return null;
+        }
+        var times = string.Join("、", conflict.Times.Select(TimeText));
+        return conflict.OtherFirst ? $"{times} 将跳过" : $"「{conflict.Other.Name}」{times} 将跳过";
+    }
+
+    // The configuration picker shows one short state; the reason is in the editor.
     internal (ScheduleOutcome? Outcome, string Text) ListState(TaskConfiguration configuration)
     {
         if (NextFor(configuration) is not { } next) {
