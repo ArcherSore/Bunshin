@@ -313,9 +313,9 @@ internal static partial class SelfTestRunner
         }
     }
 
-    private static void ClickOnboarding(MainWindow window, string name)
+    private static void ClickOnboarding(FrameworkElement owner, string name)
     {
-        var element = Named<UIElement>(window, name);
+        var element = Named<UIElement>(owner, name);
         element.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
         PumpOnboarding();
     }
