@@ -60,6 +60,7 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
             return;
         }
         _revealDesktop = reveal;
+        DesktopViewButton.Tag = reveal ? "Onboarding" : null;
         if (_layout.Any(state => state.Id == RuntimePanelSection.Desktop && state.Collapsed)) {
             ApplyLayout();
         }

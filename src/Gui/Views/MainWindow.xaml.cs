@@ -92,6 +92,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             ManageChildSessionCredentialsAsync, ClearDebugFilesAsync, ViewWelcome, OpenTaskDescriptionLink,
             ReadLicense, autostart, _themes.Apply);
         InitializeShell();
+        InitializeOnboarding();
         InitializeRuntimePanel();
         SettingsView.DataContext = _settings.Page;
         HelpView.DataContext = new HelpPageModel();

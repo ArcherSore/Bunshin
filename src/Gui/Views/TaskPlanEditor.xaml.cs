@@ -184,16 +184,30 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     internal FrameworkElement? TaskDescriptionButton(ProjectTaskChoice task) =>
         _taskDescriptionButtons.GetValueOrDefault((task.Kind, task.Name));
 
-    internal void OpenTaskShelf()
+    internal ProjectTaskChoice? TaskForOnboarding()
     {
-        SetTaskShelfExpanded(true);
-        AvailableTasksScroll.ScrollToTop();
+        var tasks = Project?.SelectedItems ?? [];
+        return tasks.FirstOrDefault(task => !string.IsNullOrWhiteSpace(task.Description)
+            && HasParameters(GetConfigurationOrEmpty(task.Name, task.Kind)))
+            ?? tasks.FirstOrDefault(task => !string.IsNullOrWhiteSpace(task.Description))
+            ?? tasks.FirstOrDefault(task => HasParameters(GetConfigurationOrEmpty(task.Name, task.Kind)))
+            ?? tasks.FirstOrDefault();
+    }
+
+    internal void ShowTaskShelfForOnboarding(bool show)
+    {
+        SetTaskShelfExpanded(show);
+        if (show) {
+            AvailableTasksScroll.ScrollToTop();
+        }
     }
 
     internal void ExpandPlanItem(ProjectTaskChoice task)
     {
-        _expandedTask = (task.Kind, task.Name);
-        RenderTaskPlan();
+        if (!IsExpanded(task)) {
+            _expandedTask = (task.Kind, task.Name);
+            RenderTaskPlan();
+        }
     }
 
     internal PlanView CaptureView() => new(_expandedTask, _taskShelfExpanded, PlanScroll.VerticalOffset);
