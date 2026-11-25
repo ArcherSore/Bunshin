@@ -23,7 +23,7 @@ public sealed partial class TaskPlanEditor
             || state.Action is RuntimeAction.Stop or RuntimeAction.InProgress { Kind: ProgressKind.StoppingRun };
         var projectLoaded = Project is not null;
         PlanActions.Visibility = projectLoaded || stopping ? Visibility.Visible : Visibility.Collapsed;
-        TaskShelfHeaderButton.Visibility = projectLoaded ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAddTaskButton();
         StartPlanButton.Visibility = stopping ? Visibility.Collapsed : Visibility.Visible;
         StopPlanButton.Visibility = stopping ? Visibility.Visible : Visibility.Collapsed;
         StartPlanButton.IsEnabled = state.Action is RuntimeAction.Start { Enabled: true }

@@ -153,6 +153,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         InitializeWindowPrompts();
         InitializeForcedStartDialog();
         KeyDown += MainWindow_KeyDown;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
         StateChanged += MainWindow_StateChanged;
@@ -641,6 +642,13 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             e.Handled = true;
         } else if (!IsGlobalModalOpen && HomeView.Visibility == Visibility.Visible && TaskPlanEditor.DismissTaskShelf()) {
             e.Handled = true;
+        }
+    }
+
+    private void MainWindow_PreviewMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (!IsGlobalModalOpen && !IsOnboardingVisible && HomeView.Visibility == Visibility.Visible) {
+            TaskPlanEditor.DismissTaskShelfOnClick();
         }
     }
 

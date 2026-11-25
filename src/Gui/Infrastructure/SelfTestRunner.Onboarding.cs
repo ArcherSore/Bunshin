@@ -376,7 +376,7 @@ internal static partial class SelfTestRunner
         var rootForHitTest = (FrameworkElement)window.FindName("WindowOverlayRoot");
         var outline = OnboardingControl<System.Windows.Shapes.Path>(window, "OnboardingOutline");
         var target = step switch {
-            1 => window.TaskPlanEditor.TaskShelfHeaderButton,
+            1 => window.TaskPlanEditor.AddTaskButton,
             2 when window.TaskPlanEditor.TaskForOnboarding() is { } task =>
                 window.TaskPlanEditor.PlanItemCard(task)!,
             2 => window.TaskPlanEditor.TaskShelf,

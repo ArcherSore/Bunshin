@@ -142,7 +142,7 @@ public partial class MainWindow
     }
 
     private FrameworkElement ResolveOnboardingTarget() => _onboardingStep switch {
-        OnboardingStep.AddTask => TaskPlanEditor.TaskShelfHeaderButton,
+        OnboardingStep.AddTask => TaskPlanEditor.AddTaskButton,
         OnboardingStep.TaskDetails => _onboardingTask is { } task
             ? TaskPlanEditor.PlanItemCard(task)
                 ?? throw new InvalidOperationException("新手指引找不到第一张任务卡。")

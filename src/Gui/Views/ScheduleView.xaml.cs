@@ -56,6 +56,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
         // Pasting or cutting could drop the colon; typing digits covers every edit.
         CommandManager.AddPreviewExecutedHandler(_timeEditor, (_, e) => e.Handled =
             e.Command == ApplicationCommands.Paste || e.Command == ApplicationCommands.Cut);
+        PreviewMouseLeftButtonDown += ScheduleView_PreviewMouseLeftButtonDown;
         _tick.Tick += (_, _) => Refresh();
         IsVisibleChanged += (_, _) => {
             if (IsVisible) {
@@ -408,7 +409,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 row.Children.Add(_timeEditor);
             } else {
                 row.Children.Add(new WpfTextBlock {
-                    Text = SchedulePreview.TimeText(time), Width = 35, FontSize = 14,
+                    Text = SchedulePreview.TimeText(time), Width = 42, FontSize = 14,
                     VerticalAlignment = VerticalAlignment.Center
                 });
             }
@@ -739,6 +740,23 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             return;
         }
         EditPolicy(policy.Id, p => p with { Times = [.. p.Times.Where(t => t != selected.Time), time] }, select: time);
+    }
+
+    // Clicking away from the time being typed confirms it, like Enter. The chips and the timeline act on their own
+    // click, so only a click elsewhere also puts the chip back to rest.
+    private void ScheduleView_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (PolicyName.IsKeyboardFocused && !PolicyName.IsMouseOver) {
+            Keyboard.ClearFocus();
+        }
+        if (_selected is null || !_timeEditor.IsKeyboardFocused || TimeChips.IsMouseOver) {
+            return;
+        }
+        Keyboard.ClearFocus();
+        if (!Timeline.IsMouseOver) {
+            _selected = null;
+            Refresh();
+        }
     }
 
     // The colon is fixed: a digit overwrites the one after the caret and deleting turns digits into 0.
