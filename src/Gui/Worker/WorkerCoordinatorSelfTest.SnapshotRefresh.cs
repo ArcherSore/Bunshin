@@ -17,7 +17,7 @@ internal static partial class WorkerCoordinatorSelfTest
         var cleanupDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var dispatcher = Dispatcher.CurrentDispatcher;
         using var host = new RunLifecycleHost(f.Coordinator, dispatcher, () => "A",
-            notice => { notices.Add(notice); return true; }, () => { }, logger);
+            notice => { notices.Add(notice); return Task.FromResult(true); }, () => { }, logger);
         host.ScheduledCompleted += run => completed.Add(run.RunId);
         host.CleanupPending += own => {
             cleaned.Add(own.Key);
