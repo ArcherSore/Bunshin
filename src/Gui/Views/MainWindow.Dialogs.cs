@@ -11,7 +11,8 @@ public partial class MainWindow
     private enum PromptKind { Notice, EndEnvironment, Exit }
 
     private sealed record WindowPrompt(string Title, string Message, Exception? Error = null, bool OfferLogs = false,
-        string? ConfirmLabel = null, PromptKind Kind = PromptKind.Notice, string? CopyText = null)
+        string? ConfirmLabel = null, PromptKind Kind = PromptKind.Notice, string? CopyText = null,
+        bool ShowWhileClosing = false)
     {
         internal TaskCompletionSource<bool> Answer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Shown { get; set; }
@@ -39,16 +40,20 @@ public partial class MainWindow
         "会先停止正在运行的任务，再结束桌面分身和里面的游戏。",
         ConfirmLabel: "结束", Kind: PromptKind.EndEnvironment));
 
-    internal Task<bool> ShowErrorPromptAsync(string title, string message, Exception error, bool offerLogs)
+    internal Task<bool> ShowErrorPromptAsync(string title, string message, Exception error, bool offerLogs,
+        bool showWhileClosing = false)
     {
-        if (!CanShowWindowPrompt) {
-            return Task.FromResult(ShowErrorBalloon(new(title, message, true, title, error)));
+        if (_lifecycle.Orchestration.Lifecycle.ExitCommitted) return Task.FromResult(false);
+        if (!_exitInProgress || showWhileClosing) {
+            if (!CanShowWindowPrompt) {
+                return Task.FromResult(ShowErrorBalloon(new(title, message, true, title, error)));
+            }
+            if (_presentation.ShowError is { } present) {
+                present(title, error, message);
+                return Task.FromResult(true);
+            }
         }
-        if (_presentation.ShowError is { } present) {
-            present(title, error, message);
-            return Task.FromResult(true);
-        }
-        return QueueWindowPrompt(new(title, message, error, offerLogs));
+        return QueueWindowPrompt(new(title, message, error, offerLogs, ShowWhileClosing: showWhileClosing));
     }
 
     private bool ShowErrorBalloon(RunTerminalNotification notice)
@@ -68,8 +73,8 @@ public partial class MainWindow
     {
         if (!CanShowWindowPrompt) DispatchUnshownErrorsToTray();
 
-        // Exit and end can invalidate a pending countdown. Keep Cancel reachable ahead of routine notices.
-        var next = CanShowWindowPrompt ? _windowPrompts.MaxBy(prompt => prompt.Kind) : null;
+        // Keep confirmations ahead of routine notices, and let a new notice appear over an older one.
+        var next = CanShowWindowPrompt ? _windowPrompts.Where(CanPresentPrompt).Reverse().MaxBy(prompt => prompt.Kind) : null;
         if (next is { Kind: PromptKind.Notice } && ForcedStartOverlay.Visibility == Visibility.Visible) next = null;
         if (ReferenceEquals(next, _visiblePrompt)) return;
 
@@ -114,6 +119,7 @@ public partial class MainWindow
             if (previous is UIElement { IsVisible: true, IsEnabled: true } element) element.Focus();
             else if (ProjectReader.Visibility == Visibility.Visible) ProjectReader.FocusReader();
             else if (UpdateOverlay.Visibility == Visibility.Visible) UpdateOverlay.Focus();
+            else if (SettingsOpen) SettingsView.FocusDefault();
             else Sidebar.Home.Focus();
         }
         ReevaluateOnboarding();
@@ -127,18 +133,21 @@ public partial class MainWindow
         _ = Dispatcher.InvokeAsync(RefreshWindowPrompts);
     }
 
-    private void CancelEnvironmentConfirmation()
+    private void CancelWindowConfirmations()
     {
-        foreach (var prompt in _windowPrompts.Where(prompt => prompt.Kind == PromptKind.EndEnvironment).ToArray()) {
+        foreach (var prompt in _windowPrompts.Where(prompt => prompt.Kind != PromptKind.Notice).ToArray()) {
             _windowPrompts.Remove(prompt);
             prompt.Answer.TrySetResult(false);
         }
         RefreshWindowPrompts();
     }
 
+    private bool CanPresentPrompt(WindowPrompt prompt) => !_exitInProgress || prompt.Shown || prompt.ShowWhileClosing;
+
     private void DispatchUnshownErrorsToTray()
     {
-        foreach (var prompt in _windowPrompts.Where(prompt => !prompt.Shown && prompt.Error is not null).ToArray()) {
+        foreach (var prompt in _windowPrompts.Where(prompt => !prompt.Shown && prompt.Error is not null
+            && CanPresentPrompt(prompt)).ToArray()) {
             _windowPrompts.Remove(prompt);
             prompt.Answer.TrySetResult(ShowErrorBalloon(new(prompt.Title, prompt.Message, true, prompt.Title, prompt.Error)));
         }

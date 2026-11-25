@@ -27,8 +27,10 @@ public partial class ConfigurationSidebarRow : System.Windows.Controls.UserContr
         if (lockReason is not null) {
             detail += $"，{lockReason}";
         }
-        SelectButton.ToolTip = detail;
+        SelectButton.ToolTip = schedule is null ? lockReason
+            : lockReason is null ? schedule : $"{schedule}\n{lockReason}";
         AutomationProperties.SetName(SelectButton, detail);
+        MenuButton.ToolTip = "更多配置操作";
         AutomationProperties.SetName(MenuButton, $"管理配置 {name}");
     }
 

@@ -29,7 +29,7 @@ internal static partial class SelfTestRunner
         project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
         project.AddItem(Protocol.PlanItemKind.MaaTask, "ThirdTask");
         List<InspectorRow> Rows(IReadOnlyDictionary<(string, string), InputDraft> drafts) => ParameterInspector.Flatten(
-            ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts, project.OptionOwners)).ToList();
+            ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts)).ToList();
         rows = Rows(none);
         Require(rows.Select(row => (row.Option.Name, row.Depth)).SequenceEqual(new[] {
             ("ServerRange", 0), ("Mode", 0), ("Nested", 1), ("Level1", 0), ("Level2", 1), ("Level3", 2)
@@ -38,11 +38,6 @@ internal static partial class SelfTestRunner
             "标签回退必须为选项 label、第一个输入 label、选项名。");
         Require(rows[3].CaseDescription == "Goes one level deeper" && rows[1].CaseDescription is null,
             "选中 case 有说明时才给出 case 说明。");
-        Require(rows[0].IsGlobal && rows[0].SharedWith.Count == 0
-            && rows[1].SharedWith.SequenceEqual(new[] { "Real task", "Stress task", "Third task" })
-            && rows[2].SharedWith.SequenceEqual(new[] { "Real task", "Stress task", "Third task" })
-            && rows[3].SharedWith.Count == 1 && rows[5].SharedWith.Count == 1,
-            "共用提示必须列出项目中使用同一选项的任务，全局选项另行标记。");
 
         project.SetInputValue("ServerRange", "retry_count", "3");
         project.SetInputValue("ServerRange", "server_range", "979");
@@ -74,6 +69,7 @@ internal static partial class SelfTestRunner
         var plain = json["task"]![0]!.DeepClone();
         plain["name"] = "PlainTask";
         plain["label"] = "Plain task";
+        plain["description"] = "";
         plain["option"] = new JsonArray();
         json["global_option"] = new JsonArray();
         json["task"]!.AsArray().Add(plain);
@@ -102,29 +98,33 @@ internal static partial class SelfTestRunner
             Click("Stress task，已折叠");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" }) && InspectorRows() == 5,
                 "展开另一张卡片时必须收起之前的卡片。");
-            Click("拖动以调整顺序");
             Click("从执行计划移除 Plain task");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" })
-                && !project.SelectedTaskNames.Contains("PlainTask"), "拖动手柄与移除按钮不得切换展开。");
+                && !project.SelectedTaskNames.Contains("PlainTask"), "移除按钮不得切换展开。");
             project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
             InvokeEditor(window, "RenderTaskPlan");
             Click("Plain task，没有可配置的参数");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" }), "无参数任务的标题区不得展开空白区域。");
-            Click("查看 Stress task 的任务描述");
-            var drawer = (System.Windows.UIElement)window.FindName("TaskDescriptionOverlay");
-            Require(drawer.Visibility == System.Windows.Visibility.Visible
-                && Expanded().SequenceEqual(new[] { "Stress task，已展开" }), "任务说明按钮只打开说明，不切换展开。");
-            InvokeOnboarding(window, "CloseTaskDescriptionDrawer");
+            var description = ConfigurationDescendants(items)
+                .OfType<System.Windows.Controls.FlowDocumentScrollViewer>().Single();
+            // This fixture renders the controls without showing their window.
+            Require(description.Visibility == System.Windows.Visibility.Visible && description.Document.Blocks.Count > 0
+                && Expanded().SequenceEqual(new[] { "Stress task，已展开" })
+                && Buttons().All(button => NameOf(button) != "查看 Stress task 的任务描述"),
+                "任务说明应随任务卡展开，收在同一个详情区。");
             Click("Stress task，已展开");
-            Require(Expanded().Length == 0 && InspectorRows() == 0, "再次点击已展开的标题区必须收起。");
+            Require(Expanded().Length == 0 && InspectorRows() == 0
+                && !ConfigurationDescendants(items).OfType<System.Windows.Controls.FlowDocumentScrollViewer>().Any(),
+                "再次点击已展开的标题区必须同时收起说明和参数。");
 
             Click("Stress task，已折叠");
             window.SetPendingOperation(PendingOperation.PreparingEnvironment);
             var rows = ConfigurationDescendants(items).OfType<ParameterRowPanel>().ToArray();
-            var editors = rows.SelectMany(ConfigurationDescendants).OfType<System.Windows.Controls.Control>()
+            var elements = rows.SelectMany(ConfigurationDescendants).Distinct().ToArray();
+            var editors = elements.OfType<System.Windows.Controls.Control>()
                 .Where(control => control is System.Windows.Controls.TextBox or System.Windows.Controls.ComboBox
-                    or Wpf.Ui.Controls.ToggleSwitch).ToArray();
-            var notes = rows.SelectMany(ConfigurationDescendants).OfType<System.Windows.Controls.TextBlock>()
+                    or System.Windows.Controls.ListBox or Wpf.Ui.Controls.ToggleSwitch).ToArray();
+            var notes = elements.OfType<System.Windows.Controls.TextBlock>()
                 .Where(text => text.Text == "Goes one level deeper").ToArray();
             Require(editors.Length == 5 && editors.All(editor => !editor.IsEnabled) && notes.Length == 1
                 && notes.All(note => note.IsEnabled), "锁定时参数控件禁用，说明保持可读。");
@@ -147,20 +147,34 @@ internal static partial class SelfTestRunner
             var items = (System.Windows.DependencyObject)window.TaskPlanEditor.FindName("PlanItemsPanel");
             var notes = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
             Require(notes.Any(note => note.Text == "Number of retry attempts")
+                && notes.Any(note => note.Text.Contains("−2147483648～2147483647", StringComparison.Ordinal)
+                    && note.Text.Contains("项目格式", StringComparison.Ordinal))
                 && notes.All(note => !note.Text.StartsWith("默认：", StringComparison.Ordinal)),
                 "输入说明必须直接可见，显式值偏离默认时也不显示默认提示。");
             var planScroll = (System.Windows.Controls.ScrollViewer)window.TaskPlanEditor.FindName("PlanScroll");
-            foreach (var (width, stacked) in new[] { (920, true), (1180, false), (1440, false) }) {
+            foreach (var width in new[] { 920, 1180, 1440 }) {
                 window.Width = width;
                 window.Height = width == 920 ? 640 : width == 1180 ? 760 : 900;
                 PumpOnboarding();
                 var rows = ConfigurationDescendants(items).OfType<ParameterRowPanel>().ToArray();
-                Require(rows.Length == 6 && rows.Where(row => row.Depth == 0).All(row => row.IsStacked == stacked)
-                    && planScroll.ComputedHorizontalScrollBarVisibility != System.Windows.Visibility.Visible,
-                    $"{width} 宽度下参数检查器应{(stacked ? "上下堆叠" : "为两列")}，且没有横向滚动。");
+                Require(rows.Length == 6 && rows.All(LabelsAndValuesFit)
+                    && planScroll.ExtentWidth <= planScroll.ViewportWidth + PixelTolerance,
+                    $"{width} 宽度下参数标签与值应各自完整可见、互不重叠，执行计划无需横向滚动。");
                 SaveWindowScreenshot(window, $"inspector-{width}.png");
             }
         }, AddComplexInspectorOptions);
+
+        static bool LabelsAndValuesFit(ParameterRowPanel row)
+        {
+            System.Windows.Rect Bounds(System.Windows.UIElement element) => element.TransformToAncestor(row)
+                .TransformBounds(new System.Windows.Rect(element.RenderSize));
+            var label = Bounds(row.Children[0]);
+            var value = Bounds(row.Children[1]);
+            var overlap = System.Windows.Rect.Intersect(label, value);
+            return (overlap.IsEmpty || overlap.Width <= PixelTolerance || overlap.Height <= PixelTolerance)
+                && new[] { label, value }.All(bounds => bounds.Left >= -PixelTolerance && bounds.Top >= -PixelTolerance
+                    && bounds.Right <= row.ActualWidth + PixelTolerance && bounds.Bottom <= row.ActualHeight + PixelTolerance);
+        }
     }
 
     // Set BUNSHIN_TASK_SCREENSHOTS to a directory to keep rendered windows for a visual check.
@@ -234,6 +248,7 @@ internal static partial class SelfTestRunner
         }
         var definitions = json["option"]!.AsObject();
         definitions["ServerRange"]!["inputs"]![1]!["description"] = "Number of retry attempts";
+        definitions["ServerRange"]!["inputs"]![1]!["verify"] = "^(?:1|3|5|8)$";
         definitions["Level1"] = JsonNode.Parse("""
             {"type": "select", "label": "", "default_case": "Deep", "cases": [
               {"name": "Deep", "description": "Goes one level deeper", "option": ["Level2"]},

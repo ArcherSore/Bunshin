@@ -22,7 +22,7 @@ internal sealed record InspectorBranch(string Path, IReadOnlyList<InspectorRow> 
 // One inspector row per option, with a branch for each active case that declares children.
 internal sealed record InspectorRow(
     ProjectOptionEditor Option, string Label, int Depth, bool IsGlobal, string Description,
-    string? CaseDescription, IReadOnlyList<string> SharedWith, IReadOnlyList<InspectorInput> Inputs)
+    string? CaseDescription, IReadOnlyList<InspectorInput> Inputs)
 {
     internal IReadOnlyList<InspectorBranch> Branches { get; init; } = [];
     internal ProjectOptionKind Kind => Option.Kind;
@@ -34,12 +34,11 @@ internal static class ParameterInspector
 {
     // Drafts are keyed by (option, input) of the configuration being shown.
     internal static IReadOnlyList<InspectorRow> Derive(
-        ProjectConfigurationView configuration, IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? owners = null)
+        ProjectConfigurationView configuration, IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts)
     {
         IReadOnlyList<InspectorRow> Rows(IReadOnlyList<ProjectOptionEditor> options, string path, int depth, bool global) =>
             options.Select((option, index) => {
-                var row = CreateRow(option, depth, global, drafts, owners?.GetValueOrDefault(option.Name) ?? []);
+                var row = CreateRow(option, depth, global, drafts);
                 var branches = option.Cases.Select((item, caseIndex) => (Item: item, Index: caseIndex))
                     .Where(item => item.Item.ActiveOptions.Count > 0)
                     .Select(item => {
@@ -70,7 +69,7 @@ internal static class ParameterInspector
         FirstNonBlank(option.Label, option.Inputs.FirstOrDefault()?.Label) ?? option.Name;
 
     private static InspectorRow CreateRow(ProjectOptionEditor option, int depth, bool global,
-        IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts, IReadOnlyList<string> sharedWith)
+        IReadOnlyDictionary<(string Option, string Input), InputDraft> drafts)
     {
         var label = GetOptionLabel(option);
         var single = option.Inputs.Count == 1;
@@ -78,8 +77,7 @@ internal static class ParameterInspector
             ?? string.Empty;
         if (option.Kind != ProjectOptionKind.Input) {
             var selected = option.Cases.SingleOrDefault(item => item.Name == option.SelectedCase);
-            return new InspectorRow(option, label, depth, global, description, FirstNonBlank(selected?.Description),
-                sharedWith, []);
+            return new InspectorRow(option, label, depth, global, description, FirstNonBlank(selected?.Description), []);
         }
         var inputs = option.Inputs.Select(input => {
             var draft = drafts.GetValueOrDefault((option.Name, input.Name));
@@ -88,7 +86,7 @@ internal static class ParameterInspector
             var name = single || inputLabel == label ? label : $"{label} · {inputLabel}";
             return new InspectorInput(input, inputLabel, name, single ? description : input.Description, draft);
         }).ToArray();
-        return new InspectorRow(option, label, depth, global, description, null, sharedWith, inputs);
+        return new InspectorRow(option, label, depth, global, description, null, inputs);
     }
 
     private static string? FirstNonBlank(params string?[] values) =>

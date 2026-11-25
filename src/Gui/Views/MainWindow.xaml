@@ -31,24 +31,48 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="Preview.IconButton" TargetType="{x:Type Button}"
+        <Style x:Key="RuntimePanel.Toggle" TargetType="{x:Type Button}"
                BasedOn="{StaticResource BaseButtonStyle}">
-            <Setter Property="Width" Value="32" />
-            <Setter Property="Height" Value="32" />
-            <Setter Property="MinHeight" Value="32" />
-            <Setter Property="Padding" Value="7" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="MinHeight" Value="28" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-            <Setter Property="FocusVisualStyle" Value="{StaticResource Preview.IconFocus}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                            <Canvas Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    IsHitTestVisible="False">
+                                <Path Stroke="{TemplateBinding Foreground}" StrokeThickness="1.3" StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round" StrokeLineJoin="Round">
+                                    <Path.Data>
+                                        <GeometryGroup>
+                                            <RectangleGeometry Rect="2,2.5,12,11" RadiusX="2" RadiusY="2" />
+                                            <PathGeometry Figures="M10,2.5 V13.5" />
+                                        </GeometryGroup>
+                                    </Path.Data>
+                                </Path>
+                            </Canvas>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
                     <Setter Property="Background" Value="{DynamicResource Brush.Border}" />
                 </Trigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="RuntimePanel.Edge" TargetType="Thumb">
@@ -86,6 +110,9 @@
         <Grid.Style>
             <Style TargetType="{x:Type Grid}">
                 <Style.Triggers>
+                    <DataTrigger Binding="{Binding Visibility, ElementName=SettingsOverlay}" Value="Visible">
+                        <Setter Property="IsEnabled" Value="False" />
+                    </DataTrigger>
                     <DataTrigger Binding="{Binding Visibility, ElementName=UpdateOverlay}" Value="Visible">
                         <Setter Property="IsEnabled" Value="False" />
                     </DataTrigger>
@@ -110,16 +137,12 @@
             </Grid.RowDefinitions>
             <views:ShellHeader x:Name="Header" Grid.Row="0">
                 <views:ShellHeader.Actions>
-                    <Button Width="28" Height="28" MinHeight="28" Padding="0"
-                            Style="{StaticResource Preview.IconButton}" Click="RuntimePanelToggleButton_Click">
-                        <ui:SymbolIcon Symbol="PanelRight24" FontSize="16" />
-                    </Button>
+                    <Button Style="{StaticResource RuntimePanel.Toggle}" Click="RuntimePanelToggleButton_Click" />
                 </views:ShellHeader.Actions>
             </views:ShellHeader>
 
             <Grid x:Name="ShellContent" Grid.Row="1">
                 <Grid Background="{DynamicResource Brush.Canvas}">
-                    <!-- Settings owns its definition-driven view and namescope. -->
                     <Grid x:Name="HomeView">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" MinWidth="420" />
@@ -140,64 +163,39 @@
                     </Grid>
 
                     <views:ScheduleView x:Name="ScheduleView" Visibility="Collapsed" />
-                    <views:SettingsView x:Name="SettingsView" Visibility="Collapsed" />
                     <views:HelpView x:Name="HelpView" Visibility="Collapsed" />
                     <Border x:Name="SidebarDismissLayer" Background="{DynamicResource Brush.Overlay.Dim}"
                             Panel.ZIndex="1" Visibility="Collapsed"
                             MouseLeftButtonDown="SidebarDismissLayer_MouseLeftButtonDown" />
-
-                    <Grid x:Name="TaskDescriptionOverlay"
-                          Panel.ZIndex="100"
-                          Visibility="Collapsed"
-                          AutomationProperties.Name="任务描述">
-                        <Button Background="{DynamicResource Brush.Overlay.Dim}"
-                                BorderThickness="0"
-                                Focusable="False"
-                                Click="TaskDescriptionScrim_Click" />
-                        <Border Width="420"
-                                MaxWidth="420"
-                                HorizontalAlignment="Right"
-                                Style="{StaticResource TaskDescriptionDrawerStyle}">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="TaskDescriptionDrawerTitle"
-                                               VerticalAlignment="Center"
-                                               TextWrapping="Wrap"
-                                               Style="{StaticResource StatusPrimaryTextStyle}" />
-                                    <Button x:Name="TaskDescriptionCloseButton"
-                                            Grid.Column="1"
-                                            Margin="12,0,0,0"
-                                            Style="{StaticResource CompactIconButtonStyle}"
-                                            AutomationProperties.Name="关闭任务描述"
-                                            Click="TaskDescriptionCloseButton_Click">
-                                        <ui:SymbolIcon Width="16" Height="16" Symbol="Dismiss16" />
-                                    </Button>
-                                </Grid>
-                                <Border Grid.Row="1"
-                                        Height="1"
-                                        Margin="0,14,0,14"
-                                        Background="{DynamicResource Brush.Border}" />
-                                <FlowDocumentScrollViewer x:Name="TaskDescriptionViewer" Grid.Row="2"
-                                                          HorizontalScrollBarVisibility="Disabled"
-                                                          VerticalScrollBarVisibility="Auto"
-                                                          IsToolBarVisible="False" Zoom="100" />
-                            </Grid>
-                        </Border>
-                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
 
     </Grid>
+        <Grid x:Name="SettingsOverlay" Panel.ZIndex="200" Visibility="Collapsed"
+              KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
+              AutomationProperties.Name="设置">
+            <Grid.Style>
+                <Style TargetType="Grid">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding Visibility, ElementName=UpdateOverlay}" Value="Visible">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Visibility, ElementName=ProjectReader}" Value="Visible">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Visibility, ElementName=ForcedStartOverlay}" Value="Visible">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Visibility, ElementName=PromptOverlay}" Value="Visible">
+                            <Setter Property="IsEnabled" Value="False" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
+            <Border Background="{DynamicResource Brush.Overlay.Dim}" MouseLeftButtonDown="SettingsScrim_MouseLeftButtonDown" />
+            <views:SettingsView x:Name="SettingsView" MaxWidth="960" MaxHeight="740" Margin="32,42" />
+        </Grid>
         <Grid x:Name="UpdateOverlay" Panel.ZIndex="210" Visibility="Collapsed" Focusable="True"
               KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
               SizeChanged="UpdateOverlay_SizeChanged"

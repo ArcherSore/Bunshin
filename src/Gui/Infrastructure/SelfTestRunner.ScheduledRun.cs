@@ -97,6 +97,7 @@ internal static partial class SelfTestRunner
         var wts = new SimulatedWts();
         using var session = wts.CreateManager(logger);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var reconnectDeadline = new CancellationTokenSource();
         var token = timeout.Token;
         var pipeName = $"Bunshin.Schedule.SelfTest.{Guid.NewGuid():N}";
         Task<ProtocolConnection>? connected = null;
@@ -180,10 +181,15 @@ internal static partial class SelfTestRunner
                 if (!cleanupCollision && order != SettlementOrder.ForcedCountdown) {
                     ExpectBusy("正在运行其他任务");
                 }
+                void WriteState(WorkerSnapshot state)
+                {
+                    // A later frame may be sent after the simulated cleanup and exit confirmation finish.
+                    using var writeDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    Task.Run(() => pipe.WriteAsync(StateEvent(state), writeDeadline.Token)).GetAwaiter().GetResult();
+                }
                 void Publish(RunSnapshot last, long revision)
                 {
-                    Task.Run(() => pipe.WriteAsync(StateEvent(snapshot with { StateRevision = revision,
-                        LastRun = last }), token)).GetAwaiter().GetResult();
+                    WriteState(snapshot with { StateRevision = revision, LastRun = last });
                     PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.StateRevision >= revision,
                         "必须观察到新的 Worker 快照。");
                     PumpOnboarding();
@@ -291,17 +297,21 @@ internal static partial class SelfTestRunner
                         AwaitWorker(coordinator, s => s.Observation == WorkerObservation.IpcDisconnected, "A 运行期间应已断线。");
                         var targeted = new TaskCompletionSource<Guid?>(TaskCreationOptions.RunContinuationsAsynchronously);
                         var sync = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        reconnectDeadline.CancelAfter(TimeSpan.FromSeconds(30));
+                        var reconnectToken = reconnectDeadline.Token;
                         connected = Task.Run(() => WorkerCoordinatorSelfTest.OpenConnectionAsync(
-                            pipeName, record!, 0, token, lastRun: done, stateRevision: received.StateRevision,
+                            pipeName, record!, 0, reconnectToken, lastRun: done, stateRevision: received.StateRevision,
                             beforeSnapshotReply: async peer => {
                                 await peer.WriteAsync(StateEvent(snapshot with { StateRevision = 4, ActiveRun = own,
-                                    RunState = RunState.Running }), token);
-                                var q = await WorkerCoordinatorSelfTest.ReadRequestAsync(peer, ProtocolOperations.WorkerGetSnapshot, token);
-                                await peer.WriteAsync(StateEvent(received), token);
+                                    RunState = RunState.Running }), reconnectToken);
+                                var q = await WorkerCoordinatorSelfTest.ReadRequestAsync(peer,
+                                    ProtocolOperations.WorkerGetSnapshot, reconnectToken);
+                                await peer.WriteAsync(StateEvent(received), reconnectToken);
                                 targeted.SetResult(ProtocolJson.Deserialize<GetSnapshotRequest>(q.Data).RunId);
-                                await sync.Task.WaitAsync(token);
+                                await sync.Task.WaitAsync(reconnectToken);
                             }));
-                        PumpUntil(() => targeted.Task.IsCompleted, "首次同步前应定向复核已断线的 A。");
+                        PumpUntil(() => targeted.Task.IsCompleted || connected.IsCompleted, "首次同步前应定向复核已断线的 A。");
+                        if (connected.IsCompleted) connected.GetAwaiter().GetResult();
                         AwaitWorker(coordinator, s => s.Resynchronising, "重连后跳号的终态应使视图失效。");
                         Require(targeted.Task.Result == own.RunId && failures.Count == 0 && session.HasChildSession,
                             "首次同步前失效的 LastRun 应暂存，不能提前提醒或收尾。");
@@ -316,7 +326,7 @@ internal static partial class SelfTestRunner
                         try {
                             sync.SetResult();
                             pipe = connected.GetAwaiter().GetResult();
-                            synced.Wait(token);
+                            synced.Wait(reconnectToken);
                         } finally {
                             coordinator.ObservationReceived -= OnFullReply;
                         }
@@ -337,7 +347,7 @@ internal static partial class SelfTestRunner
                         AwaitWorker(coordinator, s => s.FreshReadyToStart && s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                             "完整补查未返回时，协调器应已发布 A 的新鲜终态。");
                     } else {
-                        Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
+                        WriteState(received);
                     }
                     AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                         "下一分钟到来时 Worker 应已报告此前 Run 的终态。");
@@ -625,6 +635,7 @@ internal static partial class SelfTestRunner
                 });
         } finally {
             timeout.Cancel();
+            reconnectDeadline.Cancel();
             if (connected?.IsCompletedSuccessfully == true) {
                 connected.Result.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }

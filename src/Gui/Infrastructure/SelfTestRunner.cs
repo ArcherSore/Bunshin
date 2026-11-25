@@ -40,6 +40,7 @@ internal static partial class SelfTestRunner
         new(Group.Support, nameof(VerifySettingsNavigation), c => VerifySettingsNavigation(c.Logger, c.Directory), RequiresFocus: true),
         new(Group.Support, nameof(VerifyProjectAboutContent), c => VerifyProjectAboutContent(c.Directory)),
         new(Group.Support, nameof(VerifyProjectAboutView), c => VerifyProjectAboutView(c.Logger, c.Directory)),
+        new(Group.Support, nameof(VerifyWindowPrompts), c => VerifyWindowPrompts(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyWindowShell), c => VerifyWindowShell(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyHelpPage), c => VerifyHelpPage(c.Logger, c.Directory)),
         new(Group.Support, nameof(VerifyTrayMenu), _ => VerifyTrayMenu()),
@@ -161,6 +162,7 @@ internal static partial class SelfTestRunner
             c => VerifyInvalidConfigurationIsolation(c.Directory, c.Project)),
         new(Group.Project, nameof(VerifyConfigurationSidebar),
             c => VerifyConfigurationSidebar(c.Logger, c.Directory, c.Project)),
+        new(Group.Project, nameof(VerifySidebarConfigurationOrder), c => VerifySidebarConfigurationOrder(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyConfigurationHeader), c => VerifyConfigurationHeader(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyBlankParameterLabels), c => VerifyBlankParameterLabels(c.Logger, c.Directory)),
         new(Group.Project, nameof(VerifyDraftSummarySync), c => VerifyDraftSummarySync(c.Logger, c.Directory)),
@@ -646,6 +648,12 @@ internal static partial class SelfTestRunner
             if (shelf.Visibility != System.Windows.Visibility.Collapsed) {
                 throw new InvalidOperationException("添加任务面板应默认收起。");
             }
+            // The shelf overlays the full plan viewport, so populate enough rows to make that viewport scroll.
+            var project = ProjectOf(window);
+            foreach (var index in Enumerable.Range(4, 16)) {
+                project.AddItem(Protocol.PlanItemKind.MaaTask, $"Task{index}");
+            }
+            InvokeEditor(window, "RenderTaskPlan");
             ClickOnboarding(window, "TaskShelfHeaderButton");
             foreach (var width in new[] { 1440, 920 }) {
                 window.Width = width;
@@ -682,10 +690,7 @@ internal static partial class SelfTestRunner
             foreach (var group in catalog.Children.OfType<System.Windows.Controls.Expander>()) {
                 group.IsExpanded = true;
             }
-            PumpOnboarding();
-            if (catalogScroll.ScrollableHeight <= 0) {
-                throw new InvalidOperationException("展开所有分类后，可用任务面板应可以独立滚动。");
-            }
+            PumpUntil(() => catalogScroll.ScrollableHeight > 0, "展开所有分类后，可用任务面板应可以独立滚动。");
             first.IsExpanded = false;
             search.Text = "RealTask";
             PumpOnboarding();

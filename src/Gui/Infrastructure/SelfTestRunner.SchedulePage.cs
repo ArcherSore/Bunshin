@@ -44,6 +44,13 @@ internal static partial class SelfTestRunner
             Require(preview.ListState(b).Outcome == ScheduleOutcome.Skip
                 && preview.Issues(b, b.SchedulePolicies[0]).Any(issue => !issue.Error),
                 "同时到点、排在后面的配置应在列表和编辑区预告跳过。");
+            var activePin = view.Timeline.Pins.First(pin => pin.Role == TimelinePinRole.Active && pin.Time == new TimeOnly(20, 0));
+            var otherPin = view.Timeline.Pins.Single(pin => pin.ConfigurationId == empty && pin.Day == activePin.Day);
+            var timelineFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var pinPoint = (System.Windows.Point)typeof(ScheduleTimeline).GetMethod("PinPoint", timelineFlags)!
+                .Invoke(view.Timeline, [otherPin])!;
+            var hit = typeof(ScheduleTimeline).GetMethod("HitPin", timelineFlags)!.Invoke(view.Timeline, [pinPoint]);
+            Require(Equals(hit, activePin), "重叠时间点应优先响应当前定时的拖动和双击。");
             var configuration = Named<System.Windows.Controls.Button>(view, "ConfigurationPicker");
             configuration.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             var configurations = configuration.ContextMenu;

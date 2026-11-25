@@ -65,9 +65,9 @@ internal static partial class SelfTestRunner
                 && Cards().Select(card => ((ProjectTaskChoice)card.Tag).Name)
                     .SequenceEqual(new[] { "RealTask", "SecondBoot", "RealTask" }),
                 "前置任务应集中显示在前，普通任务与前置任务允许同名。");
-            Require(Cards().All(card => ConfigurationDescendants(card).OfType<Button>()
-                    .Single(button => AutomationProperties.GetName(button) == "拖动以调整顺序")
-                    .IsVisible), "每张任务卡片都应提供拖动入口。");
+            Require(Cards().All(card => Header(card).IsVisible && ConfigurationDescendants(card).OfType<Button>()
+                    .All(button => AutomationProperties.GetName(button) != "拖动以调整顺序")),
+                "任务卡片应保留可操作的标题行，并移除独立拖动把手。");
 
             var preCard = Cards()[0];
             Click(Header(preCard));
@@ -88,15 +88,15 @@ internal static partial class SelfTestRunner
             foreach (var (index, label, expected) in new[] {
                 (0, "启动并登录", "前置登录说明"), (2, "Real task", "A long task description")
             }) {
-                Click(ButtonNamed(Cards()[index], $"查看 {label} 的任务描述"));
-                var document = Named<FlowDocumentScrollViewer>(window, "TaskDescriptionViewer").Document;
+                var header = Header(Cards()[index]);
+                if (AutomationProperties.GetName(header) == $"{label}，已折叠") {
+                    Click(header);
+                }
+                var document = ConfigurationDescendants(Cards()[index]).OfType<FlowDocumentScrollViewer>().Single().Document;
                 var text = new System.Windows.Documents.TextRange(document.ContentStart, document.ContentEnd).Text;
-                Require(Named<TextBlock>(window, "TaskDescriptionDrawerTitle").Text == label
-                    && text.Contains(expected, StringComparison.Ordinal),
-                    "同名的前置任务与普通任务应打开各自的说明。");
-                Click(Named<Button>(window, "TaskDescriptionCloseButton"));
+                Require(text.Contains(expected, StringComparison.Ordinal),
+                    "同名的前置任务与普通任务应在各自的展开区域显示说明。");
             }
-            Click(Header(Cards()[2]));
             InvokeOnboarding(window, "ReplayOnboarding");
             PumpOnboarding();
             ClickOnboarding(window, "OnboardingNext");
@@ -218,6 +218,7 @@ internal static partial class SelfTestRunner
                 "跳过前置项后，控制面板应显示实际运行项和过滤后的进度。");
             Observe(idle);
             Select(0, true);
+            Click(Header(Cards()[2]));
             Click(ButtonNamed(Cards()[2], "从执行计划移除 Real task"));
             Require(project.SelectedTaskNames.Count == 0 && project.SelectedItemCount == 2
                 && Named<Button>(window, "StartPlanButton").IsEnabled,
@@ -233,6 +234,7 @@ internal static partial class SelfTestRunner
             Require(Named<Button>(window, "StopPlanButton").IsEnabled,
                 "前置任务启动阶段也必须提供停止，不能等待游戏控制器创建。");
             Observe(idle);
+            Click(Header(Cards()[0]));
             Click(ButtonNamed(Cards()[0], "从执行计划移除 启动并登录"));
             Require(project.SelectedPretaskNames.SequenceEqual(new[] { "SecondBoot" }),
                 "前置任务的移除入口必须更新当前配置。");

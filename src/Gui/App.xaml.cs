@@ -29,6 +29,14 @@ public partial class App : System.Windows.Application
     private bool _userExitRequested;
     internal ThemeService Themes { get; private set; } = null!;
 
+    static App()
+    {
+        System.Windows.Controls.ToolTipService.InitialShowDelayProperty.OverrideMetadata(
+            typeof(FrameworkElement), new FrameworkPropertyMetadata(400));
+        System.Windows.Controls.ToolTipService.BetweenShowDelayProperty.OverrideMetadata(
+            typeof(FrameworkElement), new FrameworkPropertyMetadata(0));
+    }
+
     private void ApplyStartupTheme(bool selfTest)
     {
         Themes = new ThemeService(Resources);
@@ -159,7 +167,8 @@ public partial class App : System.Windows.Application
             if (result.Error is { } error) {
                 if (reportError is not null) reportError(error);
                 else await window.ShowErrorPromptAsync(AppIdentity.Name,
-                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。", error, offerLogs: true);
+                    $"{error.Message}已取消退出，避免遗留未知状态。请查看日志后重试。", error, offerLogs: true,
+                    showWhileClosing: true);
             }
         } finally {
             if (exitStarted && !exitCompleted) {

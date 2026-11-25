@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Windows.Media;
 using Gui.Infrastructure;
 using Gui.Themes;
@@ -12,6 +13,7 @@ internal sealed class ApplicationSettings
     private readonly string _closePreferencePath;
     private readonly string _appearancePath;
     private readonly string _autoRunConfigurationPath;
+    private readonly string _sidebarConfigurationOrderPath;
     private readonly AutostartTask _autostart;
     private readonly AppLogger _logger;
     private readonly RuntimePanelPreferences _runtimePanelPreferences;
@@ -26,6 +28,7 @@ internal sealed class ApplicationSettings
         _updatePreferencePath = Path.Combine(applicationDirectory, "config", "update-check.txt");
         _closePreferencePath = Path.Combine(applicationDirectory, "config", "close-to-tray.txt");
         _autoRunConfigurationPath = Path.Combine(applicationDirectory, "config", "autorun-configuration.txt");
+        _sidebarConfigurationOrderPath = Path.Combine(applicationDirectory, "config", "sidebar-configuration-order.json");
         _autostart = autostart ?? AutostartTask.ForCurrentProcess();
         _logger = logger;
         _runtimePanelPreferences = new(Path.Combine(applicationDirectory, "config", "runtime-panel-sections.json"), logger);
@@ -34,6 +37,8 @@ internal sealed class ApplicationSettings
         RuntimePanelCollapsed = CreatePersistedToggle(
             Path.Combine(applicationDirectory, "config", "runtime-panel-collapsed.txt"),
             "application.runtimePanelCollapsed", "运行面板收起", false, null);
+        AutoStartDesktop = CreatePersistedToggle(Path.Combine(applicationDirectory, "config", "auto-session.txt"),
+            "application.autoSession", "打开程序时自动启动分身", false, null);
         CloseToTray = new SettingsToggle(SaveClosePreference);
         try {
             CloseToTray.Initialize(!File.Exists(_closePreferencePath)
@@ -106,6 +111,7 @@ internal sealed class ApplicationSettings
         Registry.Toggles.Add("update.checkOnStartup", CheckOnStartup);
         Registry.Toggles.Add("application.closeToTray", CloseToTray);
         Registry.Toggles.Add("application.autostart", Autostart);
+        Registry.Toggles.Add("application.autoSession", AutoStartDesktop);
         Registry.Toggles.Add("autorun.onManualLaunch", AutoRunOnManualLaunch);
         Registry.Choices.Add("autorun.configuration", AutoRunConfiguration);
         Registry.Toggles.Add("schedule.forceStart", ForceScheduledStart);
@@ -137,6 +143,7 @@ internal sealed class ApplicationSettings
     internal SettingsToggle CheckOnStartup { get; }
     internal SettingsToggle CloseToTray { get; }
     internal SettingsToggle Autostart { get; }
+    internal SettingsToggle AutoStartDesktop { get; }
     internal SettingsChoice AutoRunConfiguration { get; }
     internal SettingsChoice Appearance { get; }
     internal SettingsToggle SidebarCollapsed { get; }
@@ -163,6 +170,36 @@ internal sealed class ApplicationSettings
     internal SettingsValue CurrentVersion { get; } = new() { Text = "—" };
 
     internal event Action<SettingsToggle>? FrameworkOptionsChanged;
+
+    internal IReadOnlyList<Guid> ReadSidebarConfigurationOrder()
+    {
+        try {
+            return File.Exists(_sidebarConfigurationOrderPath)
+                ? JsonSerializer.Deserialize<Guid[]>(File.ReadAllText(_sidebarConfigurationOrderPath)) ?? [] : [];
+        } catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) {
+            _logger.Warn("读取侧栏配置顺序失败，已使用默认顺序。", error);
+            return [];
+        }
+    }
+
+    internal bool TrySaveSidebarConfigurationOrder(IReadOnlyList<Guid> order)
+    {
+        var temporary = $"{_sidebarConfigurationOrderPath}.{Guid.NewGuid():N}.tmp";
+        try {
+            Directory.CreateDirectory(Path.GetDirectoryName(_sidebarConfigurationOrderPath)!);
+            File.WriteAllText(temporary, JsonSerializer.Serialize(order));
+            File.Move(temporary, _sidebarConfigurationOrderPath, overwrite: true);
+            return true;
+        } catch (Exception error) when (error is IOException or UnauthorizedAccessException) {
+            _logger.Warn("保存侧栏配置顺序失败。", error);
+            try {
+                File.Delete(temporary);
+            } catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException) {
+                _logger.Warn("删除侧栏配置顺序临时文件失败。", cleanupError);
+            }
+            return false;
+        }
+    }
 
     private static string AppearancePath(string applicationDirectory) =>
         Path.Combine(applicationDirectory, "config", "appearance.txt");

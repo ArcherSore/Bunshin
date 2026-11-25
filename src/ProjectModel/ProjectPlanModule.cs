@@ -140,20 +140,6 @@ public sealed partial class ProjectPlanModule
         });
     }
 
-    public bool MoveConfiguration(Guid id, int targetIndex)
-    {
-        var configurations = _config.Configurations.ToList();
-        var configuration = FindConfiguration(id);
-        var from = configurations.IndexOf(configuration);
-        if (targetIndex < 0 || targetIndex >= configurations.Count || targetIndex == from) {
-            return false;
-        }
-        configurations.RemoveAt(from);
-        configurations.Insert(targetIndex, configuration);
-        SaveConfig(_config with { Configurations = configurations.ToArray() });
-        return true;
-    }
-
     public void ActivateConfiguration(Guid id)
     {
         _ = FindConfiguration(id);

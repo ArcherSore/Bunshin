@@ -269,8 +269,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
                 issue.Error ? "Brush.Error.Foreground" : "Brush.Warning.Foreground");
             row.Notice.SetResourceReference(WpfTextBlock.ForegroundProperty,
                 issue.Error ? "Brush.Error.Foreground" : "Brush.Warning.Foreground");
-            row.Expand.ToolTip = string.Join("\n", new[] { SchedulePreview.Summary(policy) }
-                .Concat(issues.Select(item => item.Text)));
+            row.Expand.ToolTip = issues.Count == 0 ? null : string.Join("\n", issues.Select(item => item.Text));
             AutomationProperties.SetName(row.Expand, $"{policy.Name}，{SchedulePreview.Summary(policy)}，展开编辑");
             AutomationProperties.SetName(row.Enabled, $"启用「{policy.Name}」");
         }

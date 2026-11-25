@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
 using Gui.ChildSession;
@@ -24,6 +25,49 @@ internal static partial class SelfTestRunner
             },
             ShowBalloon = notice => { Balloons.Add(notice); return true; }
         };
+    }
+
+    private static void VerifyWindowPrompts(AppLogger logger, string directory)
+    {
+        var balloons = new List<RunTerminalNotification>();
+        WithRuntimeControlWindow(logger, directory, window => {
+            var dialog = window.PromptDialog;
+            var title = Named<System.Windows.Controls.TextBlock>(dialog, "TitleText");
+            Task<bool> Error(string message) => window.ShowErrorPromptAsync(message, message,
+                new IOException(message), offerLogs: true);
+
+            var first = Error("第一次启动失败");
+            var second = Error("第二次启动失败");
+            Require(title.Text == "第二次启动失败" && !first.IsCompleted,
+                "第一次错误未关闭时应立即显示新错误，保留原错误等待查看。");
+            ClickConfigurationButton(Named<System.Windows.Controls.Button>(dialog, "ActionButton"));
+            PumpUntil(() => second.IsCompleted && title.Text == "第一次启动失败", "关掉新错误后应恢复原错误。");
+            ClickConfigurationButton(Named<System.Windows.Controls.Button>(dialog, "ActionButton"));
+            PumpUntil(() => first.IsCompleted && !dialog.IsVisible, "错误均应完成交付。");
+
+            var confirmation = window.ConfirmExitAsync();
+            var pending = Error("等待交付的错误");
+            window.SetExitInProgress(true);
+            Require(confirmation.IsCompletedSuccessfully && !confirmation.Result && !dialog.IsVisible
+                && !pending.IsCompleted, "自动退出开始后应结束旧确认，暂存尚未打开的错误。");
+            var exitFailure = window.ShowErrorPromptAsync("退出失败", "无法结束桌面分身",
+                new IOException("模拟注销失败"), offerLogs: true, showWhileClosing: true);
+            Require(dialog.IsVisible && title.Text == "退出失败", "退出失败应立即显示在旧确认的位置。");
+            ClickConfigurationButton(Named<System.Windows.Controls.Button>(dialog, "ActionButton"));
+            PumpUntil(() => exitFailure.IsCompleted && !dialog.IsVisible, "确认错误后应关闭退出失败提示。");
+            window.SetExitInProgress(false);
+            PumpUntil(() => dialog.IsVisible && title.Text == "等待交付的错误", "取消退出后应恢复待交付的错误。");
+            ClickConfigurationButton(Named<System.Windows.Controls.Button>(dialog, "ActionButton"));
+            PumpUntil(() => pending.IsCompleted && !dialog.IsVisible, "恢复的错误应允许确认。");
+
+            _ = window.ConfirmExitAsync();
+            var discarded = Error("成功退出时仍在等待的错误");
+            window.SetExitInProgress(true);
+            window.Hide();
+            window.CommitExit();
+            Require(discarded.IsCompletedSuccessfully && !discarded.Result && balloons.Count == 0,
+                "确认退出后应丢弃待交付错误，不发送托盘气泡。");
+        }, presentation: new RunPresentation { ShowBalloon = notice => { balloons.Add(notice); return true; } });
     }
 
     private static void VerifyRunDeliveryScenarios(AppLogger logger, string directory)
@@ -285,6 +329,13 @@ internal static partial class SelfTestRunner
                 Require(probe.Balloons is [{ Operation: "准备运行环境失败" } balloon] && balloon.Error == loginError
                     && balloon.Message.Contains("原始登录错误") && probe.Dialogs.Count == 0 && probe.HelloReads == 0,
                     "后台准备失败只应向托盘交付一次，保留操作名和原异常。");
+                var loaded = typeof(MainWindow).GetMethod("MainWindow_Loaded", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                window.Loaded -= (RoutedEventHandler)loaded.CreateDelegate(typeof(RoutedEventHandler), window);
+                window.ShowInTaskbar = false;
+                window.ShowActivated = false;
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = window.Top = -32000;
+                window.Show();
                 Click(window, "RetryEnvironmentButton");
                 Require(probe.Dialogs is [{ Operation: "准备运行环境失败" } dialog] && dialog.Error == loginError
                     && dialog.Message.Contains("Windows Hello") && dialog.Message.Contains("关闭该开关")

@@ -1,11 +1,9 @@
-using Gui.Settings;
 using System.Windows;
 using System.Windows.Automation;
-using System.Windows.Controls;
 using System.Windows.Input;
 using ProjectModel;
+using Protocol;
 using Wpf.Ui.Controls;
-using Alignment = System.Windows.HorizontalAlignment;
 
 namespace Gui.Views;
 
@@ -15,15 +13,14 @@ internal enum UpdateMarker { None, Checking, Available, Downloading }
 // It reports what the user chose; MainWindow decides what happens.
 public partial class ShellSidebar : System.Windows.Controls.UserControl
 {
-    public const double ExpandedWidth = 288;
-    public const double CompactWidth = 57;
+    internal const double DefaultWidth = 288;
+    internal const double CompactWidth = 44;
 
     public static readonly DependencyProperty IsCollapsedProperty = DependencyProperty.Register(
         nameof(IsCollapsed), typeof(bool), typeof(ShellSidebar),
         new PropertyMetadata(false, (d, _) => ((ShellSidebar)d).ApplyCollapsed()));
 
     private UpdateMarker _updateMarker;
-    private bool _followingSettingsScroll;
 
     public ShellSidebar()
     {
@@ -40,14 +37,9 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
     }
 
     internal RailItem Home => IsCollapsed ? HomeNavigationItem : ConfigurationList.ActiveButton ?? HomeNavigationItem;
-    internal void FocusToggle()
-    {
-        if (SettingsNavigation.IsVisible) {
-            SettingsBackButton.Focus();
-        } else {
-            SidebarToggleButton.Focus();
-        }
-    }
+    internal void FocusToggle() => SidebarToggleButton.Focus();
+    internal void FocusSettings() => SettingsNavigationItem.Focus();
+    internal void ShowProjectName(string? name) => Wordmark.Text = name ?? AppIdentity.Name;
     internal void ApplyConfigurationLock(bool editable, LockReason? reason)
     {
         NewConfigurationItem.IsEnabled = editable;
@@ -58,8 +50,7 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
     internal event EventHandler<MainSection>? SectionRequested;
     internal event EventHandler<RailItem>? NewConfigurationRequested;
     internal event EventHandler? UpdateRequested;
-    internal event EventHandler? SettingsBackRequested;
-    internal event EventHandler<int>? SettingsSectionRequested;
+    internal event EventHandler? SettingsRequested;
 
     private IEnumerable<RailItem> Items =>
         [NewConfigurationItem, ScheduleNavigationItem, HomeNavigationItem, UpdateNavigationItem,
@@ -71,34 +62,13 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         ConfigurationList.MarkHome(section == MainSection.Home);
         ScheduleNavigationItem.IsActive = section == MainSection.Schedule;
         HelpNavigationItem.IsActive = section == MainSection.Help;
-        var settings = section == MainSection.Settings;
-        SettingsNavigationItem.IsActive = settings;
-        var workspace = settings ? Visibility.Collapsed : Visibility.Visible;
-        SidebarHeader.Visibility = workspace;
-        WorkspaceActions.Visibility = workspace;
-        WorkspaceConfigurations.Visibility = workspace;
-        WorkspaceUtilities.Visibility = workspace;
-        SettingsNavigation.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    internal void ShowSettingsSections(IReadOnlyList<SettingsSectionModel> sections)
+    internal void ShowConfigurations(IReadOnlyList<TaskConfiguration> configurations, Guid? active, SchedulePreview? schedule)
     {
-        SectionNavigation.ItemsSource = sections;
-        MarkSettingsSection(0);
-    }
-
-    internal void MarkSettingsSection(int index)
-    {
-        _followingSettingsScroll = true;
-        SectionNavigation.SelectedIndex = index;
-        _followingSettingsScroll = false;
-    }
-
-    internal void ShowConfigurations(ProjectPlanModule? project, SchedulePreview? schedule)
-    {
-        ConfigurationList.ShowConfigurations(project?.Configurations ?? [], project?.ActiveConfigurationId, schedule);
+        ConfigurationList.ShowConfigurations(configurations, active, schedule);
         RefreshConfigurationVisibility();
-        ShowConfigurationName(project?.Configurations.FirstOrDefault(c => c.Id == project.ActiveConfigurationId)?.Name);
+        ShowConfigurationName(configurations.FirstOrDefault(c => c.Id == active)?.Name);
     }
 
     private void ShowConfigurationName(string? name)
@@ -121,7 +91,7 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
             label += "，运行中";
         }
         SetItemName(HomeNavigationItem, label);
-        HomeNavigationItem.ToolTip = label;
+        HomeNavigationItem.ToolTip = IsCollapsed ? label : null;
     }
 
     internal void ShowNextRun(string? text)
@@ -129,7 +99,7 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         ScheduleNextRunText.Text = text ?? string.Empty;
         var name = string.IsNullOrEmpty(text) ? "定时" : $"定时，下次运行 {text}";
         SetItemName(ScheduleNavigationItem, name);
-        ScheduleNavigationItem.ToolTip = name;
+        ScheduleNavigationItem.ToolTip = IsCollapsed ? name : null;
     }
 
     internal void ShowUpdate(UpdateMarker marker)
@@ -146,14 +116,13 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         };
         UpdateNavigationText.Text = text;
         RefreshCompactUpdateMarker();
-        var tip = marker switch {
+        var description = marker switch {
             UpdateMarker.Checking => "正在检查更新…",
             UpdateMarker.Available => "发现新版本",
             UpdateMarker.Downloading => "正在下载更新…",
             _ => "软件更新"
         };
-        UpdateNavigationItem.ToolTip = tip;
-        SetItemName(UpdateNavigationItem, $"更新，{tip}");
+        SetItemName(UpdateNavigationItem, $"更新，{description}");
     }
 
     private void ApplyCollapsed()
@@ -161,11 +130,13 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
         foreach (var item in Items) {
             item.IsCompact = IsCollapsed;
         }
+        NewConfigurationItem.ToolTip = IsCollapsed ? "新建配置" : null;
+        ScheduleNavigationItem.ToolTip = IsCollapsed ? AutomationProperties.GetName(ScheduleNavigationItem) : null;
+        UpdateConfigurationTooltip();
         var action = IsCollapsed ? "展开侧栏 (Ctrl+B)" : "收起侧栏 (Ctrl+B)";
         SidebarToggleIcon.Symbol = IsCollapsed ? SymbolRegular.PanelLeftExpand24 : SymbolRegular.PanelLeftContract24;
         SidebarToggleButton.ToolTip = action;
-        SidebarToggleButton.HorizontalAlignment = IsCollapsed ? Alignment.Center : Alignment.Right;
-        SidebarToggleButton.Margin = IsCollapsed ? new Thickness() : new Thickness(0, 0, 4, 0);
+        SidebarItems.Margin = new Thickness(IsCollapsed ? 5 : 8, 0, IsCollapsed ? 5 : 8, 8);
         AutomationProperties.SetName(SidebarToggleButton, action);
         RefreshCompactUpdateMarker();
         RefreshConfigurationVisibility();
@@ -200,22 +171,7 @@ public partial class ShellSidebar : System.Windows.Controls.UserControl
 
     private void Update_Click(object sender, RoutedEventArgs e) => UpdateRequested?.Invoke(this, EventArgs.Empty);
 
-    private void SettingsBack_Click(object sender, RoutedEventArgs e) =>
-        SettingsBackRequested?.Invoke(this, EventArgs.Empty);
-
-    private void SettingsSection_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_followingSettingsScroll && SectionNavigation.SelectedIndex >= 0) {
-            SettingsSectionRequested?.Invoke(this, SectionNavigation.SelectedIndex);
-        }
-    }
-
-    private void SelectedSettingsSection_Click(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is ListBoxItem { IsSelected: true }) {
-            SettingsSectionRequested?.Invoke(this, SectionNavigation.SelectedIndex);
-        }
-    }
+    private void Settings_Click(object sender, RoutedEventArgs e) => SettingsRequested?.Invoke(this, EventArgs.Empty);
 
     private void SidebarToggle_Click(object sender, RoutedEventArgs e) => ToggleRequested?.Invoke(this, EventArgs.Empty);
 

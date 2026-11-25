@@ -11,7 +11,7 @@
             <views:RailItem.Style>
                 <Style TargetType="views:RailItem">
                     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-                    <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+                    <Setter Property="FontSize" Value="14" />
                 </Style>
             </views:RailItem.Style>
             <views:RailItem.Template>
@@ -40,11 +40,14 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="20" />
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="NameLabel" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                <TextBlock x:Name="NameLabel" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                           FontSize="{Binding FontSize, ElementName=SelectButton}"
+                           Foreground="{Binding Foreground, ElementName=SelectButton}" />
                 <StackPanel x:Name="RunningIndicator" Grid.Column="1" Margin="8,0,0,0"
                             Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                    <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{DynamicResource Brush.Success}" />
-                    <TextBlock Text="运行中" FontSize="12" Foreground="{DynamicResource Brush.Success.Foreground}" />
+                    <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"
+                             Fill="{DynamicResource Brush.Success}" />
+                    <TextBlock Text="运行中" FontSize="14" Foreground="{DynamicResource Brush.Success.Foreground}" />
                 </StackPanel>
                 <ui:SymbolIcon x:Name="ScheduleIndicator" Grid.Column="2" Symbol="Clock16" FontSize="13"
                                HorizontalAlignment="Right" VerticalAlignment="Center"
@@ -67,11 +70,11 @@
         </views:RailItem>
         <Button x:Name="MenuButton" Width="24" Height="24" Margin="0,0,4,0"
                 VerticalAlignment="Center" HorizontalAlignment="Right"
-                FocusVisualStyle="{StaticResource ControlFocusVisualStyle}"
-                Foreground="{DynamicResource Brush.Text.Muted}">
+                FocusVisualStyle="{StaticResource ControlFocusVisualStyle}">
             <Button.Style>
                 <Style TargetType="Button">
                     <Setter Property="Opacity" Value="0" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
                     <Setter Property="Template">
                         <Setter.Value>
                             <ControlTemplate TargetType="Button">
@@ -82,6 +85,7 @@
                                     <DataTrigger Binding="{Binding ContextMenu.IsOpen, RelativeSource={RelativeSource TemplatedParent}}"
                                                  Value="True">
                                         <Setter TargetName="MenuSurface" Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                                     </DataTrigger>
                                     <Trigger Property="IsMouseOver" Value="True">
                                         <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
@@ -108,13 +112,11 @@
                     </Style.Triggers>
                 </Style>
             </Button.Style>
-            <ui:SymbolIcon Symbol="MoreHorizontal16" FontSize="14" />
+            <ui:SymbolIcon Symbol="MoreHorizontal16" FontSize="14"
+                           Foreground="{Binding Foreground, ElementName=MenuButton}" />
         </Button>
-        <TextBox x:Name="NameEditor" Visibility="Collapsed" MinHeight="0" Padding="8,0"
-                 VerticalContentAlignment="Center" BorderThickness="1"
-                 Background="{DynamicResource Brush.Canvas}" Foreground="{DynamicResource Brush.Text.Primary}"
-                 BorderBrush="{DynamicResource Brush.Primary}" AutomationProperties.Name="配置名称" />
-        <Rectangle x:Name="DragPlaceholder" RadiusX="8" RadiusY="8" Visibility="Collapsed"
-                   Stroke="{DynamicResource Brush.Border}" StrokeDashArray="3,2" IsHitTestVisible="False" />
+        <TextBox x:Name="NameEditor" Visibility="Collapsed" Style="{StaticResource ConfigurationNameEditorStyle}"
+                 AutomationProperties.Name="配置名称" />
+        <Rectangle x:Name="DragPlaceholder" Style="{StaticResource ListReorderPlaceholderStyle}" Visibility="Collapsed" />
     </Grid>
 </UserControl>

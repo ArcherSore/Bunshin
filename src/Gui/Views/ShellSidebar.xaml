@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              xmlns:views="clr-namespace:Gui.Views"
+             xmlns:protocol="clr-namespace:Protocol;assembly=Protocol"
              AutomationProperties.Name="导航" FontSize="14">
     <UserControl.Resources>
         <!-- A 32 DIP row: icon, label and trailing content. Compact keeps only the icon. -->
@@ -69,39 +70,6 @@
             <Setter Property="Margin" Value="8,0,0,0" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
         </Style>
-        <Style x:Key="Sidebar.SettingsItem" TargetType="ListBoxItem">
-            <Setter Property="Height" Value="32" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="Margin" Value="0,0,0,2" />
-            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-            <Setter Property="ToolTip" Value="{Binding Definition.Title}" />
-            <Setter Property="AutomationProperties.Name" Value="{Binding Definition.Title}" />
-            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
-            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="SelectedSettingsSection_Click" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ListBoxItem">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="8" Padding="8,0">
-                            <ContentPresenter VerticalAlignment="Center"
-                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
-                             Value="True">
-                    <Setter Property="HorizontalContentAlignment" Value="Center" />
-                </DataTrigger>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
-                </Trigger>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
         <Style x:Key="Sidebar.ToggleButton" TargetType="Button">
             <Setter Property="Width" Value="28" />
             <Setter Property="Height" Value="28" />
@@ -125,20 +93,9 @@
             </Setter>
         </Style>
     </UserControl.Resources>
-    <Border x:Name="Frame" Background="{DynamicResource Brush.Surface.Subdued}"
-            BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,0,1,0">
-        <Border.Style>
-            <Style TargetType="Border">
-                <Setter Property="Width" Value="{x:Static views:ShellSidebar.ExpandedWidth}" />
-                <Style.Triggers>
-                    <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
-                                 Value="True">
-                        <Setter Property="Width" Value="{x:Static views:ShellSidebar.CompactWidth}" />
-                    </DataTrigger>
-                </Style.Triggers>
-            </Style>
-        </Border.Style>
-        <Grid Margin="8,0,8,8">
+    <Grid>
+        <Border x:Name="Frame" Background="{DynamicResource Brush.Surface.Subdued}" />
+        <Grid x:Name="SidebarItems" Margin="8,0,8,8">
             <Grid.RowDefinitions>
                 <RowDefinition Height="44" />
                 <RowDefinition Height="Auto" />
@@ -149,8 +106,13 @@
             <!-- Drags the window like the header beside it. -->
             <Grid x:Name="SidebarHeader" Grid.Row="0" Background="{DynamicResource Brush.Transparent}"
                   MouseLeftButtonDown="SidebarHeader_MouseLeftButtonDown">
-                <TextBlock x:Name="Wordmark" Text="Bunshin" Margin="8,0,0,0" VerticalAlignment="Center"
-                           HorizontalAlignment="Left" FontFamily="{StaticResource FontFamily.Wordmark}"
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="Wordmark" Text="{x:Static protocol:AppIdentity.Name}" Margin="8,0,8,0"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           FontFamily="{StaticResource FontFamily.Wordmark}"
                            FontSize="20" FontWeight="Normal" Foreground="{DynamicResource Brush.Text.Primary}"
                            IsHitTestVisible="False">
                     <TextBlock.Style>
@@ -164,15 +126,27 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <Button x:Name="SidebarToggleButton" HorizontalAlignment="Right"
-                        Style="{StaticResource Sidebar.ToggleButton}" Click="SidebarToggle_Click">
+                <Button x:Name="SidebarToggleButton" Click="SidebarToggle_Click">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource Sidebar.ToggleButton}">
+                            <Setter Property="Grid.Column" Value="1" />
+                            <Setter Property="Margin" Value="0,0,4,0" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
+                                             Value="True">
+                                    <Setter Property="Grid.Column" Value="0" />
+                                    <Setter Property="Margin" Value="0" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
                     <ui:SymbolIcon x:Name="SidebarToggleIcon" Symbol="PanelLeftContract24" FontSize="16" />
                 </Button>
             </Grid>
 
             <StackPanel x:Name="WorkspaceActions" Grid.Row="1" Margin="0,4,0,0">
                 <views:RailItem x:Name="NewConfigurationItem" Style="{StaticResource Sidebar.Item}" Margin="0,0,0,2"
-                                ToolTip="新建配置" AutomationProperties.Name="新建配置"
+                                AutomationProperties.Name="新建配置"
                                 PreviewMouseLeftButtonDown="NewConfiguration_PreviewMouseLeftButtonDown"
                                 Click="NewConfiguration_Click">
                     <StackPanel Orientation="Horizontal">
@@ -291,94 +265,43 @@
                     </Grid>
                 </views:RailItem>
                 <views:RailItem x:Name="HelpNavigationItem" Tag="Help" Style="{StaticResource Sidebar.Item}"
-                                ToolTip="帮助" AutomationProperties.Name="帮助"
+                                AutomationProperties.Name="帮助"
                                 Margin="0,0,0,2" Click="Navigation_Click">
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="QuestionCircle24" Style="{StaticResource Sidebar.Icon}" />
                         <TextBlock Text="帮助" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
                     </StackPanel>
                 </views:RailItem>
-                <views:RailItem x:Name="SettingsNavigationItem" Tag="Settings" Style="{StaticResource Sidebar.Item}"
-                                ToolTip="设置" AutomationProperties.Name="设置"
-                                Click="Navigation_Click">
+                <views:RailItem x:Name="SettingsNavigationItem" Style="{StaticResource Sidebar.Item}"
+                                AutomationProperties.Name="设置"
+                                Click="Settings_Click">
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="Settings24" Style="{StaticResource Sidebar.Icon}" />
                         <TextBlock Text="设置" Margin="12,0,0,0" Style="{StaticResource Sidebar.Label}" />
                     </StackPanel>
                 </views:RailItem>
             </StackPanel>
-
-            <Grid x:Name="SettingsNavigation" Grid.RowSpan="4" Visibility="Collapsed">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="44" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <StackPanel Orientation="Horizontal" Margin="4,0" Background="{DynamicResource Brush.Transparent}"
-                            MouseLeftButtonDown="SidebarHeader_MouseLeftButtonDown">
-                    <Button x:Name="SettingsBackButton" Style="{StaticResource Sidebar.ToggleButton}"
-                            ToolTip="返回" AutomationProperties.Name="返回" Click="SettingsBack_Click">
-                        <ui:SymbolIcon Symbol="ArrowLeft24" FontSize="16" />
-                    </Button>
-                    <TextBlock Text="设置" Margin="4,0,0,0" FontWeight="Medium" VerticalAlignment="Center"
-                               Foreground="{DynamicResource Brush.Text.Primary}" IsHitTestVisible="False">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
-                                                 Value="True">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-                <ListBox x:Name="SectionNavigation" Grid.Row="1" Margin="0,4,0,0"
-                         ItemContainerStyle="{StaticResource Sidebar.SettingsItem}" AutomationProperties.Name="设置分类"
-                         SelectionChanged="SettingsSection_SelectionChanged">
-                    <ListBox.Template>
-                        <ControlTemplate TargetType="ListBox">
-                            <ItemsPresenter />
-                        </ControlTemplate>
-                    </ListBox.Template>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Orientation="Horizontal">
-                                <ui:SymbolIcon Symbol="{Binding Definition.Icon}" Style="{StaticResource Sidebar.Icon}" />
-                                <TextBlock Text="{Binding Definition.Title}" Margin="12,0,0,0"
-                                           Foreground="{DynamicResource Brush.Text.Primary}" VerticalAlignment="Center">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                <Button Grid.Row="2" Margin="0,6,0,0" Click="SidebarToggle_Click"
-                        ToolTip="展开侧栏 (Ctrl+B)" AutomationProperties.Name="展开侧栏 (Ctrl+B)">
-                    <Button.Style>
-                        <Style TargetType="Button" BasedOn="{StaticResource Sidebar.ToggleButton}">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
-                                             Value="True">
-                                    <Setter Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Button.Style>
-                    <ui:SymbolIcon Symbol="PanelLeftExpand24" FontSize="16" />
-                </Button>
-            </Grid>
         </Grid>
-    </Border>
+        <Thumb x:Name="SidebarResizeHandle" Width="6" HorizontalAlignment="Right" Cursor="SizeWE"
+               Focusable="True" FocusVisualStyle="{StaticResource ControlFocusVisualStyle}"
+               AutomationProperties.Name="调整左侧栏宽度"
+               AutomationProperties.HelpText="拖动或使用左右方向键调整宽度">
+            <Thumb.Template>
+                <ControlTemplate TargetType="Thumb">
+                    <Grid Background="{DynamicResource Brush.Transparent}">
+                        <Border x:Name="ResizeLine" Width="1" HorizontalAlignment="Right"
+                                Background="{DynamicResource Brush.Rail.Border}" IsHitTestVisible="False" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ResizeLine" Property="Background" Value="{DynamicResource Brush.Border.Strong}" />
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="ResizeLine" Property="Background" Value="{DynamicResource Brush.Border.Strong}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
+    </Grid>
 </UserControl>

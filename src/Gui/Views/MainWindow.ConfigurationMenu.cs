@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using ProjectModel;
 using Symbol = Wpf.Ui.Controls.SymbolRegular;
 using WpfButton = System.Windows.Controls.Button;
 
@@ -9,13 +10,17 @@ namespace Gui.Views;
 public partial class MainWindow
 {
     private ConfigurationMenu? _configurationMenu;
+    private ConfigurationNameEditing _configurationNameEditing = null!;
+    private IReadOnlyList<Guid> _sidebarConfigurationOrder = [];
 
     private void InitializeConfigurationList()
     {
         var list = Sidebar.ConfigurationList;
-        TaskPlanEditor.CommitConfigurationName = list.CommitRename;
+        _sidebarConfigurationOrder = _settings.ReadSidebarConfigurationOrder();
+        _configurationNameEditing = new(this, TaskPlanEditor.RenameConfiguration);
+        TaskPlanEditor.CommitConfigurationName = _configurationNameEditing.Commit;
         list.CanEdit = TaskPlanEditor.CanChangeConfiguration;
-        list.SaveRename = TaskPlanEditor.RenameConfiguration;
+        list.NameEditing = _configurationNameEditing;
         list.ConfigurationRequested += (_, id) => {
             if (TaskPlanEditor.ActivateConfiguration(id)) {
                 DismissSidebarOverlay();
@@ -25,18 +30,42 @@ public partial class MainWindow
             }
         };
         list.MenuRequested += (_, request) => OpenConfigurationMenu(request.Id, request.Anchor);
-        list.MoveRequested += (_, request) => {
-            if (TaskPlanEditor.MoveConfiguration(request.Id, request.Index) && ScheduleView.IsVisible) {
-                ScheduleView.Refresh();
-            }
-        };
+        list.MoveRequested += (_, request) => MoveSidebarConfiguration(request.Id, request.Index);
         Sidebar.NewConfigurationRequested += (_, anchor) => OpenNewConfigurationMenu(anchor);
         Header.CanEditConfiguration = TaskPlanEditor.CanChangeConfiguration;
+        Header.ConfigurationRenameRequested += (_, _) => {
+            if (TaskPlanEditor.CanChangeConfiguration() && _projectPlan is { } project) {
+                _configurationNameEditing.Begin(project.ActiveConfigurationId, Header.ConfigurationNameInput, ActiveConfigurationName);
+            }
+        };
         Header.ConfigurationMenuRequested += (_, anchor) => {
             if (_projectPlan is { } project) {
                 OpenConfigurationMenu(project.ActiveConfigurationId, anchor);
             }
         };
+    }
+
+    private IReadOnlyList<TaskConfiguration> SidebarConfigurations(ProjectPlanModule project)
+    {
+        if (_sidebarConfigurationOrder.Count == 0) return project.Configurations;
+        var positions = _sidebarConfigurationOrder.Distinct().Select((id, index) => (id, index))
+            .ToDictionary(position => position.id, position => position.index);
+        return project.Configurations.OrderBy(configuration => positions.GetValueOrDefault(configuration.Id, int.MaxValue))
+            .ToArray();
+    }
+
+    internal void MoveSidebarConfiguration(Guid id, int index)
+    {
+        if (_projectPlan is not { } project || !TaskPlanEditor.CanChangeConfiguration()) return;
+        var order = SidebarConfigurations(project).Select(configuration => configuration.Id).ToList();
+        var previous = order.IndexOf(id);
+        if (previous < 0 || index < 0 || index >= order.Count || previous == index) return;
+        order.RemoveAt(previous);
+        order.Insert(index, id);
+        if (_settings.TrySaveSidebarConfigurationOrder(order)) {
+            _sidebarConfigurationOrder = order;
+            RefreshSidebarSchedule();
+        }
     }
 
     private void OpenNewConfigurationMenu(WpfButton anchor)
@@ -138,6 +167,9 @@ public partial class MainWindow
 
     private void ApplyConfigurationLockToShell(bool editable, LockReason? reason)
     {
+        if (!editable) {
+            _configurationNameEditing.Cancel();
+        }
         if (!editable && _configurationMenu is { } menu) {
             menu.IsOpen = false;
         }

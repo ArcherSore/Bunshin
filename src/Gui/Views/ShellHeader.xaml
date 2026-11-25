@@ -55,21 +55,39 @@
                             </StackPanel>
                         </Button>
                     </StackPanel>
-                    <Button x:Name="ConfigurationMenuButton" Width="Auto" MaxWidth="400" Margin="12,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True"
-                            Padding="8,0" Click="ConfigurationMenu_Click" Visibility="Collapsed"
-                            PreviewMouseLeftButtonDown="ConfigurationMenu_PreviewMouseLeftButtonDown"
-                            Foreground="{DynamicResource Brush.Text.Primary}">
+                    <DockPanel x:Name="ConfigurationTitleActions" Height="32" MaxWidth="400" Margin="12,0,0,0"
+                               HorizontalAlignment="Left" Visibility="Collapsed">
+                        <Button x:Name="ConfigurationMenuButton" DockPanel.Dock="Right" Margin="2,0,0,0" Cursor="Hand"
+                                WindowChrome.IsHitTestVisibleInChrome="True" Click="ConfigurationMenu_Click"
+                                PreviewMouseLeftButtonDown="ConfigurationAction_PreviewMouseLeftButtonDown"
+                                ToolTip="更多配置操作" AutomationProperties.Name="更多配置操作">
+                            <Path Data="M1,1 L4.5,4.5 L8,1" StrokeThickness="1.2" StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                  Stroke="{Binding Foreground, ElementName=ConfigurationMenuButton}" />
+                        </Button>
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="ConfigurationTitle" TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center" />
-                            <ui:SymbolIcon Grid.Column="1" Symbol="ChevronDown16" FontSize="12" Margin="6,0,0,0"
-                                           VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
+                            <Button x:Name="ConfigurationNameButton" Width="Auto" Height="32" Padding="8,0" Cursor="Hand"
+                                    ToolTip="重命名配置"
+                                    WindowChrome.IsHitTestVisibleInChrome="True" Click="ConfigurationName_Click"
+                                    PreviewMouseLeftButtonDown="ConfigurationAction_PreviewMouseLeftButtonDown"
+                                    Foreground="{DynamicResource Brush.Text.Primary}">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Visibility, ElementName=ConfigurationNameEditor}" Value="Visible">
+                                                <Setter Property="Visibility" Value="Hidden" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                                <TextBlock x:Name="ConfigurationTitle" MaxWidth="354" FontSize="14"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </Button>
+                            <TextBox x:Name="ConfigurationNameEditor" MinWidth="140" Visibility="Collapsed"
+                                     WindowChrome.IsHitTestVisibleInChrome="True"
+                                     Style="{StaticResource ConfigurationNameEditorStyle}" AutomationProperties.Name="配置名称" />
                         </Grid>
-                    </Button>
+                    </DockPanel>
                 </Grid>
             </ui:TitleBar.Header>
             <ui:TitleBar.TrailingContent>

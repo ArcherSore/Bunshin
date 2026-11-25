@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Gui.ChildSession;
 using Gui.Worker;
+using Protocol;
 using Shape = System.Windows.Shapes.Shape;
 using WpfControl = System.Windows.Controls.Control;
 
@@ -18,11 +19,10 @@ public partial class MainWindow
         RuntimeSidebar.RetryEnvironmentButton.Click += RetryRuntimeHeaderButton_Click;
         RuntimeSidebar.RecoverEnvironmentButton.Click += RecoverEnvironmentButton_Click;
         RuntimeSidebar.DesktopViewButton.Click += DesktopViewButton_Click;
-        RuntimeSidebar.OpenLogsMenuItem.Click += OpenLogsMenuItem_Click;
         RuntimeSidebar.EndEnvironmentMenuItem.Click += EndEnvironmentMenuItem_Click;
-        RuntimeSidebar.AutoSessionMenuItem.Click += AutoSessionMenuItem_Click;
         RuntimeSidebar.ClearActivityButton.Click += ClearActivity_Click;
         RuntimeSidebar.RuntimeSchedulePageButton.Click += (_, _) => SwitchSection(MainSection.Schedule);
+        RuntimeSidebar.NextRunRow.Click += (_, _) => SwitchSection(MainSection.Schedule);
         RuntimeSidebar.SchedulePolicyToggleRequested += ScheduleView.SetPolicyEnabled;
         RuntimeSidebar.RunProgressSizeChanged += (_, _) => DrawRunProgressBar();
     }
@@ -34,11 +34,13 @@ public partial class MainWindow
         var action = state.Action;
         RuntimeSidebar.RetryEnvironmentButton.Visibility = Visible(action is RuntimeAction.Retry);
         RuntimeSidebar.RetryEnvironmentButton.IsEnabled = action is RuntimeAction.Retry { Enabled: true };
-        Explain(RuntimeSidebar.RetryEnvironmentButton, (action as RuntimeAction.Retry)?.Blocker);
-        if (action is RuntimeAction.Retry { Target: var retryTarget }) {
+        if (action is RuntimeAction.Retry { Target: var retryTarget, Blocker: var retryBlocker }) {
             var retryText = retryTarget == RetryTarget.Prepare ? "重试准备运行环境" : "重试开始任务";
             RuntimeSidebar.RetryEnvironmentText.Text = retryText;
             AutomationProperties.SetName(RuntimeSidebar.RetryEnvironmentButton, retryText);
+            var help = retryBlocker is { } reason ? StartBlockerText(reason) : null;
+            RuntimeSidebar.RetryEnvironmentButton.ToolTip = help;
+            AutomationProperties.SetHelpText(RuntimeSidebar.RetryEnvironmentButton, help ?? string.Empty);
         }
         RuntimeSidebar.RecoverEnvironmentButton.Visibility = Visible(action is RuntimeAction.Recover);
         RuntimeSidebar.RecoverEnvironmentButton.IsEnabled = action is RuntimeAction.Recover { Enabled: true };
@@ -72,19 +74,10 @@ public partial class MainWindow
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
 
-        // A blocked Retry says why on hover and to screen readers.
-        static void Explain(FrameworkElement button, StartBlocker? blocker)
-        {
-            var reason = blocker is { } value ? StartBlockerText(value) : null;
-            button.ToolTip = reason;
-            AutomationProperties.SetHelpText(button, reason ?? string.Empty);
-        }
     }
 
     private void ApplyPanelSummary(RuntimeControlState state, RunProgressView? progress)
     {
-        var running = state.Desktop.Status is DesktopStatus.Background or DesktopStatus.Viewing
-            or DesktopStatus.Interactive;
         var (status, tone) = state.Action switch {
             RuntimeAction.Stop => ("运行中", "Brush.Success"),
             RuntimeAction.Recover => ("故障", "Brush.Error"),
@@ -119,12 +112,7 @@ public partial class MainWindow
         RuntimeSidebar.DesktopViewText.Text = state.Desktop.Action == DesktopAction.Hide ? "隐藏窗口" : "显示窗口";
         RuntimeSidebar.DesktopViewButton.ToolTip = state.Desktop.Action == DesktopAction.Hide
             ? "隐藏窗口，分身和任务继续运行" : "显示分身窗口，默认只读";
-        RuntimeSidebar.StartSessionMenuItem.Visibility = running ? Visibility.Collapsed : Visibility.Visible;
-        RuntimeSidebar.StartSessionMenuItem.IsEnabled = state.Action is RuntimeAction.Prepare { Enabled: true };
         RuntimeSidebar.RuntimeStatusPill.ToolTip = state.Desktop.Status == DesktopStatus.Connecting ? PreparationStage() : null;
-        RuntimeSidebar.EndEnvironmentMenuItem.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-        RuntimeSidebar.SessionMenuSeparator.Visibility = RuntimeSidebar.StartSessionMenuItem.Visibility == Visibility.Visible || running
-            ? Visibility.Visible : Visibility.Collapsed;
         RuntimeSidebar.RunSummaryCard.Visibility = progress is not null || state.Action is RuntimeAction.Recover
             ? Visibility.Visible : Visibility.Collapsed;
         if (progress is null || state.Action is RuntimeAction.Recover) {
@@ -136,25 +124,37 @@ public partial class MainWindow
             }
             return;
         }
-        RuntimeSidebar.RunSummaryCard.SetResourceReference(Border.BackgroundProperty,
-            progress.Active ? "Brush.Transparent"
-                : progress.Failed > 0 ? "Brush.RunSummary.FailureSurface" : "Brush.Surface.Subdued");
-        RuntimeSidebar.RunSummaryCard.SetResourceReference(Border.BorderBrushProperty,
-            progress.Active ? "Brush.Transparent"
-                : progress.Failed > 0 ? "Brush.RunSummary.FailureBorder" : "Brush.Border.Subtle");
+        var failed = progress.State == RunState.Failed || progress.Failed > 0;
+        var succeeded = progress.State == RunState.Succeeded && !failed && !progress.WasStopped && progress.NotRun == 0;
+        RuntimeSidebar.RunSummaryCard.SetResourceReference(Border.BackgroundProperty, progress.Active
+            ? "Brush.Transparent" : failed ? "Brush.RunSummary.FailureSurface" : "Brush.Surface.Subdued");
+        RuntimeSidebar.RunSummaryCard.SetResourceReference(Border.BorderBrushProperty, progress.Active
+            ? "Brush.Transparent" : failed ? "Brush.RunSummary.FailureBorder" : "Brush.Border.Subtle");
         if (state.Action is RuntimeAction.Stop) {
             RuntimeSidebar.RuntimeStatusDetail.Visibility = Visibility.Collapsed;
         }
-        RuntimeSidebar.RuntimeStatusTitle.Text = progress.Current?.TaskLabel
-            ?? progress.Items.FirstOrDefault(item => item.State == PlanItemProgress.Failed)?.TaskLabel
-            ?? (progress.Stopped > 0 ? "任务已停止" : $"{progress.Succeeded} 项全部成功");
-        RuntimeSidebar.RunProgressCaption.Text = progress.Active
-            ? $"{(progress.CurrentIndex ?? 0) + 1} / {progress.Total}"
-            : progress.Failed == 0 && progress.Stopped == 0 && progress.NotRun == 0
-                ? $"{progress.EndedAtUtc?.ToLocalTime():HH:mm} 完成"
+        RuntimeSidebar.RunProgressCaptionColumn.Width = progress.Active ? GridLength.Auto : new GridLength(1.5, GridUnitType.Star);
+        RuntimeSidebar.RunProgressCaption.FontSize = progress.Active ? 14 : 12;
+        if (progress.Active) {
+            if (progress.CurrentIndex is { } index) {
+                RuntimeSidebar.RuntimeStatusTitle.Text = progress.Items[index].TaskLabel;
+                RuntimeSidebar.RunProgressCaption.Text = $"{index + 1} / {progress.Total}";
+                RuntimeSidebar.RunProgressCaption.ToolTip = $"第 {index + 1} 项 · {RunProgress.Caption(progress)}";
+            } else {
+                RuntimeSidebar.RunProgressCaption.Text = string.Empty;
+                RuntimeSidebar.RunProgressCaption.ToolTip = null;
+            }
+        } else {
+            RuntimeSidebar.RuntimeStatusTitle.Text = succeeded ? $"{progress.Succeeded} 项全部成功"
+                : failed ? progress.Items.FirstOrDefault(item => item.State == PlanItemProgress.Failed)?.TaskLabel ?? "任务失败"
+                : "上次运行";
+            RuntimeSidebar.RunProgressCaption.Text = succeeded
+                ? progress.EndedAtUtc?.ToLocalTime().ToString("HH:mm 完成") ?? "完成"
                 : RunProgress.Caption(progress).Replace("上次运行：", "");
-        RuntimeSidebar.RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active ? "Brush.Text.Muted"
-            : progress.Failed > 0 ? "Brush.Error.Foreground" : "Brush.Success.Foreground");
+            RuntimeSidebar.RunProgressCaption.ToolTip = null;
+        }
+        RuntimeSidebar.RunProgressCaption.SetResourceReference(TextBlock.ForegroundProperty, progress.Active
+            ? "Brush.Text.Muted" : failed ? "Brush.Error.Foreground" : succeeded ? "Brush.Success.Foreground" : "Brush.Text.Muted");
     }
 
     private static string StartBlockerText(StartBlocker blocker) => blocker switch {
@@ -177,11 +177,9 @@ public partial class MainWindow
     {
         RuntimeSidebar.DesktopViewButton.IsEnabled = desktop.Enabled;
         if (desktop.Status == DesktopStatus.Interactive) {
-            RuntimeSidebar.DesktopViewButton.SetResourceReference(WpfControl.BackgroundProperty, "Brush.Warning.Surface");
             RuntimeSidebar.DesktopViewButton.SetResourceReference(WpfControl.ForegroundProperty, "Brush.Warning.Foreground");
         } else {
-            RuntimeSidebar.DesktopViewButton.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
-            RuntimeSidebar.DesktopViewButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
+            RuntimeSidebar.DesktopViewButton.ClearValue(WpfControl.ForegroundProperty);
         }
         AutomationProperties.SetName(RuntimeSidebar.DesktopViewButton,
             desktop.Action == DesktopAction.Hide ? "隐藏窗口" : "显示窗口");
@@ -189,10 +187,14 @@ public partial class MainWindow
 
     private void ApplyMoreMenu(RuntimeControlState state)
     {
+        var showClose = state.Desktop.Status is DesktopStatus.Background or DesktopStatus.Viewing
+            or DesktopStatus.Interactive or DesktopStatus.Ending || state.Action is RuntimeAction.Recover;
+        RuntimeSidebar.StartSessionMenuItem.Visibility = showClose ? Visibility.Collapsed : Visibility.Visible;
+        RuntimeSidebar.StartSessionMenuItem.IsEnabled = state.Action is RuntimeAction.Prepare { Enabled: true };
+        RuntimeSidebar.EndEnvironmentMenuItem.Visibility = showClose ? Visibility.Visible : Visibility.Collapsed;
         var endBlocker = state.Action is RuntimeAction.Stop ? "请先停止任务" : EndEnvironmentBlocker(state);
         RuntimeSidebar.EndEnvironmentMenuItem.IsEnabled = endBlocker is null;
-        RuntimeSidebar.EndEnvironmentMenuItem.InputGestureText = endBlocker ?? string.Empty;
-        RuntimeSidebar.EndEnvironmentMenuItem.Tag = endBlocker ?? "注销分身，游戏随之关闭";
+        RuntimeSidebar.EndEnvironmentMenuItem.ToolTip = endBlocker ?? "注销分身，游戏随之关闭";
     }
 
     private RunProgressView? CurrentRunProgress => _projectPlan is { } project
@@ -269,7 +271,6 @@ public partial class MainWindow
         var shown = progress is not null;
         RuntimeSidebar.RunProgressPanel.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         if (progress is not null) {
-            RuntimeSidebar.RunProgressCaption.Text = RunProgress.Caption(progress);
             ApplyRunElapsed(progress);
             AutomationProperties.SetName(RuntimeSidebar.RunProgressBar, RunProgress.AccessibleCaption(progress));
         }
@@ -298,7 +299,7 @@ public partial class MainWindow
         ? $"总用时 {ElapsedText(progress.StartedAtUtc, null)}"
         : $"用时 {ElapsedText(progress.StartedAtUtc, progress.EndedAtUtc)}";
 
-    // Fill covers finished items only; the running item is marked by its position, never by an invented percentage.
+    // Fill covers finished items only. A stopped item gets a tick at its plan position.
     private void DrawRunProgressBar()
     {
         RuntimeSidebar.RunProgressBar.Children.Clear();
@@ -310,21 +311,24 @@ public partial class MainWindow
         void Add(double left, double size, string brush)
         {
             var bar = new System.Windows.Shapes.Rectangle {
-                Width = Math.Max(0, size), Height = 3
+                Width = size, Height = 3, RadiusX = 1.5, RadiusY = 1.5
             };
             bar.SetResourceReference(Shape.FillProperty, brush);
             Canvas.SetLeft(bar, left);
             RuntimeSidebar.RunProgressBar.Children.Add(bar);
         }
-        for (var item = 0; item < progress.Total; item++) {
-            var brush = progress.Items[item].State switch {
-                PlanItemProgress.Succeeded => progress.Active ? "Brush.Primary" : "Brush.Success",
-                PlanItemProgress.Failed => "Brush.Error",
-                PlanItemProgress.Stopped => "Brush.Border.Strong",
-                _ => null
-            };
-            if (brush is not null) {
-                Add(segment * item, segment, brush);
+        for (var item = 0; item < progress.Total;) {
+            var state = progress.Items[item].State;
+            var first = item++;
+            if (state == PlanItemProgress.Stopped) {
+                var tick = Math.Min(segment, 2);
+                Add(segment * first + (segment - tick) / 2, tick, "Brush.Border.Strong");
+            } else if (state is PlanItemProgress.Succeeded or PlanItemProgress.Failed) {
+                while (item < progress.Total && progress.Items[item].State == state) {
+                    item++;
+                }
+                var brush = state == PlanItemProgress.Failed ? "Brush.Error" : progress.Active ? "Brush.Primary" : "Brush.Success";
+                Add(segment * first, segment * (item - first), brush);
             }
         }
         RuntimeSidebar.RunProgressBar.Clip = new RectangleGeometry(new Rect(0, 0, width, 3), 1.5, 1.5);

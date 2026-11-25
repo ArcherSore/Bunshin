@@ -10,7 +10,6 @@ using ProjectModel;
 using Protocol;
 using Gui.Views;
 using Gui.Worker;
-using WpfButton = System.Windows.Controls.Button;
 
 namespace Gui.Infrastructure;
 
@@ -58,12 +57,9 @@ internal static partial class SelfTestRunner
             WaitForOnboardingStep(window, 1, "配置自动化任务");
             ClickOnboarding(window, "OnboardingNext");
             WaitForOnboardingStep(window, 2, "查看说明并设置参数");
-            var info = ConfigurationDescendants(Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel"))
-                .OfType<WpfButton>().Single(button =>
-                    AutomationProperties.GetName(button) == "查看 Real task 的任务描述");
-            Require(info.IsVisible && (bool)typeof(MainWindow).GetMethod("PositionOnboardingPulse",
-                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!,
-                "说明步骤必须显示信息按钮且可定位脉冲，不能因按钮隐藏而静默跳过。");
+            var description = ConfigurationDescendants(Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel"))
+                .OfType<FlowDocumentScrollViewer>().Single();
+            Require(description.IsVisible, "说明步骤必须在展开的任务卡中显示说明。");
             ClickOnboarding(window, "DesktopViewButton");
             ClickOnboarding(window, "UpdateNavigationItem");
             if (((UIElement)window.FindName("UpdateOverlay")).Visibility != Visibility.Collapsed) {
@@ -92,8 +88,6 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "OnboardingNext");
             WaitForOnboardingStep(window, 3, "启动自动化");
             Require(!window.RuntimeSidebar.IsVisible, "运行步骤应遵循用户收起运行面板的偏好。");
-            Require(info.ReadLocalValue(UIElement.VisibilityProperty) == DependencyProperty.UnsetValue,
-                "离开说明步骤后必须恢复信息按钮的正常交互显示规则。");
             ClickOnboarding(window, "OnboardingNext");
             WaitForOnboardingStep(window, 4, "观看桌面分身");
             Require(window.RuntimeSidebar.DesktopViewButton.IsVisible, "显示窗口步骤应临时展开运行面板和桌面分身区块。");

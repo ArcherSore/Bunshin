@@ -37,7 +37,7 @@
                            Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
             </Grid>
         </ControlTemplate>
-        <Style x:Key="Plan.HeaderAction" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+        <Style x:Key="Plan.HeaderAction" TargetType="Button" BasedOn="{StaticResource PressScaleButtonStyle}">
             <Setter Property="Height" Value="32" />
             <Setter Property="MinHeight" Value="0" />
             <Setter Property="Padding" Value="12,0" />
@@ -49,11 +49,40 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="8"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter x:Name="Label" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                        <Grid Background="{DynamicResource Brush.Transparent}">
+                            <Border x:Name="RestFill" Background="{TemplateBinding Background}" CornerRadius="8" />
+                            <Border x:Name="HoverFill" Background="{DynamicResource Brush.Plan.Button.Hover}"
+                                    CornerRadius="8" Opacity="0" IsHitTestVisible="False" />
+                            <ContentPresenter x:Name="Label" Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Grid>
                         <ControlTemplate.Triggers>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                    <Condition Property="IsEnabled" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <MultiTrigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="HoverFill" Storyboard.TargetProperty="Opacity"
+                                                             To="1" Duration="0:0:0.15" />
+                                            <DoubleAnimation Storyboard.TargetName="RestFill" Storyboard.TargetProperty="Opacity"
+                                                             To="0" Duration="0:0:0.15" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </MultiTrigger.EnterActions>
+                                <MultiTrigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="HoverFill" Storyboard.TargetProperty="Opacity"
+                                                             To="0" Duration="0:0:0.15" />
+                                            <DoubleAnimation Storyboard.TargetName="RestFill" Storyboard.TargetProperty="Opacity"
+                                                             To="1" Duration="0:0:0.15" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </MultiTrigger.ExitActions>
+                            </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Label" Property="Opacity" Value="{StaticResource Opacity.Disabled}" />
                             </Trigger>
@@ -62,9 +91,6 @@
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Plan.Current}" />
-                </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
                     <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
                 </Trigger>
@@ -98,6 +124,21 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+        <Style x:Key="Plan.RemoveAction" TargetType="Button" BasedOn="{StaticResource DialogButtonStyle}">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Style.Triggers>
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsMouseOver" Value="True" />
+                        <Condition Property="IsEnabled" Value="True" />
+                    </MultiTrigger.Conditions>
+                    <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
+                </MultiTrigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="Plan.CatalogItem" TargetType="Button" BasedOn="{StaticResource PlanHeaderButtonStyle}">
             <Setter Property="MinHeight" Value="32" />
@@ -207,35 +248,35 @@
 
         <Grid x:Name="TaskWorkspacePanel" Grid.Row="2" Margin="0,8,0,0"
               SizeChanged="TaskWorkspacePanel_SizeChanged" Visibility="Collapsed">
-            <ScrollViewer x:Name="PlanScroll" Template="{StaticResource Scroll.Faded}"
-                          VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
-                <StackPanel Margin="0,0,0,48">
-                    <StackPanel x:Name="PlanItemsPanel"
-                                AllowDrop="True"
-                                DragLeave="PlanItemsPanel_DragLeave"
-                                DragOver="PlanItemsPanel_DragOver"
-                                Drop="PlanItemsPanel_Drop" />
+            <Grid x:Name="PlanViewport" Background="{DynamicResource Brush.Transparent}" AllowDrop="True"
+                  DragLeave="PlanViewport_DragLeave" DragOver="PlanViewport_DragOver" Drop="PlanViewport_Drop">
+                <ScrollViewer x:Name="PlanScroll" Template="{StaticResource Scroll.Faded}"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
+                    <StackPanel Margin="0,0,0,48">
+                        <StackPanel x:Name="PlanItemsPanel" Margin="0,2,0,0" />
 
-                    <StackPanel x:Name="EmptyPlanPanel" Margin="0,16,0,0">
-                        <TextBlock Text="执行计划为空" FontWeight="SemiBold" />
-                        <TextBlock x:Name="EmptyPlanText" Margin="0,4,0,0"
-                                   Style="{StaticResource SecondaryTextStyle}" />
-                        <Button x:Name="EmptyPlanAddButton" Margin="0,12,0,0" Height="32"
-                                Padding="12,0" HorizontalAlignment="Left"
-                                Style="{StaticResource SecondaryButtonStyle}"
-                                Click="TaskShelfHeaderButton_Click">
-                            <StackPanel Orientation="Horizontal">
-                                <ui:SymbolIcon Symbol="Add16" FontSize="15" Margin="0,0,6,0" />
-                                <TextBlock Text="添加任务" FontWeight="SemiBold"
-                                           VerticalAlignment="Center"
-                                           Foreground="{Binding Foreground,
-                                               RelativeSource={RelativeSource AncestorType=Button}}" />
-                            </StackPanel>
-                        </Button>
+                        <StackPanel x:Name="EmptyPlanPanel" Margin="0,16,0,0">
+                            <TextBlock Text="执行计划为空" FontWeight="SemiBold" />
+                            <TextBlock x:Name="EmptyPlanText" Margin="0,4,0,0"
+                                       Style="{StaticResource SecondaryTextStyle}" />
+                            <Button x:Name="EmptyPlanAddButton" Margin="0,12,0,0" Height="32"
+                                    Padding="12,0" HorizontalAlignment="Left"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Click="TaskShelfHeaderButton_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:SymbolIcon Symbol="Add16" FontSize="15" Margin="0,0,6,0" />
+                                    <TextBlock Text="添加任务" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"
+                                               Foreground="{Binding Foreground,
+                                                   RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
+                </ScrollViewer>
+                <views:ListReorderFeedback x:Name="PlanDragFeedback" />
+            </Grid>
             <Grid x:Name="RunItemsPanel" Visibility="Collapsed">
                 <ScrollViewer Template="{StaticResource Scroll.Faded}" VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
@@ -318,7 +359,7 @@
                                     <ui:SymbolIcon Symbol="Checkmark16" FontSize="13" Margin="0,0,4,0"
                                                    Foreground="{DynamicResource Brush.Primary}" />
                                     <TextBlock x:Name="AddedTasksText" FontSize="12"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                                               Foreground="{DynamicResource Brush.Success.Foreground}" />
                                 </StackPanel>
                             </Grid>
                         </DockPanel>

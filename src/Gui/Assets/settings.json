@@ -72,6 +72,15 @@
           "description": "使用 PIN 或 Windows Hello 的电脑可能需要账户密码；保存时不验证。",
           "buttonText": "保存或更新",
           "actionId": "childSession.credentials"
+        },
+        {
+          "id": "auto-start-desktop",
+          "type": "toggle",
+          "icon": "Power20",
+          "title": "打开程序时自动启动分身",
+          "description": "仅启动桌面分身，不自动开始任务。",
+          "settingKey": "application.autoSession",
+          "joinPrevious": true
         }
       ]
     },

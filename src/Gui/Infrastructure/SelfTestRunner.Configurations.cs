@@ -139,7 +139,6 @@ internal static partial class SelfTestRunner
                 || !((System.Windows.UIElement)window.TaskPlanEditor.FindName("PlanScroll")).IsEnabled
                 || !buttons.Single(button => NameOf(button).StartsWith("Real task，", StringComparison.Ordinal))
                     .IsEnabled
-                || buttons.Single(button => NameOf(button) == "拖动以调整顺序").IsEnabled
                 || buttons.Single(button => NameOf(button).StartsWith("从执行计划移除", StringComparison.Ordinal))
                     .IsEnabled
                 || editors.Length < 3 || editors.Any(editor => editor.IsEnabled) || !LockBadgeShown()) {
@@ -201,7 +200,8 @@ internal static partial class SelfTestRunner
     private static void ClickHome(Views.MainWindow window)
     {
         ClickConfigurationButton(window.Sidebar.Home);
-        PumpOnboarding();
+        PumpUntil(() => window.Sidebar.Home.IsActive && window.HomeView.IsVisible, "应返回首页并选中首页入口。");
+        window.UpdateLayout();
     }
 
     private static void CreateEmptyConfigurationFromSidebar(Views.MainWindow window)

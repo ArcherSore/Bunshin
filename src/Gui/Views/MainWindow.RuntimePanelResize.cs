@@ -9,14 +9,18 @@ namespace Gui.Views;
 
 public partial class MainWindow
 {
-    private const double MinimumRuntimeSidebarWidth = 340;
-    private const double MaximumRuntimeSidebarWidth = 540;
-    private const double RuntimeSidebarDragThreshold = 80;
+    private const double DefaultRuntimeSidebarWidth = 320;
+    private const double MinimumRuntimeSidebarWidth = 220;
+    private const double MaximumRuntimeSidebarWidth = 800;
+    private const double RuntimeSidebarDragThreshold = 40;
     private const double RuntimeSidebarKeyboardStep = 10;
 
     private double? _preferredRuntimeSidebarWidth;
     private double? _savedRuntimeSidebarWidth;
     private RuntimeSidebarDrag? _runtimeSidebarDrag;
+
+    private double RuntimeSidebarPreferredWidth =>
+        _runtimeSidebarDrag?.Width ?? _preferredRuntimeSidebarWidth ?? DefaultRuntimeSidebarWidth;
 
     private sealed class RuntimeSidebarDrag(double pointerOffset, double origin, double originWidth, bool collapsed)
     {
@@ -29,8 +33,8 @@ public partial class MainWindow
 
     private void UpdateRuntimePanelLayout()
     {
-        RuntimeSidebarVisibility(_section);
         UpdateSidebarMode(MainWindowContent.ActualWidth);
+        RuntimeSidebarVisibility(_section);
     }
 
     private void RuntimeSidebarVisibility(MainSection section)
@@ -41,16 +45,17 @@ public partial class MainWindow
         RuntimeSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         RuntimeSidebarSplitter.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
 
-        // Use the allotted space even if the columns' minimum sizes cause ActualWidth to overflow.
-        var homeWidth = LayoutInformation.GetLayoutSlot(HomeView).Width;
+        var navigationWidth = _sidebarOverlayMode ? ShellSidebar.CompactWidth : Sidebar.Width;
         var minimum = visible ? MinimumRuntimeSidebarWidth : 0;
-        var maximum = visible ? Math.Max(minimum, Math.Min(MaximumRuntimeSidebarWidth,
-            homeWidth - HomeView.ColumnDefinitions[0].MinWidth)) : 0;
+        var maximum = visible ? RuntimeSidebarCapacity(navigationWidth) : 0;
         RuntimeSidebarColumn.MinWidth = minimum;
         RuntimeSidebarColumn.MaxWidth = maximum;
-        var preferred = _runtimeSidebarDrag?.Width ?? _preferredRuntimeSidebarWidth ?? SidebarWidth(homeWidth);
-        RuntimeSidebarColumn.Width = new GridLength(Math.Clamp(preferred, minimum, maximum));
+        RuntimeSidebarColumn.Width = new GridLength(Math.Clamp(RuntimeSidebarPreferredWidth, minimum, maximum));
     }
+
+    private double RuntimeSidebarCapacity(double navigationWidth) =>
+        Math.Clamp(MainWindowContent.ActualWidth - navigationWidth - HomeView.ColumnDefinitions[0].MinWidth,
+            MinimumRuntimeSidebarWidth, MaximumRuntimeSidebarWidth);
 
     private void RuntimeSidebarSplitter_DragStarted(object sender, DragStartedEventArgs e)
     {
@@ -81,10 +86,10 @@ public partial class MainWindow
             return;
         }
 
-        var width = Math.Clamp(requestedWidth, RuntimeSidebarColumn.MinWidth, RuntimeSidebarColumn.MaxWidth);
-        if (width != RuntimeSidebarColumn.Width.Value) {
+        var width = Math.Clamp(requestedWidth, MinimumRuntimeSidebarWidth, RuntimeSidebarCapacity(ShellSidebar.CompactWidth));
+        if (width != (drag.Width ?? drag.OriginWidth)) {
             drag.Width = width;
-            RuntimeSidebarColumn.Width = new GridLength(width);
+            UpdateRuntimePanelLayout();
         }
     }
 
@@ -154,51 +159,52 @@ public partial class MainWindow
 
         var width = RuntimeSidebarColumn.Width.Value;
         var change = e.Key == Key.Left ? RuntimeSidebarKeyboardStep : -RuntimeSidebarKeyboardStep;
-        var adjusted = Math.Clamp(width + change, RuntimeSidebarColumn.MinWidth, RuntimeSidebarColumn.MaxWidth);
+        var adjusted = Math.Clamp(width + change, MinimumRuntimeSidebarWidth, RuntimeSidebarCapacity(ShellSidebar.CompactWidth));
         if (adjusted != width) {
             _preferredRuntimeSidebarWidth = adjusted;
-            RuntimeSidebarColumn.Width = new GridLength(adjusted);
+            UpdateRuntimePanelLayout();
         }
     }
 
     private void RuntimeSidebarSplitter_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
         SaveRuntimeSidebarWidth();
 
-    private string RuntimeSidebarWidthPath =>
-        Path.Combine(_applicationDirectory, "config", "runtime-sidebar-width.txt");
+    private const string RuntimeSidebarWidthFile = "runtime-sidebar-width.txt";
 
-    private double? LoadRuntimeSidebarWidth()
+    private double? LoadSidebarWidth(string fileName, string label)
     {
+        var path = Path.Combine(_applicationDirectory, "config", fileName);
         try {
-            if (!File.Exists(RuntimeSidebarWidthPath)) {
+            if (!File.Exists(path)) {
                 return null;
             }
-            var text = File.ReadAllText(RuntimeSidebarWidthPath).Trim();
+            var text = File.ReadAllText(path).Trim();
             if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var width)
                 || !double.IsFinite(width) || width <= 0) {
-                throw new InvalidDataException($"运行面板宽度必须为正数：{text}");
+                throw new InvalidDataException($"{label}宽度必须为正数：{text}");
             }
             return width;
         } catch (Exception exception) {
-            _logger.Warn("读取运行面板宽度失败，已使用默认宽度。", exception);
+            _logger.Warn($"读取{label}宽度失败，已使用默认宽度。", exception);
             return null;
         }
     }
 
-    private void SaveRuntimeSidebarWidth()
+    private void SaveRuntimeSidebarWidth() =>
+        SaveSidebarWidth(RuntimeSidebarWidthFile, "运行面板", _preferredRuntimeSidebarWidth, ref _savedRuntimeSidebarWidth);
+
+    private void SaveSidebarWidth(string fileName, string label, double? preferredWidth, ref double? savedWidth)
     {
-        if (_preferredRuntimeSidebarWidth is not { } width || width == _savedRuntimeSidebarWidth) {
+        if (preferredWidth is not { } width || width == savedWidth) {
             return;
         }
         try {
-            Directory.CreateDirectory(Path.GetDirectoryName(RuntimeSidebarWidthPath)!);
-            File.WriteAllText(RuntimeSidebarWidthPath, width.ToString("R", CultureInfo.InvariantCulture));
-            _savedRuntimeSidebarWidth = width;
+            var path = Path.Combine(_applicationDirectory, "config", fileName);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, width.ToString("R", CultureInfo.InvariantCulture));
+            savedWidth = width;
         } catch (Exception exception) {
-            _logger.Warn("保存运行面板宽度失败。", exception);
+            _logger.Warn($"保存{label}宽度失败。", exception);
         }
     }
-
-    internal static double SidebarWidth(double homeWidth) =>
-        Math.Clamp(Math.Round(homeWidth * 0.35), MinimumRuntimeSidebarWidth, MaximumRuntimeSidebarWidth);
 }

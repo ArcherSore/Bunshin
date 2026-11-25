@@ -161,7 +161,7 @@ internal static partial class SelfTestRunner
     {
         ClickOnboarding(window, "SettingsNavigationItem");
         var settings = Named<SettingsView>(window, "SettingsView");
-        var navigation = window.Sidebar.SectionNavigation;
+        var navigation = settings.SectionNavigation;
         navigation.SelectedIndex = navigation.Items.Count - 1;
         return settings;
     }

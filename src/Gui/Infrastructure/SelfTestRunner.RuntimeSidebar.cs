@@ -25,9 +25,9 @@ internal static partial class SelfTestRunner
             var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
             Require(!panel.IsVisible, "重启后应保持运行面板收起。");
             ClickOnboarding(window, "SettingsNavigationItem");
-            Require(!Named<FrameworkElement>(window, "RuntimePanelToggleButton").IsVisible,
-                "设置页应隐藏运行面板按钮。");
-            ClickOnboarding(window, "HomeNavigationItem");
+            Require(!Named<FrameworkElement>(window, "RuntimePanelToggleButton").IsEnabled,
+                "打开设置时应禁用背景的运行面板按钮。");
+            ClickOnboarding(window.SettingsView, "CloseSettingsButton");
             Require(!panel.IsVisible, "返回首页应保持运行面板收起。");
             ClickOnboarding(window, "RuntimePanelToggleButton");
             Require(panel.IsVisible, "同一个页眉按钮应重新展开运行面板。");
@@ -48,20 +48,14 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "ActivitySectionToggle");
             Require(!log.IsVisible && activity.IsVisible, "收起区块后应保留其展开入口。");
 
-            var grip = Named<Thumb>(window, "ActivitySectionGrip");
-            grip.RaiseEvent(new DragStartedEventArgs(0, 0) { RoutedEvent = Thumb.DragStartedEvent });
-            grip.RaiseEvent(new DragDeltaEventArgs(0, -Top(activity, panel)) { RoutedEvent = Thumb.DragDeltaEvent });
-            grip.RaiseEvent(new DragCompletedEventArgs(0, -Top(activity, panel), false) {
-                RoutedEvent = Thumb.DragCompletedEvent
-            });
-            PumpUntil(() => Top(activity, panel) < Top(desktop, panel), "拖动区块标题的手柄应改变显示顺序。");
+            Require(Top(desktop, panel) < Top(activity, panel), "折叠区块不得改变显示顺序。");
         });
         RunOnboardingScenario(logger, directory, (window, _) => {
             EndTour(window);
             var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
             var activity = Named<FrameworkElement>(window, "ActivitySectionToggle");
             var log = Named<FrameworkElement>(window, "HomeLogListBox");
-            Require(!log.IsVisible && Top(activity, panel) < Top(Named<FrameworkElement>(window, "RuntimeControlCard"), panel),
+            Require(!log.IsVisible && Top(Named<FrameworkElement>(window, "RuntimeControlCard"), panel) < Top(activity, panel),
                 "重启后应恢复区块顺序和折叠状态。");
             ClickOnboarding(window, "ActivitySectionToggle");
             Require(log.IsVisible, "用户应能再次展开运行动态。");
@@ -89,7 +83,7 @@ internal static partial class SelfTestRunner
             double? Saved() => File.Exists(preference) ? double.Parse(File.ReadAllText(preference),
                 System.Globalization.CultureInfo.InvariantCulture) : null;
             Require(Saved() is null && Math.Abs(column.Width.Value - Math.Min(
-                    MainWindow.SidebarWidth(LayoutInformation.GetLayoutSlot(home).Width),
+                    320,
                     column.MaxWidth)) < 1, "首次使用应保持默认侧栏宽度，且不写入偏好。");
 
             // Small screens start the sidebar at its minimum; widen it first so it can move both ways.
@@ -110,12 +104,13 @@ internal static partial class SelfTestRunner
             // Window resizing must clamp the displayed width without discarding the user's wider preference.
             Drag(-10000);
             var widest = console.ActualWidth;
-            Require(Math.Abs(widest - Math.Min(540, column.MaxWidth)) < 1,
+            Require(Math.Abs(widest - Math.Min(800, column.MaxWidth)) < 1,
                 "右侧栏应有最大宽度边界。");
             window.Width = 920;
             window.Height = 640;
             PumpOnboarding();
-            Require(home.ColumnDefinitions[0].ActualWidth >= 420 - PixelTolerance && console.ActualWidth < 540,
+            Require(home.ColumnDefinitions[0].ActualWidth >= 420 - PixelTolerance
+                && console.ActualWidth <= home.ActualWidth - 420 + PixelTolerance,
                 $"窄窗口应限制侧栏宽度并保留任务区最小宽度：任务区={home.ColumnDefinitions[0].ActualWidth}，"
                 + $"侧栏={console.ActualWidth}，主页={home.ActualWidth}，上界={column.MaxWidth}，窗口={window.ActualWidth}。");
             AssertLayout();
@@ -128,41 +123,44 @@ internal static partial class SelfTestRunner
             var search = Named<FrameworkElement>(window, "TaskSearchBox");
             var badgeBounds = badge.TransformToAncestor(shelf).TransformBounds(new Rect(badge.RenderSize));
             var searchBounds = search.TransformToAncestor(shelf).TransformBounds(new Rect(search.RenderSize));
-            Require(badgeBounds.Right <= searchBounds.Left + PixelTolerance
-                && searchBounds.Right <= shelf.ActualWidth + PixelTolerance,
-                "最窄任务区中可用任务标题、新增提示和搜索框不能重叠或溢出。");
+            var overlap = Rect.Intersect(badgeBounds, searchBounds);
+            Require((overlap.IsEmpty || overlap.Width <= PixelTolerance || overlap.Height <= PixelTolerance)
+                && new[] { badgeBounds, searchBounds }.All(bounds => bounds.Left >= -PixelTolerance
+                    && bounds.Top >= -PixelTolerance && bounds.Right <= shelf.ActualWidth + PixelTolerance
+                    && bounds.Bottom <= shelf.ActualHeight + PixelTolerance),
+                "最窄任务区中新增提示和搜索框不能重叠或溢出。");
             ClickOnboarding(window, "TaskShelfHeaderButton");
             ClickOnboarding(window, "SettingsNavigationItem");
-            Require(column.Width.Value == 0 && splitter.Visibility == Visibility.Collapsed,
-                "设置页应隐藏侧栏与分隔器。");
+            Require(console.IsVisible && splitter.IsVisible && !splitter.IsEnabled,
+                "设置应覆盖运行面板并禁用分隔器。");
             window.Width = 1440;
             PumpOnboarding();
-            ClickHome(window);
+            ClickOnboarding(window.SettingsView, "CloseSettingsButton");
             Require(Math.Abs(console.ActualWidth - widest) < 1, "返回首页且空间恢复后应恢复用户宽度。");
 
-            Drag(widest - 340 + 35);
-            Require(Math.Abs(console.ActualWidth - 340) < PixelTolerance, "运行面板应有最小宽度边界。");
+            Drag(widest - 220 + 20);
+            Require(Math.Abs(console.ActualWidth - 220) < PixelTolerance, "运行面板应有最小宽度边界。");
             AssertLayout();
 
             StartDrag();
-            MoveDrag(78);
-            Require(console.IsVisible && Math.Abs(console.ActualWidth - 340) < PixelTolerance,
+            MoveDrag(38);
+            Require(console.IsVisible && Math.Abs(console.ActualWidth - 220) < PixelTolerance,
                 "到达折叠阈值之前，应保持最小宽度。");
             MoveDrag(4);
             Require(!console.IsVisible && splitter.IsVisible, "越过折叠阈值后应隐藏面板并保留拖宽边缘。");
-            MoveDrag(-78);
+            MoveDrag(-38);
             Require(!console.IsVisible, "反向拖动未达到展开阈值时，应保持折叠。");
             MoveDrag(-4);
-            Require(console.IsVisible && Math.Abs(console.ActualWidth - 340) < PixelTolerance,
+            Require(console.IsVisible && Math.Abs(console.ActualWidth - 220) < PixelTolerance,
                 "在同一次拖动中反向越过阈值，应展开到最小宽度。");
             EndDrag();
 
             ClickOnboarding(window, "RuntimePanelToggleButton");
             Require(!console.IsVisible && splitter.IsVisible, "页眉收起面板后应保留拖宽边缘。");
-            Drag(-82);
-            Require(console.IsVisible && Math.Abs(console.ActualWidth - 340) < PixelTolerance,
+            Drag(-42);
+            Require(console.IsVisible && Math.Abs(console.ActualWidth - 220) < PixelTolerance,
                 "从右侧边缘向左拖动应展开页眉收起的面板。");
-            Drag(82);
+            Drag(42);
             Require(!console.IsVisible, "松手后应保留拖动折叠状态。");
             ClickOnboarding(window, "RuntimePanelToggleButton");
             Require(console.IsVisible, "页眉按钮应可展开拖动折叠的面板。");
@@ -173,7 +171,7 @@ internal static partial class SelfTestRunner
                 window.Height = 640;
                 PumpOnboarding();
                 ClickOnboarding(window, "SettingsNavigationItem");
-                ClickHome(window);
+                ClickOnboarding(window.SettingsView, "CloseSettingsButton");
                 Require(Math.Abs(console.ActualWidth - preferred) < 1,
                     "窗口缩放和首页/设置切换不应覆盖仍可容纳的用户宽度。");
                 AssertLayout();
@@ -193,7 +191,7 @@ internal static partial class SelfTestRunner
             KeyDown(System.Windows.Input.Key.Escape);
             EndDrag();
             ClickOnboarding(window, "SettingsNavigationItem");
-            ClickHome(window);
+            ClickOnboarding(window.SettingsView, "CloseSettingsButton");
             Require(Math.Abs(console.ActualWidth - preferred) < 1, "取消拖拽后应保留原宽度。");
 
             Drag(20);
@@ -256,11 +254,9 @@ internal static partial class SelfTestRunner
             ("restore", saved), ("restore-wide", "9999"), ("restore-narrow", "1"), ("restore-invalid", "宽")
         }) {
             RunOnboardingScenario(logger, Path.Combine(testDirectory, $"sidebar-{name}"), (window, directory) => {
-                var home = Named<Grid>(window, "HomeView");
                 var column = Named<ColumnDefinition>(window, "RuntimeSidebarColumn");
                 var expected = name == "restore-invalid"
-                    ? Math.Min(MainWindow.SidebarWidth(LayoutInformation.GetLayoutSlot(home).Width),
-                        column.MaxWidth)
+                    ? Math.Min(320, column.MaxWidth)
                     : Math.Clamp(double.Parse(content, System.Globalization.CultureInfo.InvariantCulture),
                         column.MinWidth, column.MaxWidth);
                 Require(Math.Abs(column.Width.Value - expected) < PixelTolerance

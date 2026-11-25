@@ -85,7 +85,8 @@ internal static partial class SelfTestRunner
                             && warning.Contains("第一班") && warning.Contains("点击打开窗口可取消"),
                             "主窗口在托盘时，提示应说明何时顶替、目标配置和取消入口。");
                         PumpUntil(DialogShown, "倒计时期间主窗口内应已备好倒计时对话框。");
-                        var dialogText = window.ForcedStartDialog.MessageText.Text;
+                        var dialogText = string.Concat(window.ForcedStartDialog.MessageText.Inlines
+                            .OfType<System.Windows.Documents.Run>().Select(run => run.Text));
                         Require(dialogText.Contains("第一班"), "倒计时对话框应指明即将启动的配置。");
                         if (scenario == "cancel") {
                             Require(countdowns is [{ ConfigurationName: "第一班" } countdown]

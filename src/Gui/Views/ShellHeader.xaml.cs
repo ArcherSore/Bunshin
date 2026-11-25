@@ -23,10 +23,17 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
 
     internal event EventHandler? OpenLogsRequested;
     internal event EventHandler? ScheduleStatusRequested;
+    internal event EventHandler? ConfigurationRenameRequested;
     internal event EventHandler<WpfButton>? ConfigurationMenuRequested;
     internal Func<bool> CanEditConfiguration { get; set; } = () => false;
 
-    internal void AllowConfigurationMenu(bool allowed) => ConfigurationMenuButton.IsEnabled = allowed;
+    internal System.Windows.Controls.TextBox ConfigurationNameInput => ConfigurationNameEditor;
+
+    internal void AllowConfigurationMenu(bool allowed)
+    {
+        ConfigurationMenuButton.IsEnabled = allowed;
+        ConfigurationNameButton.IsEnabled = allowed;
+    }
 
     internal void ShowPage(string title, bool showHomeActions, bool showConfigurationMenu,
         bool showScheduleStatus = false, bool showPageHeading = true)
@@ -35,9 +42,8 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
         PageTitle.Visibility = showPageHeading && !showConfigurationMenu ? Visibility.Visible : Visibility.Collapsed;
         HeadingDivider.Visibility = showPageHeading ? Visibility.Visible : Visibility.Collapsed;
         ConfigurationTitle.Text = title;
-        ConfigurationMenuButton.Visibility = showConfigurationMenu ? Visibility.Visible : Visibility.Collapsed;
-        ConfigurationMenuButton.ToolTip = title;
-        AutomationProperties.SetName(ConfigurationMenuButton, $"管理配置 {title}");
+        ConfigurationTitleActions.Visibility = showConfigurationMenu ? Visibility.Visible : Visibility.Collapsed;
+        AutomationProperties.SetName(ConfigurationNameButton, $"重命名配置 {title}");
         AutomationProperties.SetName(TitleBar, title);
         OpenLogsButton.Visibility = showHomeActions ? Visibility.Visible : Visibility.Collapsed;
         ScheduleStatusLink.Visibility = showScheduleStatus ? Visibility.Visible : Visibility.Collapsed;
@@ -52,8 +58,10 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
         AutomationProperties.SetName(ScheduleStatusLink, text);
     }
 
-    private void ConfigurationMenu_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
+    private void ConfigurationAction_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) =>
         e.Handled = !CanEditConfiguration();
+
+    private void ConfigurationName_Click(object sender, RoutedEventArgs e) => ConfigurationRenameRequested?.Invoke(this, EventArgs.Empty);
 
     private void ConfigurationMenu_Click(object sender, RoutedEventArgs e) =>
         ConfigurationMenuRequested?.Invoke(this, ConfigurationMenuButton);
