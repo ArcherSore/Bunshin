@@ -143,7 +143,8 @@ public partial class MainWindow
         };
         var home = _section == MainSection.Home;
         Header.ShowPage(title, home, home && configuration is not null,
-            showScheduleStatus: _section == MainSection.Schedule, showPageTitle: _section != MainSection.Settings);
+            showScheduleStatus: _section == MainSection.Schedule,
+            showPageHeading: _section is not (MainSection.Help or MainSection.Settings));
         RefreshSidebarSchedule();
     }
 
