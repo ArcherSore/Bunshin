@@ -16,7 +16,7 @@
     <SolidColorBrush x:Key="Brush.Border.Strong" Color="#66FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Dim" Color="#80000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Modal" Color="#80000000" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Overlay.Update" Color="#80000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Overlay.Update" Color="#52000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Overlay.Onboarding" Color="#80000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Primary" Color="#EDFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Text.Body" Color="#EDFFFFFF" po:Freeze="True" />
@@ -61,7 +61,14 @@
     <SolidColorBrush x:Key="Brush.Settings.Action" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Settings.ActionHover" Color="#37FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Settings.SwitchTrack" Color="#24FFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Dialog.Border" Color="#14FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Border" Color="#1AFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Action" Color="#EFEFEF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Action.Hover" Color="#D7D7D7" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Action.Foreground" Color="#191919" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Secondary" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Secondary.Hover" Color="#37FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Section" Color="#08FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Dialog.Field" Color="#0DFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Console.MenuText" Color="#EDFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Activity.ClearDisabled" Color="#66FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Activity.Divider" Color="#0DFFFFFF" po:Freeze="True" />
@@ -125,6 +132,7 @@
 
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog" Color="#000000" BlurRadius="24" ShadowDepth="8" Direction="270" Opacity="0.4" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Dialog.Update" Color="#000000" BlurRadius="48" ShadowDepth="16" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog.Welcome" Color="#000000" BlurRadius="50" ShadowDepth="25" Direction="270" Opacity="0.5" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light" Color="#000000" BlurRadius="8" ShadowDepth="1" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Popover" Color="#000000" BlurRadius="24" ShadowDepth="7" Direction="270" Opacity="0.4" po:Freeze="True" />

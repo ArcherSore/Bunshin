@@ -61,7 +61,7 @@ internal static partial class SelfTestRunner
                 Require(window.Foreground is SolidColorBrush body && body.Color == Expected("Brush.Text.Body")
                     && Named<System.Windows.Shapes.Ellipse>(window, "UpdateNavigationBadge").Fill is SolidColorBrush badge
                     && badge.Color == Expected("Brush.Rail.UpdateBadge")
-                    && window.UpdateDialog.Shadow?.Color == ((DropShadowEffect)palette["Effect.Dialog"]).Color,
+                    && window.UpdateDialog.Card.Shadow?.Color == ((DropShadowEffect)palette["Effect.Dialog.Update"]).Color,
                     "主窗口正文、更新提示点和对话框阴影应跟随配色切换。");
                 RequireThemeBrush(window.RuntimeSidebarSplitter.BorderBrush, palette, "Brush.Rail.Border", "运行面板边缘");
                 Require(ApplicationThemeManager.GetAppTheme() == mode
