@@ -189,7 +189,7 @@ internal static partial class SelfTestRunner
                 && !Named<System.Windows.Controls.Button>(window, "TaskShelfHeaderButton").IsEnabled
                 && ConfigurationDescendants(card).OfType<TextBlock>()
                     .Any(text => text.Text.StartsWith("进行中 · 1:", StringComparison.Ordinal))
-                && Named<TextBlock>(window, "RunProgressCaption").Text == "运行中 · 第 1 / 1 项"
+                && Named<TextBlock>(window, "RunProgressCaption").Text == "1 / 1"
                 && Named<TextBlock>(window, "RunProgressElapsed").Text.StartsWith("总用时 01:", StringComparison.Ordinal)
                 && Named<UIElement>(window, "RunProgressPanel").IsVisible,
                 "计划显示当前项状态和用时，控制台显示进度与总用时。");
@@ -215,7 +215,7 @@ internal static partial class SelfTestRunner
             });
             void CheckSummary(string surfaceKey, string borderKey)
             {
-                var summary = window.RunSummaryCard;
+                var summary = window.RuntimeSidebar.RunSummaryCard;
                 try {
                     themes.Apply(AppThemeMode.Dark);
                     Check(alternate);
@@ -233,11 +233,11 @@ internal static partial class SelfTestRunner
                 LastRun = run with { State = RunState.Succeeded, Items = [Item(PlanItemState.Succeeded, started)] }
             });
             CheckSummary("Brush.Surface.Subdued", "Brush.Border.Subtle");
-            RequireReadableText(window.RunProgressCaption, window.RunSummaryCard);
+            RequireReadableText(window.RuntimeSidebar.RunProgressCaption, window.RuntimeSidebar.RunSummaryCard);
             var shippedThemes = ((App)System.Windows.Application.Current).Themes;
             try {
                 shippedThemes.Apply(AppThemeMode.Dark);
-                RequireReadableText(window.RunProgressCaption, window.RunSummaryCard);
+                RequireReadableText(window.RuntimeSidebar.RunProgressCaption, window.RuntimeSidebar.RunSummaryCard);
             } finally {
                 shippedThemes.Apply(AppThemeMode.Light);
             }

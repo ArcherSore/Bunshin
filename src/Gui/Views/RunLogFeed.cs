@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Gui.Models;
+using Protocol;
 
 namespace Gui.Views;
 
@@ -7,7 +8,8 @@ namespace Gui.Views;
 // so a new entry joins the group under the top heading or starts a new group above it.
 internal sealed class RunLogFeed(ObservableCollection<object> items, int capacity)
 {
-    internal const string EnvironmentLabel = "运行环境";
+    internal const string EnvironmentLabel = "桌面分身";
+    private WorkerSnapshot? _worker;
 
     internal int EntryCount { get; private set; }
 
@@ -16,7 +18,7 @@ internal sealed class RunLogFeed(ObservableCollection<object> items, int capacit
     {
         var inserted = 1;
         if (items.Count != 0 && items[0] is RunLogGroup { PlanItemId: var top } heading && top == entry.PlanItemId
-            && (top.HasValue || heading.Label == (entry.TaskLabel ?? EnvironmentLabel))) {
+            && heading.RunId == entry.RunId && (top.HasValue || heading.Label == (entry.TaskLabel ?? EnvironmentLabel))) {
             items.Insert(1, entry);
             // A heading made before the Run Plan label was known takes it from the first entry that has it.
             if (entry.TaskLabel is { } label && label != heading.Label) {
@@ -24,7 +26,10 @@ internal sealed class RunLogFeed(ObservableCollection<object> items, int capacit
             }
         } else {
             items.Insert(0, entry);
-            items.Insert(0, new RunLogGroup(entry.PlanItemId, entry.TaskLabel ?? EnvironmentLabel));
+            items.Insert(0, new RunLogGroup(entry.PlanItemId, entry.TaskLabel ?? EnvironmentLabel) {
+                RunId = entry.RunId,
+                Status = StatusOf(entry.RunId, entry.PlanItemId)
+            });
             inserted = 2;
         }
         EntryCount++;
@@ -36,6 +41,37 @@ internal sealed class RunLogFeed(ObservableCollection<object> items, int capacit
             }
         }
         return inserted;
+    }
+
+    // Keep the last known status when a completed Run falls out of the Worker's reported history.
+    internal void Observe(WorkerSnapshot? worker)
+    {
+        if (ReferenceEquals(_worker, worker)) {
+            return;
+        }
+        _worker = worker;
+        for (var index = 0; index < items.Count; index++) {
+            if (items[index] is RunLogGroup group && StatusOf(group.RunId, group.PlanItemId) is
+                var status and not RunLogStatus.None && status != group.Status) {
+                items[index] = group with { Status = status };
+            }
+        }
+    }
+
+    private RunLogStatus StatusOf(Guid? runId, Guid? itemId)
+    {
+        if (runId is null || itemId is null) {
+            return RunLogStatus.None;
+        }
+        var run = _worker?.ActiveRun?.RunId == runId ? _worker.ActiveRun
+            : _worker?.LastRun?.RunId == runId ? _worker.LastRun : null;
+        return run?.Items.FirstOrDefault(candidate => candidate.PlanItemId == itemId) is { } item ? RunProgress.Map(item) switch {
+            PlanItemProgress.Running => RunLogStatus.Running,
+            PlanItemProgress.Succeeded => RunLogStatus.Succeeded,
+            PlanItemProgress.Failed => RunLogStatus.Failed,
+            PlanItemProgress.Stopped => RunLogStatus.Stopped,
+            _ => RunLogStatus.None
+        } : RunLogStatus.None;
     }
 
     internal void Clear()
