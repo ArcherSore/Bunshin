@@ -137,9 +137,9 @@ public sealed partial class TaskPlanEditor
         row.Children.Add(name);
 
         if (state == PlanItemProgress.Running && task is not null) {
-            var preview = new TextBlock {
-                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis
+            var preview = new StackPanel {
+                Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0), ClipToBounds = true
             };
             FillParameterPreview(preview, GetConfigurationOrEmpty(task.Name, task.Kind));
             row.Children.Add(preview);

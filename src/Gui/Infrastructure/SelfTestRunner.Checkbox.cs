@@ -73,13 +73,13 @@ internal static partial class SelfTestRunner
                 .Select(tag => tag.ToolTip).OfType<string>().SelectMany(text => text.Split('\n')).ToArray();
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
-            Require(Previews().Contains("Features：2 项") && Previews().Contains("Charge time：Short"),
-                "折叠预览应显示多选计数以及嵌套值。");
+            Require(Previews().SequenceEqual(["Mode：Default mode", "Features：2/3", "Tier：0/2"]),
+                "折叠预览必须按声明顺序最多显示三个顶层选项，并显示多选计数。");
             SetExpandedTask(window, "RealTask");
             InvokeEditor(window, "RenderTaskPlan");
             PumpOnboarding();
             SaveWindowScreenshot(window, "checkbox.png");
-            Require(!Previews().Contains("Features：2 项"), "展开时应隐藏折叠预览。");
+            Require(!Previews().Contains("Features：2/3"), "展开时应隐藏折叠预览。");
             // Saving may rebuild the card, so each step looks the editor up again.
             ListBox Segments(string name) => ConfigurationDescendants(items).OfType<ListBox>()
                 .Single(list => AutomationProperties.GetName(list) == name);

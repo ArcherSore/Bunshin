@@ -31,8 +31,11 @@ public sealed partial class TaskPlanEditor
         return ParameterInspector.Derive(configuration, drafts);
     }
 
-    private void FillParameterPreview(TextBlock preview, ProjectConfigurationView configuration, Border? container = null)
+    // Like MXU, a folded card previews up to three options declared directly on the task; an unfixed problem
+    // replaces them with one red message.
+    private void FillParameterPreview(StackPanel preview, ProjectConfigurationView configuration, Border? container = null)
     {
+        preview.Children.Clear();
         var rows = ParameterInspector.Flatten(DeriveInspectorRows(configuration)).ToArray();
         var invalid = rows.Where(row => row.IsInvalid).Select(row => {
             var field = row.Inputs.FirstOrDefault(input => input.Error is not null);
@@ -41,44 +44,76 @@ public sealed partial class TaskPlanEditor
         }).Distinct(StringComparer.Ordinal).ToArray();
         if (invalid.Length != 0) {
             container?.SetResourceReference(BackgroundProperty, "Brush.Parameter.InvalidRow");
-            preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Error.Foreground");
             var message = string.Join(" · ", invalid);
+            var text = new TextBlock { ToolTip = message, TextTrimming = TextTrimming.CharacterEllipsis };
+            text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Error.Foreground");
             var icon = CreateSymbolIcon(WpfSymbolRegular.ErrorCircle16);
             icon.Width = icon.Height = icon.FontSize = 14;
             icon.Margin = new Thickness(0, 0, 6, 0);
             icon.SetResourceReference(ForegroundProperty, "Brush.Error");
-            preview.Inlines.Clear();
-            preview.Inlines.Add(new InlineUIContainer(icon) { BaselineAlignment = BaselineAlignment.Center });
-            preview.Inlines.Add(new Run(message));
-            preview.ToolTip = message;
+            text.Inlines.Add(new InlineUIContainer(icon) { BaselineAlignment = BaselineAlignment.Center });
+            text.Inlines.Add(new Run(message));
+            preview.Children.Add(text);
         } else {
             container?.ClearValue(BackgroundProperty);
             if (container is null) {
-                preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+                preview.SetResourceReference(TextElement.ForegroundProperty, "Brush.Text.Muted");
             } else {
-                preview.ClearValue(TextBlock.ForegroundProperty);
+                preview.ClearValue(TextElement.ForegroundProperty);
             }
-            var values = rows.Where(row => !row.IsGlobal).SelectMany(PreviewValues).ToArray();
-            preview.Text = string.Join(" · ", values.Select(item => $"{item.Label} {item.Value}".ReplaceLineEndings(" ")));
-            preview.ToolTip = values.Length == 0 ? null
-                : string.Join("\n", values.Select(item => $"{item.Label}：{item.Value}"));
+            foreach (var option in configuration.TaskOptions) {
+                if (CreatePreviewTag(option) is { } tag) {
+                    preview.Children.Add(tag);
+                    if (preview.Children.Count == 3) {
+                        break;
+                    }
+                }
+            }
         }
-        preview.Visibility = preview.Inlines.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        preview.Visibility = preview.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private static IEnumerable<(string Label, string Value)> PreviewValues(InspectorRow row)
+    private TextBlock? CreatePreviewTag(ProjectOptionEditor option)
     {
-        if (row.Kind == ProjectOptionKind.Input) {
-            foreach (var input in row.Inputs.Where(input => input.DisplayValue.Length > 0)) {
-                yield return (row.Inputs.Count == 1 ? row.Label : input.Label, input.Show(input.DisplayValue));
+        var label = ParameterInspector.GetOptionLabel(option);
+        var isSwitch = option.Kind == ProjectOptionKind.Switch;
+        var isOn = isSwitch && option.SelectedCase == GetSwitchCases(option).On.Name;
+        string value;
+        if (option.Kind == ProjectOptionKind.Input) {
+            if (option.Inputs.FirstOrDefault() is not { } input || input.Value.Length == 0) {
+                return null;
             }
-        } else if (row.Kind == ProjectOptionKind.Checkbox) {
-            if (row.Branches.Count == 0 || row.Branches.Count < row.Option.SelectedCases.Count) {
-                yield return (row.Label, $"{row.Option.SelectedCases.Count} 项");
-            }
-        } else if (row.SelectedCase is { } selected) {
-            yield return (row.Label, selected.Label);
+            value = input.IsPassword ? ProjectInputEditor.PasswordMask : input.Value;
+        } else if (isSwitch) {
+            value = isOn ? "开" : "关";
+        } else if (option.Kind == ProjectOptionKind.Checkbox) {
+            value = $"{option.SelectedCases.Count}/{option.Cases.Count}";
+        } else {
+            value = option.Cases.FirstOrDefault(item => item.Name == option.SelectedCase)?.Label ?? string.Empty;
         }
+        var tag = new TextBlock {
+            MaxWidth = 140, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = $"{label}：{ParameterInspector.ShowValue(value)}"
+        };
+        if (isSwitch) {
+            tag.Inlines.Add(ShortenPreview(label, 6));
+            // A 5px ellipse centred on the line; a glyph or small Run sits off-centre.
+            var dot = new System.Windows.Shapes.Ellipse { Width = 5, Height = 5, Margin = new Thickness(6, 0, 0, 0) };
+            dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, isOn ? "Brush.Primary" : "Brush.Text.Muted");
+            tag.Inlines.Add(new InlineUIContainer(dot) { BaselineAlignment = BaselineAlignment.Center });
+        } else {
+            tag.Text = $"{ShortenPreview(label, 4)}：{ShortenPreview(ParameterInspector.ShowValue(value), 6)}"
+                .ReplaceLineEndings(" ");
+        }
+        return tag;
+    }
+
+    private static string ShortenPreview(string text, int limit)
+    {
+        var singleLine = new System.Globalization.StringInfo(text.ReplaceLineEndings(" "));
+        return singleLine.LengthInTextElements <= limit ? singleLine.String
+            : singleLine.SubstringByTextElements(0, limit) + "…";
     }
 
     private void RefreshParameterDisplays()
