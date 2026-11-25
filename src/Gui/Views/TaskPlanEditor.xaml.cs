@@ -154,10 +154,30 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             TaskSearchBox.Clear();
         } else {
             SetTaskShelfExpanded(false);
-            TaskShelfHeaderButton.Focus();
+            // Focus is not handed to the header button: it would show a keyboard focus ring there.
+            if (TaskShelfContent.IsKeyboardFocusWithin) {
+                Keyboard.ClearFocus();
+            }
         }
         return true;
     }
+
+    // A click anywhere but the panel and the buttons that toggle it closes the panel; the click itself goes on.
+    internal void DismissTaskShelfOnClick()
+    {
+        if (_taskShelfExpanded && !TaskShelfContent.IsMouseOver && !TaskShelfHeaderButton.IsMouseOver
+            && !EmptyPlanAddButton.IsMouseOver) {
+            SetTaskShelfExpanded(false);
+        }
+    }
+
+    // The add button the user sees: the plan's own while it is empty, the header's once it has items.
+    internal FrameworkElement AddTaskButton =>
+        TaskShelfHeaderButton.Visibility == Visibility.Visible ? TaskShelfHeaderButton : EmptyPlanAddButton;
+
+    // The header button takes over from the empty plan's own button only once the plan has items.
+    private void UpdateAddTaskButton() => TaskShelfHeaderButton.Visibility =
+        Project is { SelectedItems.Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
 
     // What the onboarding tour points at, opens and puts back.
     internal FrameworkElement Workspace => TaskWorkspacePanel;
@@ -227,13 +247,13 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         }
         _taskShelfExpanded = expanded;
         TaskShelfContent.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
-        EmptyPlanAddButton.Visibility = expanded ? Visibility.Collapsed : Visibility.Visible;
         if (expanded) {
             TaskShelfHeaderButton.SetResourceReference(BackgroundProperty, "Brush.Plan.Current");
         } else {
             TaskShelfHeaderButton.ClearValue(BackgroundProperty);
         }
         AutomationProperties.SetHelpText(TaskShelfHeaderButton, expanded ? "可用任务已展开" : "可用任务已收起");
+        AutomationProperties.SetHelpText(EmptyPlanAddButton, expanded ? "可用任务已展开" : "可用任务已收起");
     }
 
     private void UpdateAddedTasks()
@@ -632,8 +652,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         _inspectorRows.Clear();
         var items = project.SelectedItems;
         EmptyPlanPanel.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAddTaskButton();
         UpdateIdlePlanCount(project);
-        EmptyPlanText.Text = $"从 {project.Tasks.Count + project.Pretasks.Count} 个可用任务中选择要执行的任务";
+        EmptyPlanText.Text = $"从 {project.Tasks.Count + project.Pretasks.Count} 个可用任务中选择要执行的任务，"
+            + "添加后按顺序依次执行，也可以拖动调整顺序。";
 
         foreach (var task in items) {
             var container = CreatePlanItem(task, IsExpanded(task));

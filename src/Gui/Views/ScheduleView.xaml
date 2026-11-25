@@ -157,8 +157,8 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="Schedule.PolicyName" TargetType="TextBox">
-            <Setter Property="Height" Value="32" />
-            <Setter Property="Padding" Value="7,0" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="6,0" />
             <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="Medium" />
             <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
@@ -196,7 +196,8 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="Schedule.TimeEditor" TargetType="TextBox">
-            <Setter Property="Width" Value="35" />
+            <!-- As wide as the plain time text, with room for the caret, so the text neither scrolls nor shifts. -->
+            <Setter Property="Width" Value="42" />
             <Setter Property="FontSize" Value="14" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
             <Setter Property="CaretBrush" Value="{DynamicResource Brush.Text.Primary}" />
@@ -358,7 +359,8 @@
                                 <ToggleButton x:Name="PolicyEnabled" DockPanel.Dock="Left"
                                               Style="{StaticResource Schedule.Switch}" VerticalAlignment="Center"
                                               AutomationProperties.Name="启用这条定时" Click="PolicyEnabled_Click" />
-                                <TextBox x:Name="PolicyName" MaxWidth="240" HorizontalAlignment="Left" MinWidth="120"
+                                <TextBox x:Name="PolicyName" MaxWidth="240" HorizontalAlignment="Left" MinWidth="96"
+                                         Margin="8,0,0,0"
                                          Style="{StaticResource Schedule.PolicyName}" MaxLength="40"
                                          AutomationProperties.Name="定时名称" LostKeyboardFocus="PolicyName_LostKeyboardFocus"
                                          KeyDown="PolicyName_KeyDown" />

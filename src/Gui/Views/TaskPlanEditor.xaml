@@ -178,7 +178,7 @@
                 </Border>
             </StackPanel>
             <StackPanel x:Name="PlanActions" Grid.Column="1" Orientation="Horizontal" Visibility="Collapsed">
-                <Button x:Name="StartPlanButton" Style="{StaticResource Plan.HeaderAction}" Margin="0,0,12,0"
+                <Button x:Name="StartPlanButton" Style="{StaticResource Plan.HeaderAction}"
                         ToolTipService.ShowOnDisabled="True" AutomationProperties.Name="运行" Click="StartPlanButton_Click">
                     <StackPanel Orientation="Horizontal">
                         <Path Data="M 0,0 L 0,8 L 7,4 Z" Margin="0,0,7,0" VerticalAlignment="Center"
@@ -187,7 +187,7 @@
                                    RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
-                <Button x:Name="StopPlanButton" Style="{StaticResource Plan.HeaderAction}" Margin="0,0,12,0"
+                <Button x:Name="StopPlanButton" Style="{StaticResource Plan.HeaderAction}"
                         Visibility="Collapsed" AutomationProperties.Name="停止" Click="StopPlanButton_Click">
                     <StackPanel Orientation="Horizontal">
                         <Border Width="8" Height="8" CornerRadius="1" Margin="0,0,7,0"
@@ -196,7 +196,7 @@
                                    RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
-                <Button x:Name="TaskShelfHeaderButton" Style="{StaticResource Plan.HeaderAction}"
+                <Button x:Name="TaskShelfHeaderButton" Style="{StaticResource Plan.HeaderAction}" Margin="12,0,0,0"
                         Click="TaskShelfHeaderButton_Click" AutomationProperties.Name="添加任务">
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="Add16" FontSize="16" Margin="0,0,6,0" />
@@ -256,23 +256,38 @@
                     <StackPanel Margin="0,0,0,48">
                         <StackPanel x:Name="PlanItemsPanel" Margin="0,2,0,0" />
 
-                        <StackPanel x:Name="EmptyPlanPanel" Margin="0,16,0,0">
-                            <TextBlock Text="执行计划为空" FontWeight="SemiBold" />
-                            <TextBlock x:Name="EmptyPlanText" Margin="0,4,0,0"
-                                       Style="{StaticResource SecondaryTextStyle}" />
-                            <Button x:Name="EmptyPlanAddButton" Margin="0,12,0,0" Height="32"
-                                    Padding="12,0" HorizontalAlignment="Left"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Click="TaskShelfHeaderButton_Click">
-                                <StackPanel Orientation="Horizontal">
-                                    <ui:SymbolIcon Symbol="Add16" FontSize="15" Margin="0,0,6,0" />
-                                    <TextBlock Text="添加任务" FontWeight="SemiBold"
-                                               VerticalAlignment="Center"
-                                               Foreground="{Binding Foreground,
-                                                   RelativeSource={RelativeSource AncestorType=Button}}" />
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
+                        <!-- Nothing planned yet: say so, say what to do, and offer the one button that does it. -->
+                        <Border x:Name="EmptyPlanPanel" Margin="0,16,0,0" Padding="24,40" CornerRadius="12"
+                                BorderThickness="1" BorderBrush="{DynamicResource Brush.Border.Subtle}">
+                            <StackPanel MaxWidth="360" HorizontalAlignment="Center">
+                                <Border Width="48" Height="48" CornerRadius="24" HorizontalAlignment="Center"
+                                        Background="{DynamicResource Brush.Primary.Surface}">
+                                    <ui:SymbolIcon Symbol="TaskListSquareAdd24" FontSize="24"
+                                                   Foreground="{DynamicResource Brush.Primary}" />
+                                </Border>
+                                <TextBlock Text="执行计划还是空的" Margin="0,16,0,0" HorizontalAlignment="Center"
+                                           FontSize="16" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}" />
+                                <TextBlock x:Name="EmptyPlanText" Margin="0,8,0,0" TextAlignment="Center"
+                                           TextWrapping="Wrap" Style="{StaticResource SecondaryTextStyle}" />
+                                <Button x:Name="EmptyPlanAddButton" Margin="0,20,0,0" Height="36" MinWidth="128"
+                                        Padding="20,0" HorizontalAlignment="Center"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        AutomationProperties.Name="添加任务"
+                                        Click="TaskShelfHeaderButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <ui:SymbolIcon Symbol="Add16" FontSize="16" Margin="0,0,6,0" />
+                                        <TextBlock Text="添加任务" FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{Binding Foreground,
+                                                       RelativeSource={RelativeSource AncestorType=Button}}" />
+                                    </StackPanel>
+                                </Button>
+                                <TextBlock Text="添加完成后，点击右上角「运行」开始" Margin="0,12,0,0"
+                                           HorizontalAlignment="Center" FontSize="12"
+                                           Style="{StaticResource MutedTextStyle}" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
                 <views:ListReorderFeedback x:Name="PlanDragFeedback" />
@@ -302,7 +317,9 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Margin="8,8,8,0">
-                        <TextBox x:Name="TaskSearchBox" Height="38" Padding="36,0,8,0" FontSize="14"
+                        <!-- The template places the text itself, so the control's own Padding stays 0 and the caret
+                             is not offset a second time. -->
+                        <TextBox x:Name="TaskSearchBox" Height="38" Padding="0" FontSize="14"
                                  VerticalContentAlignment="Center" AutomationProperties.Name="搜索可用任务"
                                  TextChanged="TaskSearchBox_TextChanged">
                             <TextBox.Template>
@@ -314,10 +331,10 @@
                                         <Border x:Name="Field" CornerRadius="8" BorderThickness="1"
                                                 Background="{DynamicResource Brush.Plan.Tag}"
                                                 BorderBrush="{DynamicResource Brush.Transparent}" />
-                                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
-                                                      VerticalAlignment="Center" />
+                                        <ScrollViewer x:Name="PART_ContentHost" Margin="36,0,8,0"
+                                                      VerticalAlignment="Center" Focusable="False" />
                                         <TextBlock x:Name="Placeholder" Text="搜索任务" IsHitTestVisible="False"
-                                                   Margin="{TemplateBinding Padding}" VerticalAlignment="Center"
+                                                   Margin="39,0,8,0" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource Brush.Text.Disabled}"
                                                    Visibility="Collapsed" FontSize="14" />
                                         <ui:SymbolIcon Symbol="Search16" FontSize="16" IsHitTestVisible="False"
