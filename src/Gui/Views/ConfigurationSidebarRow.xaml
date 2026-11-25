@@ -1,0 +1,120 @@
+<UserControl x:Class="Gui.Views.ConfigurationSidebarRow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:views="clr-namespace:Gui.Views"
+             Height="32" Margin="0,0,0,2">
+    <Grid x:Name="RowContent">
+        <views:RailItem x:Name="SelectButton" HorizontalContentAlignment="Stretch"
+                        FocusVisualStyle="{StaticResource ControlFocusVisualStyle}"
+                        ToolTipService.ShowOnDisabled="True">
+            <views:RailItem.Style>
+                <Style TargetType="views:RailItem">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                    <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+                </Style>
+            </views:RailItem.Style>
+            <views:RailItem.Template>
+                <ControlTemplate TargetType="views:RailItem">
+                    <Border x:Name="Surface" Background="{DynamicResource Brush.Transparent}"
+                            Padding="8,0" CornerRadius="8">
+                        <ContentPresenter VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                        </Trigger>
+                        <Trigger Property="IsActive" Value="True">
+                            <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.Transparent}" />
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </views:RailItem.Template>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="20" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="NameLabel" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                <StackPanel x:Name="RunningIndicator" Grid.Column="1" Margin="8,0,0,0"
+                            Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                    <Ellipse Width="6" Height="6" Margin="0,0,6,0" Fill="{DynamicResource Brush.Success}" />
+                    <TextBlock Text="运行中" FontSize="12" Foreground="{DynamicResource Brush.Success.Foreground}" />
+                </StackPanel>
+                <ui:SymbolIcon x:Name="ScheduleIndicator" Grid.Column="2" Symbol="Clock16" FontSize="13"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"
+                               Foreground="{DynamicResource Brush.Text.Muted}">
+                    <ui:SymbolIcon.Style>
+                        <Style TargetType="ui:SymbolIcon">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Opacity, ElementName=MenuButton}" Value="1">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ui:SymbolIcon.Style>
+                </ui:SymbolIcon>
+            </Grid>
+        </views:RailItem>
+        <Button x:Name="MenuButton" Width="24" Height="24" Margin="0,0,4,0"
+                VerticalAlignment="Center" HorizontalAlignment="Right"
+                FocusVisualStyle="{StaticResource ControlFocusVisualStyle}"
+                Foreground="{DynamicResource Brush.Text.Muted}">
+            <Button.Style>
+                <Style TargetType="Button">
+                    <Setter Property="Opacity" Value="0" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="MenuSurface" Background="{DynamicResource Brush.Transparent}" CornerRadius="6">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding ContextMenu.IsOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                                 Value="True">
+                                        <Setter TargetName="MenuSurface" Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                                    </DataTrigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                                        <Setter TargetName="MenuSurface" Property="Background" Value="{DynamicResource Brush.Rail.Active}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsMouseOver, ElementName=RowContent}" Value="True">
+                            <Setter Property="Opacity" Value="1" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=RowContent}" Value="True">
+                            <Setter Property="Opacity" Value="1" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding ContextMenu.IsOpen, RelativeSource={RelativeSource Self}}" Value="True">
+                            <Setter Property="Opacity" Value="1" />
+                        </DataTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0" />
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </Button.Style>
+            <ui:SymbolIcon Symbol="MoreHorizontal16" FontSize="14" />
+        </Button>
+        <TextBox x:Name="NameEditor" Visibility="Collapsed" MinHeight="0" Padding="8,0"
+                 VerticalContentAlignment="Center" BorderThickness="1"
+                 Background="{DynamicResource Brush.Canvas}" Foreground="{DynamicResource Brush.Text.Primary}"
+                 BorderBrush="{DynamicResource Brush.Primary}" AutomationProperties.Name="配置名称" />
+        <Rectangle x:Name="DragPlaceholder" RadiusX="8" RadiusY="8" Visibility="Collapsed"
+                   Stroke="{DynamicResource Brush.Border}" StrokeDashArray="3,2" IsHitTestVisible="False" />
+    </Grid>
+</UserControl>

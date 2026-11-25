@@ -45,8 +45,7 @@ internal static partial class SelfTestRunner
             Require(run.Result.Disposition == ScheduledRunDisposition.Admitted
                 && project.ActiveConfigurationId == target && !prepared
                 && wts.LogoffAttempts.SequenceEqual([7u])
-                && !window.IsVisible && window.TaskPlanEditor.ConfigurationTabs.SelectedItem
-                    is System.Windows.Controls.TabItem { Tag: Guid selected } && selected == target
+                && !window.IsVisible && window.Sidebar.ConfigurationList.ActiveConfigurationId == target
                 && failures.Single() == $"定时任务未能启动 / 「{targetName}」：旧的桌面分身未能关闭",
                 "获准后激活目标，旧分身未结束必须报告失败并保留现场。");
         }, session: session, prepareEnvironment: (_, _, _) => {
@@ -143,7 +142,7 @@ internal static partial class SelfTestRunner
                     failures.Clear();
                 }
                 if (terminal == RunState.Succeeded && !lostReply) {
-                    ClickOnboarding(window, "NewConfigurationButton");
+                    CreateEmptyConfigurationFromSidebar(window);
                     Require(window.TaskPlanEditor.EmptyPlanPanel.IsVisible, "启动前应显示另一份空配置。");
                     window.Hide();
                 }
@@ -236,8 +235,7 @@ internal static partial class SelfTestRunner
                     Require(!window.IsVisible, "定时启动和进度更新应保持窗口隐藏。");
                     window.Show();
                     PumpUntil(() => window.RunProgressPanel.IsVisible, "打开窗口后应显示当前运行的进度。");
-                    Require(window.TaskPlanEditor.ConfigurationTabs.SelectedItem is System.Windows.Controls.TabItem
-                        { Tag: Guid selected } && selected == target && !window.TaskPlanEditor.EmptyPlanPanel.IsVisible,
+                    Require(window.Sidebar.ConfigurationList.ActiveConfigurationId == target && !window.TaskPlanEditor.EmptyPlanPanel.IsVisible,
                         "恢复可见时目标标签、执行计划与正在运行的任务应一致。");
                     Require(failures.Count == 0 && start.Result.Reason is null, "Worker 已运行时回复超时不得报告启动失败。");
                 } else {

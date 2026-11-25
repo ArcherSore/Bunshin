@@ -199,8 +199,7 @@ internal static partial class SelfTestRunner
                 PumpUntil(() => preparations.Count == 1, "首份无效配置之后应开始准备下一份。");
                 Require(preparations.SequenceEqual([b]) && failures is [{ } failure] && failure.Contains("无任务")
                     && project.ActiveConfigurationId == b, "同刻应先报告 A 无效，再按配置列表顺序接纳 B。");
-                Require(window.ScheduleView.IsVisible && window.TaskPlanEditor.ConfigurationTabs.SelectedItem
-                    is System.Windows.Controls.TabItem { Tag: Guid selected } && selected == b,
+                Require(window.ScheduleView.IsVisible && window.Sidebar.ConfigurationList.ActiveConfigurationId == b,
                     "定时页应保持可见，首页选中的配置应随获准启动更新。");
                 project.AddSchedulePolicy(d, "刚刚启用");
                 Require(window.CheckScheduledRunsAsync().IsCompletedSuccessfully

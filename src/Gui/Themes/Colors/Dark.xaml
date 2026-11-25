@@ -9,6 +9,7 @@
 
     <SolidColorBrush x:Key="Brush.Canvas" Color="#191919" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface" Color="#1F1F1F" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Surface.Popover" Color="#303030" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Subdued" Color="#1F1F1F" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Option" Color="#0B0B0B" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Disabled" Color="#242424" po:Freeze="True" />
@@ -80,8 +81,6 @@
     <SolidColorBrush x:Key="Brush.Timeline.Track" Color="#1F1F1F" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureSurface" Color="#1FDC3C3D" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureBorder" Color="#4DDC3C3D" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Configuration.Bar" Color="#262626" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Configuration.TabHover" Color="#1AFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Schedule.ChipRemoveHover" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="#66FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Warning" Color="#FBB315" po:Freeze="True" />
@@ -89,14 +88,6 @@
     <LinearGradientBrush x:Key="Brush.Schedule.NextRun" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
         <GradientStop Offset="0" Color="#134A91" />
         <GradientStop Offset="1" Color="#1F68B8" />
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Brush.Configuration.FadeLeft" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
-        <GradientStop Offset="0" Color="#262626" />
-        <GradientStop Offset="1" Color="#00262626" />
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Brush.Configuration.FadeRight" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
-        <GradientStop Offset="0" Color="#00262626" />
-        <GradientStop Offset="1" Color="#262626" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="Brush.Scroll.FadeTop" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
         <GradientStop Offset="0" Color="#191919" />
@@ -117,11 +108,11 @@
         <GradientStop Offset="1" Color="#00257DE0" />
     </LinearGradientBrush>
 
-    <DropShadowEffect x:Key="Effect.Configuration.SelectedTab" Color="#000000" BlurRadius="3" ShadowDepth="1" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog" Color="#000000" BlurRadius="24" ShadowDepth="8" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Dialog.Welcome" Color="#000000" BlurRadius="50" ShadowDepth="25" Direction="270" Opacity="0.5" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Light" Color="#000000" BlurRadius="8" ShadowDepth="1" Direction="270" Opacity="0.3" po:Freeze="True" />
+    <DropShadowEffect x:Key="Effect.Surface.Popover" Color="#000000" BlurRadius="24" ShadowDepth="7" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Drag" Color="#000000" BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Drawer" Color="#000000" BlurRadius="16" ShadowDepth="3" Direction="180" Opacity="0.35" po:Freeze="True" />
 </ResourceDictionary>
