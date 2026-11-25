@@ -110,13 +110,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock x:Name="Wordmark" Text="{x:Static protocol:AppIdentity.Name}" Margin="8,0,8,0"
-                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                           FontFamily="{StaticResource FontFamily.Wordmark}"
-                           FontSize="20" FontWeight="Normal" Foreground="{DynamicResource Brush.Text.Primary}"
-                           IsHitTestVisible="False">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
+                <DockPanel Margin="8,0,8,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                    <DockPanel.Style>
+                        <Style TargetType="DockPanel">
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsCollapsed, RelativeSource={RelativeSource AncestorType=views:ShellSidebar}}"
                                              Value="True">
@@ -124,8 +120,15 @@
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
-                    </TextBlock.Style>
-                </TextBlock>
+                    </DockPanel.Style>
+                    <Image x:Name="SidebarProjectIcon" DockPanel.Dock="Left" Width="24" Height="24"
+                           Margin="0,0,8,0" VerticalAlignment="Center"
+                           Source="{Binding Icon, RelativeSource={RelativeSource AncestorType=Window}}" />
+                    <TextBlock x:Name="Wordmark" Text="{x:Static protocol:AppIdentity.Name}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                               FontFamily="{StaticResource FontFamily.Wordmark}"
+                               FontSize="20" FontWeight="Normal" Foreground="{DynamicResource Brush.Text.Primary}" />
+                </DockPanel>
                 <Button x:Name="SidebarToggleButton" Click="SidebarToggle_Click">
                     <Button.Style>
                         <Style TargetType="Button" BasedOn="{StaticResource Sidebar.ToggleButton}">

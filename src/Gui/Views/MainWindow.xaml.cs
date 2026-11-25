@@ -349,21 +349,22 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
     }
 
-    private void TryOpenLogsDirectory()
+    private void TryOpenDirectory(string directory, string directoryName)
     {
         try {
-            Directory.CreateDirectory(_logger.LogDirectory);
+            Directory.CreateDirectory(directory);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
                 FileName = "explorer.exe",
-                Arguments = $"\"{_logger.LogDirectory}\"",
+                Arguments = $"\"{directory}\"",
                 UseShellExecute = true
             });
         } catch (Exception exception) {
-            _logger.Error("打开日志目录失败。", exception);
+            var title = $"打开{directoryName}失败";
+            _logger.Error($"{title}。", exception);
             ShowActionableError(
-                "打开日志目录失败",
+                title,
                 exception,
-                "请确认 Windows 资源管理器可用，并检查日志目录访问权限后重试。",
+                $"请确认 Windows 资源管理器可用，并检查{directoryName}访问权限后重试。",
                 offerLogDirectory: false);
         }
     }

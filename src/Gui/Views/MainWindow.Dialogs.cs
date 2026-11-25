@@ -28,7 +28,7 @@ public partial class MainWindow
     {
         PromptDialog.Accepted += (_, _) => CompleteWindowPrompt(accepted: true);
         PromptDialog.Dismissed += (_, _) => CompleteWindowPrompt(accepted: false);
-        PromptDialog.LogsRequested += (_, _) => TryOpenLogsDirectory();
+        PromptDialog.LogsRequested += (_, _) => TryOpenDirectory(_logger.LogDirectory, "日志目录");
         PreviewGotKeyboardFocus += WindowPrompt_PreviewGotKeyboardFocus;
     }
 

@@ -93,8 +93,8 @@
             <ui:TitleBar.TrailingContent>
                 <Border BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,0,1,0">
                     <StackPanel x:Name="PageActions" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
-                        <Button x:Name="OpenLogsButton" Click="OpenLogs_Click" ToolTip="打开日志目录"
-                                AutomationProperties.Name="打开日志目录">
+                        <Button x:Name="OpenDebugDirectoryButton" Click="OpenDebugDirectory_Click" ToolTip="打开调试目录"
+                                AutomationProperties.Name="打开调试目录">
                             <ui:SymbolIcon Symbol="FolderOpen24" FontSize="16" />
                         </Button>
                         <ContentPresenter

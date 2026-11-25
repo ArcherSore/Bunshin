@@ -74,12 +74,8 @@
                             <ColumnDefinition Width="40" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Border Width="40" Height="40" CornerRadius="10" VerticalAlignment="Center"
-                                Background="{DynamicResource Brush.Dialog.Action}">
-                            <TextBlock Text="B" FontSize="22" FontFamily="{StaticResource FontFamily.Wordmark}"
-                                       Foreground="{DynamicResource Brush.Dialog.Action.Foreground}"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                        <Image x:Name="UpdateProjectIcon" Width="40" Height="40" VerticalAlignment="Center"
+                               Source="{Binding Icon, RelativeSource={RelativeSource AncestorType=Window}}" />
                         <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                             <TextBlock x:Name="StateTitle" FontSize="14" FontWeight="Medium" LineHeight="22"
                                        LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
