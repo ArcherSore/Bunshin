@@ -316,6 +316,9 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private void SwitchSection(MainSection section)
     {
         CancelRuntimeSidebarDrag();
+        if (section == MainSection.Settings && _section != MainSection.Settings) {
+            _sectionBeforeSettings = _section;
+        }
         _section = section;
         CloseTaskDescriptionDrawer();
         HomeView.Visibility = section == MainSection.Home

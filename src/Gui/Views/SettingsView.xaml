@@ -6,8 +6,11 @@
              xmlns:settings="clr-namespace:Gui.Settings"
              xmlns:protocol="clr-namespace:Protocol;assembly=Protocol">
     <UserControl.Resources>
-        <CornerRadius x:Key="Radius.Settings">8</CornerRadius>
         <Style x:Key="OptionalText" TargetType="TextBlock" BasedOn="{StaticResource SecondaryTextStyle}">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="LineHeight" Value="19.5" />
+            <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
             <Style.Triggers>
                 <Trigger Property="Text" Value="">
                     <Setter Property="Visibility" Value="Collapsed" />
@@ -18,94 +21,84 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="ItemHeading" TargetType="TextBlock" BasedOn="{StaticResource OptionalText}">
-            <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="LineHeight" Value="20" />
         </Style>
         <Style x:Key="ItemDescription" TargetType="TextBlock" BasedOn="{StaticResource OptionalText}">
             <Setter Property="Margin" Value="0,2,0,0" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
         </Style>
-        <Style x:Key="ItemIcon" TargetType="ui:SymbolIcon">
-            <Setter Property="Margin" Value="0,0,12,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="FontSize" Value="20" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Primary}" />
-        </Style>
-        <!-- The quiet filled button that keeps rows calm; the outlined default would compete with the text. -->
         <Style x:Key="ItemButton" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
             <Setter Property="Margin" Value="24,0,0,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Padding" Value="16,7" />
-            <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
-            <Setter Property="FontWeight" Value="Medium" />
-            <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Body}" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" SnapsToDevicePixels="True"
-                                CornerRadius="{StaticResource Radius.Settings}">
-                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"
-                                              VerticalAlignment="Center" RecognizesAccessKey="True" />
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Settings.Action}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Border}" />
-                </Trigger>
-                <Trigger Property="IsPressed" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Border.Strong}" />
-                </Trigger>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
-                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Settings.ActionHover}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
-        <Style x:Key="NavigationItem" TargetType="ListBoxItem">
-            <Setter Property="Margin" Value="0,0,0,4" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
+        <Style x:Key="ItemChoice" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Margin" Value="24,0,0,0" />
+            <Setter Property="Width" Value="180" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Padding" Value="10,0,8,0" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Settings.Field}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+        </Style>
+        <Style x:Key="ItemToggle" TargetType="ui:ToggleSwitch"
+               BasedOn="{StaticResource {x:Type ui:ToggleSwitch}}">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="24,0,0,0" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
-            <Setter Property="AutomationProperties.Name" Value="{Binding Definition.Title}" />
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="ListBoxItem">
-                        <Border Background="{TemplateBinding Background}" Padding="12,8"
-                                CornerRadius="{StaticResource Radius.Settings}">
-                            <ContentPresenter />
+                    <ControlTemplate TargetType="ui:ToggleSwitch">
+                        <Border x:Name="Track" Background="{DynamicResource Brush.Settings.SwitchTrack}"
+                                CornerRadius="9" Padding="2">
+                            <Ellipse x:Name="Thumb" Width="14" Height="14" HorizontalAlignment="Left"
+                                     Fill="{DynamicResource Brush.Text.Inverse}" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="{DynamicResource Brush.Primary}" />
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Track" Property="Opacity" Value="{StaticResource Opacity.Disabled}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Surface.Disabled}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-                </Trigger>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.Primary}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Inverse}" />
-                </Trigger>
-            </Style.Triggers>
         </Style>
         <DataTemplate x:Key="ToggleRow">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <ui:SymbolIcon Symbol="{Binding Definition.Icon}" Style="{StaticResource ItemIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding Definition.Title}" Style="{StaticResource ItemHeading}" />
                     <TextBlock Text="{Binding Definition.Description}" Style="{StaticResource ItemDescription}" />
                     <TextBlock Text="{Binding Toggle.Status}" Style="{StaticResource OptionalText}"
                                Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
-                <ui:ToggleSwitch Grid.Column="2" Margin="24,0,0,0" VerticalAlignment="Center"
+                <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource ItemToggle}"
                                  OnContent="{x:Null}" OffContent="{x:Null}"
                                  IsChecked="{Binding Toggle.Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                  IsEnabled="{Binding Toggle.IsEnabled}"
@@ -116,18 +109,16 @@
         <DataTemplate x:Key="ChoiceRow">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <ui:SymbolIcon Symbol="{Binding Definition.Icon}" Style="{StaticResource ItemIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding Definition.Title}" Style="{StaticResource ItemHeading}" />
                     <TextBlock Text="{Binding Definition.Description}" Style="{StaticResource ItemDescription}" />
                     <TextBlock Text="{Binding Choice.Status}" Style="{StaticResource OptionalText}"
                                Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
-                <ComboBox Grid.Column="2" Margin="24,0,0,0" MinWidth="200" VerticalAlignment="Center"
+                <ComboBox Grid.Column="1" Style="{StaticResource ItemChoice}"
                           ItemsSource="{Binding Choice.Options}" DisplayMemberPath="Name"
                           SelectedItem="{Binding Choice.Selected, Mode=TwoWay}"
                           AutomationProperties.AutomationId="{Binding Definition.Id}"
@@ -137,49 +128,49 @@
         <DataTemplate x:Key="ActionRow">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <ui:SymbolIcon Symbol="{Binding Definition.Icon}" Style="{StaticResource ItemIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding Definition.Title}" Style="{StaticResource ItemHeading}" />
                     <TextBlock Text="{Binding Definition.Description}" Style="{StaticResource ItemDescription}" />
                     <TextBlock Text="{Binding Action.Status}" Margin="0,4,0,0"
                                AutomationProperties.LiveSetting="Polite" Style="{StaticResource OptionalText}" />
                 </StackPanel>
-                <Button Grid.Column="2" Content="{Binding Definition.ButtonText}" Command="{Binding Action}"
+                <Button Grid.Column="1" Content="{Binding Definition.ButtonText}" Command="{Binding Action}"
                         ToolTip="{Binding Action.ToolTip}" Style="{StaticResource ItemButton}"
                         AutomationProperties.AutomationId="{Binding Definition.Id}"
-                        AutomationProperties.Name="{Binding Definition.ButtonText}" />
+                        AutomationProperties.Name="{Binding Definition.Title}" />
             </Grid>
         </DataTemplate>
         <DataTemplate x:Key="InfoRow">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <ui:SymbolIcon Symbol="{Binding Definition.Icon}" Style="{StaticResource ItemIcon}" />
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="{Binding Definition.Title}" Style="{StaticResource ItemHeading}" />
                     <TextBlock Text="{Binding Definition.Description}" Style="{StaticResource ItemDescription}" />
                 </StackPanel>
-                <TextBlock Grid.Column="2" Text="{Binding Value.Text}" Margin="24,0,0,0"
-                           VerticalAlignment="Center" Style="{StaticResource OptionalText}" />
+                <TextBlock Grid.Column="1" Text="{Binding Value.Text}" Margin="24,0,0,0"
+                           VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}"
+                           FontSize="14" Style="{StaticResource OptionalText}" />
             </Grid>
         </DataTemplate>
         <DataTemplate x:Key="AboutRow">
             <StackPanel>
-                <StackPanel Margin="0,10,0,0" HorizontalAlignment="Center">
+                <StackPanel Margin="0,16,0,8" HorizontalAlignment="Center">
                     <Image x:Name="ProjectAboutIcon" Width="72" Height="72"
                            Source="{Binding About.Icon, TargetNullValue='pack://application:,,,/Assets/app.png'}"
                            RenderOptions.BitmapScalingMode="HighQuality" />
                     <TextBlock x:Name="ProjectAboutName"
-                               Text="{Binding About.Content.Name, FallbackValue={x:Static protocol:AppIdentity.Name}}" Margin="0,12,0,0"
-                               FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.Text.Primary}"
-                               TextAlignment="Center" />
+                               Text="{Binding About.Content.Name, TargetNullValue={x:Static protocol:AppIdentity.Name},
+                                              FallbackValue={x:Static protocol:AppIdentity.Name}}"
+                               Margin="0,14,0,0" FontSize="26" FontFamily="{StaticResource FontFamily.Wordmark}"
+                               Foreground="{DynamicResource Brush.Text.Primary}" TextAlignment="Center" />
+                    <TextBlock Text="{Binding Value.Text, StringFormat='版本 {0}'}"
+                               Margin="0,4,0,0" Foreground="{DynamicResource Brush.Text.Muted}" TextAlignment="Center" />
                 </StackPanel>
                 <views:ProjectAboutView Project="{Binding About.Content}" OpenLink="{Binding About.OpenLink}" />
             </StackPanel>
@@ -210,7 +201,7 @@
             </Style.Triggers>
         </Style>
         <Style x:Key="RowBorder" TargetType="Border">
-            <Setter Property="Padding" Value="16,14" />
+            <Setter Property="Padding" Value="0,14" />
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border.Subtle}" />
             <Setter Property="BorderThickness" Value="0,1,0,0" />
             <Style.Triggers>
@@ -218,84 +209,66 @@
                     RelativeSource={RelativeSource AncestorType=ContentPresenter}}">
                     <Setter Property="BorderThickness" Value="0" />
                 </DataTrigger>
+                <DataTrigger Binding="{Binding Definition.Type}" Value="{x:Static settings:SettingsItemKind.About}">
+                    <Setter Property="Padding" Value="0" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding Action.IsVisible}" Value="False">
                     <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
     </UserControl.Resources>
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="160" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
-        <Border Padding="12,16" Background="{DynamicResource Brush.Surface}"
-                BorderBrush="{DynamicResource Brush.Border.Subtle}" BorderThickness="0,0,1,0">
-            <!-- No scroll host: the list is short, and the content column owns scrolling. -->
-            <ListBox x:Name="SectionNavigation" ItemsSource="{Binding Sections}" SelectedIndex="0"
-                     ItemContainerStyle="{StaticResource NavigationItem}"
-                     AutomationProperties.Name="设置分类"
-                     SelectionChanged="SectionNavigation_SelectionChanged">
-                <ListBox.Template>
-                    <ControlTemplate TargetType="ListBox">
-                        <ItemsPresenter />
-                    </ControlTemplate>
-                </ListBox.Template>
-                <ListBox.ItemTemplate>
+    <ScrollViewer x:Name="SectionScroller" Background="{DynamicResource Brush.Canvas}"
+                  HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                  ScrollChanged="SectionScroller_ScrollChanged">
+        <StackPanel Margin="48,40,48,80" MaxWidth="640">
+            <TextBlock Text="设置" FontSize="24" FontWeight="Medium" LineHeight="32"
+                       LineStackingStrategy="BlockLineHeight" Margin="0,0,0,8"
+                       Foreground="{DynamicResource Brush.Text.Primary}" />
+            <ItemsControl x:Name="SectionList" ItemsSource="{Binding Sections}">
+                <ItemsControl.ItemContainerStyle>
+                    <Style TargetType="ContentPresenter">
+                        <Setter Property="Margin" Value="0,32,0,0" />
+                    </Style>
+                </ItemsControl.ItemContainerStyle>
+                <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Orientation="Horizontal">
-                            <ui:SymbolIcon Symbol="{Binding Definition.Icon}" FontSize="16" Margin="0,0,8,0"
-                                           Foreground="{Binding Foreground,
-                                               RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
-                            <TextBlock Text="{Binding Definition.Title}" FontWeight="Medium"
-                                       Foreground="{Binding Foreground,
-                                           RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+                        <StackPanel>
+                            <TextBlock Text="{Binding Definition.Title}" FontSize="16" FontWeight="Medium"
+                                       LineHeight="24" LineStackingStrategy="BlockLineHeight"
+                                       Foreground="{DynamicResource Brush.Text.Primary}" />
+                            <TextBlock Text="{Binding Definition.Description}" Margin="0,4,0,0"
+                                       Style="{StaticResource ItemDescription}" />
+                            <ItemsControl ItemsSource="{Binding Cards}" AlternationCount="2147483647" Margin="0,12,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <ItemsControl ItemsSource="{Binding}" AlternationCount="2147483647">
+                                            <ItemsControl.Style>
+                                                <Style TargetType="ItemsControl">
+                                                    <Setter Property="Margin" Value="0,20,0,0" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Value="0" Binding="{Binding (ItemsControl.AlternationIndex),
+                                                                     RelativeSource={RelativeSource AncestorType=ContentPresenter}}">
+                                                            <Setter Property="Margin" Value="0" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ItemsControl.Style>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Style="{StaticResource RowBorder}">
+                                                        <ContentControl Content="{Binding}" Style="{StaticResource SettingRow}" />
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
                     </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </Border>
-        <ScrollViewer x:Name="SectionScroller" Grid.Column="1" HorizontalScrollBarVisibility="Disabled"
-                      VerticalScrollBarVisibility="Auto" ScrollChanged="SectionScroller_ScrollChanged">
-            <Grid Margin="24" MaxWidth="624">
-                <ItemsControl x:Name="SectionList" ItemsSource="{Binding Sections}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Margin="0,0,0,20">
-                                <StackPanel Orientation="Horizontal">
-                                    <ui:SymbolIcon Symbol="{Binding Definition.Icon}" FontSize="16" Margin="0,0,8,0"
-                                                   Foreground="{DynamicResource Brush.Text.Primary}" />
-                                    <TextBlock Text="{Binding Definition.Title}" FontWeight="SemiBold"
-                                               Foreground="{DynamicResource Brush.Text.Primary}" />
-                                </StackPanel>
-                                <TextBlock Text="{Binding Definition.Description}" Margin="0,4,0,0"
-                                           Style="{StaticResource OptionalText}" />
-                                <ItemsControl ItemsSource="{Binding Cards}" Margin="0,12,0,0">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Margin="0,0,0,12" Background="{DynamicResource Brush.Surface}"
-                                                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
-                                                    CornerRadius="10">
-                                                <ItemsControl ItemsSource="{Binding}"
-                                                              AlternationCount="2147483647">
-                                                    <ItemsControl.ItemTemplate>
-                                                        <DataTemplate>
-                                                            <Border Style="{StaticResource RowBorder}">
-                                                                <ContentControl Content="{Binding}"
-                                                                    Style="{StaticResource SettingRow}" />
-                                                            </Border>
-                                                        </DataTemplate>
-                                                    </ItemsControl.ItemTemplate>
-                                                </ItemsControl>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </Grid>
-        </ScrollViewer>
-    </Grid>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

@@ -8,7 +8,7 @@ namespace Gui.Views;
 // The project's description under the about header, and its contact details as the next row.
 public partial class ProjectAboutView : System.Windows.Controls.UserControl
 {
-    private static readonly MarkdownStyle DescriptionStyle = new(13, 20, 18, 20, "Brush.Text.Secondary");
+    private static readonly MarkdownStyle DescriptionStyle = new(14, 24, 18, 24, "Brush.Text.Muted");
     private static readonly MarkdownStyle ContactStyle = new(13, 20, 18, 20, "Brush.Text.Muted");
 
     public static readonly DependencyProperty ProjectProperty = DependencyProperty.Register(
@@ -38,7 +38,7 @@ public partial class ProjectAboutView : System.Windows.Controls.UserControl
     private void Refresh()
     {
         Show(Description, Description, Project?.Description, "查看项目简介", DescriptionStyle,
-            TextAlignment.Center);
+            TextAlignment.Left);
         Show(ContactRow, Contact, Project?.Contact, "查看联系方式", ContactStyle, TextAlignment.Left);
     }
 

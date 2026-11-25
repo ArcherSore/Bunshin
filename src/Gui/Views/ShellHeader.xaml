@@ -85,7 +85,7 @@
                 </Border>
             </ui:TitleBar.TrailingContent>
         </ui:TitleBar>
-        <Border Height="1" VerticalAlignment="Bottom" Background="{DynamicResource Brush.Rail.Border}"
+        <Border x:Name="HeaderDivider" Height="1" VerticalAlignment="Bottom" Background="{DynamicResource Brush.Rail.Border}"
                 IsHitTestVisible="False" />
     </Grid>
 </UserControl>
