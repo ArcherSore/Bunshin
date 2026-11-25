@@ -648,6 +648,12 @@ internal static partial class SelfTestRunner
             if (shelf.Visibility != System.Windows.Visibility.Collapsed) {
                 throw new InvalidOperationException("添加任务面板应默认收起。");
             }
+            // The shelf overlays the full plan viewport, so populate enough rows to make that viewport scroll.
+            var project = ProjectOf(window);
+            foreach (var index in Enumerable.Range(4, 16)) {
+                project.AddItem(Protocol.PlanItemKind.MaaTask, $"Task{index}");
+            }
+            InvokeEditor(window, "RenderTaskPlan");
             ClickOnboarding(window, "TaskShelfHeaderButton");
             foreach (var width in new[] { 1440, 920 }) {
                 window.Width = width;

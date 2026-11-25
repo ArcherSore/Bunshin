@@ -58,7 +58,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private bool _exitInProgress;
     private bool _followLogs = true;
     private bool _projectConfigurationValid;
-    private IInputElement? _descriptionDrawerPreviousFocus;
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
@@ -99,7 +98,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
-            HandleOperationError);
+            HandleOperationError, OpenTaskDescriptionLink);
         TaskPlanEditor.PlanEdited += (_, _) => {
             _lastStartKey = null;
             _editVersion++;
@@ -113,11 +112,9 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             _settings.UpdateAutoRunConfigurations(AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
             RefreshShellTitles();
         };
-        TaskPlanEditor.TaskDescriptionRequested += (_, task) => OpenTaskDescriptionDrawer(task);
-        TaskPlanEditor.TaskDescriptionCloseRequested += (_, _) => CloseTaskDescriptionDrawer();
         TaskPlanEditor.StartRequested += StartPlanButton_Click;
         TaskPlanEditor.StopRequested += StopRunButton_Click;
-        _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadRuntimeSidebarWidth();
+        _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadSidebarWidth(RuntimeSidebarWidthFile, "运行面板");
         _sessionManager = sessionManager;
         _workerCoordinator = workerCoordinator;
         _workerCoordinator.FrameworkOptions = _settings.CreateFrameworkOptions;
@@ -212,17 +209,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             return;
         }
         try {
-            RuntimeSidebar.AutoSessionMenuItem.IsChecked = File.Exists(AutoSessionPath)
-                && File.ReadAllText(AutoSessionPath).Trim() == "true";
             // An auto-run prepares the environment itself, so the preparation below would only repeat it.
             if (await AutoRunOnLaunchAsync()) {
                 return;
             }
-            if (RuntimeSidebar.AutoSessionMenuItem.IsChecked && CurrentControls.Action is RuntimeAction.Prepare { Enabled: true }) {
+            if (_settings.AutoStartDesktop.Value && CurrentControls.Action is RuntimeAction.Prepare { Enabled: true }) {
                 await PrepareFromPanelAsync();
             }
         } catch (Exception exception) {
-            _logger.Warn("读取自动启动分身设置失败。", exception);
+            _logger.Warn("启动时自动执行或启动分身失败。", exception);
         }
     }
 
@@ -321,25 +316,15 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void SwitchSection(MainSection section)
     {
+        CancelSidebarDrag();
         CancelRuntimeSidebarDrag();
-        if (section == MainSection.Settings && _section != MainSection.Settings) {
-            _sectionBeforeSettings = _section;
-        }
         _section = section;
-        CloseTaskDescriptionDrawer();
         HomeView.Visibility = section == MainSection.Home
             ? Visibility.Visible
             : Visibility.Collapsed;
-        RuntimeSidebarVisibility(section);
-        SettingsView.Visibility = section == MainSection.Settings
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        UpdateRuntimePanelLayout();
         HelpView.Visibility = section == MainSection.Help ? Visibility.Visible : Visibility.Collapsed;
         ScheduleView.Visibility = section == MainSection.Schedule ? Visibility.Visible : Visibility.Collapsed;
-        if (section == MainSection.Settings) {
-            RefreshChildSessionCredentialStatus();
-            RefreshDebugFileUsage();
-        }
 
         Sidebar.MarkActive(section);
         RefreshShellTitles();
@@ -395,8 +380,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
     }
 
-    private void OpenLogsMenuItem_Click(object sender, RoutedEventArgs e) => TryOpenLogsDirectory();
-
     // The same routine as the tray's "结束桌面分身", including its confirmation.
     private async void EndEnvironmentMenuItem_Click(object sender, RoutedEventArgs e)
     {
@@ -410,21 +393,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         state.Action is RuntimeAction.Recover { Enabled: true } ? null
         : !state.CommandsAvailable ? "处理中"
         : !state.Desktop.Enabled ? "未创建" : null;
-
-    private string AutoSessionPath => Path.Combine(_applicationDirectory, "config", "auto-session.txt");
-
-    private void AutoSessionMenuItem_Click(object sender, RoutedEventArgs e)
-    {
-        try {
-            Directory.CreateDirectory(Path.GetDirectoryName(AutoSessionPath)!);
-            File.WriteAllText(AutoSessionPath, RuntimeSidebar.AutoSessionMenuItem.IsChecked ? "true" : "false");
-            _settings.LogToggleChanged("application.autoSession", RuntimeSidebar.AutoSessionMenuItem.IsChecked);
-        } catch (Exception exception) {
-            _logger.Warn("保存自动启动分身设置失败。", exception);
-            RuntimeSidebar.AutoSessionMenuItem.IsChecked = !RuntimeSidebar.AutoSessionMenuItem.IsChecked;
-            ShowActionableError("保存自动启动分身设置失败", exception, "请检查配置目录写入权限。", offerLogDirectory: false);
-        }
-    }
 
     private void StartPlanButton_Click(object sender, RoutedEventArgs e)
     {
@@ -624,18 +592,13 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             });
     }
 
-    private void TaskDescriptionCloseButton_Click(object sender, RoutedEventArgs e) => CloseTaskDescriptionDrawer();
-
-    private void TaskDescriptionScrim_Click(object sender, RoutedEventArgs e) => CloseTaskDescriptionDrawer();
-
     private void MainWindow_PreviewKeyDown(object sender, WpfKeyEventArgs e)
     {
         if (PromptOverlay.Visibility == Visibility.Visible) {
             e.Handled = HandleWindowPromptKey(e);
             return;
         }
-        if (!IsOnboardingVisible && !IsGlobalModalOpen && TaskDescriptionOverlay.Visibility != Visibility.Visible
-            && HandleSidebarShortcut(e)) {
+        if (!IsOnboardingVisible && !IsGlobalModalOpen && !SettingsOpen && HandleSidebarShortcut(e)) {
             e.Handled = true;
             return;
         }
@@ -663,49 +626,19 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             e.Handled = true;
             return;
         }
-        if (e.Key == Key.Escape && TaskDescriptionOverlay.Visibility == Visibility.Visible) {
-            CloseTaskDescriptionDrawer();
-            e.Handled = true;
-        }
-    }
-
-    private void OpenTaskDescriptionDrawer(ProjectTaskChoice task)
-    {
-        if (_onboardingActive) {
-            return;
-        }
-        _descriptionDrawerPreviousFocus = Keyboard.FocusedElement;
-        TaskDescriptionDrawerTitle.Text = task.Label;
-        TaskDescriptionViewer.Document = MarkdownDocument.Create(task.Description, OpenTaskDescriptionLink);
-        FindVisualChild<ScrollViewer>(TaskDescriptionViewer)?.ScrollToTop();
-        TaskDescriptionOverlay.Visibility = Visibility.Visible;
-        TaskDescriptionCloseButton.Focus();
-    }
-
-    private void CloseTaskDescriptionDrawer()
-    {
-        if (TaskDescriptionOverlay.Visibility != Visibility.Visible) {
-            return;
-        }
-        TaskDescriptionOverlay.Visibility = Visibility.Collapsed;
-        if (_descriptionDrawerPreviousFocus is FrameworkElement element) {
-            if (!element.IsVisible && element.Tag is ProjectTaskChoice task
-                && TaskPlanEditor.PlanItemCard(task) is { } card) {
-                card.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
-            }
-            if (element.IsVisible) {
-                element.Focus();
-            }
-        }
-        _descriptionDrawerPreviousFocus = null;
-        ReevaluateOnboarding();
     }
 
     // Esc first clears the search, then closes the panel, wherever focus is. It arrives here only when no editor
     // used it, so reverting a parameter draft or cancelling a rename keeps its own Esc.
     private void MainWindow_KeyDown(object sender, WpfKeyEventArgs e)
     {
-        if (e.Key == Key.Escape && HomeView.Visibility == Visibility.Visible && TaskPlanEditor.DismissTaskShelf()) {
+        if (e.Key != Key.Escape) {
+            return;
+        }
+        if (SettingsOpen && !IsGlobalModalOpen) {
+            CloseSettings();
+            e.Handled = true;
+        } else if (!IsGlobalModalOpen && HomeView.Visibility == Visibility.Visible && TaskPlanEditor.DismissTaskShelf()) {
             e.Handled = true;
         }
     }
@@ -858,7 +791,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         ShowProjectIdentity(project);
         _lastStartKey = null;
         _projectVersion++;
-        CloseTaskDescriptionDrawer();
         var expanded = project.InitializedTaskName
             ?? (_onboardingPreferences.ShouldOfferAutomatically && !_onboardingAutoEnded
                 ? project.SelectedTaskNames.FirstOrDefault() : null);
@@ -891,7 +823,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _projectVersion++;
         _projectConfigurationValid = false;
         TaskPlanEditor.ShowProjectUnavailable(emptyStateTitle, emptyStateDetail);
-        CloseTaskDescriptionDrawer();
     }
 
     internal static bool IsUserFacingRunLog(WorkerLogEntry entry) =>
@@ -998,7 +929,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private void RemoveModalWindowHook()
     {
         // The countdown can sit above another dialog; the hook stays until the last one closes.
-        if (IsGlobalModalOpen && !_allowClose) {
+        if ((IsGlobalModalOpen || SettingsOpen) && !_allowClose) {
             return;
         }
         _modalWindowSource?.RemoveHook(ModalWindowHook);
@@ -1007,7 +938,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private nint ModalWindowHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
-        if (!IsGlobalModalOpen) {
+        if (!IsGlobalModalOpen && !SettingsOpen) {
             return 0;
         }
         // WPF-UI caption buttons handle native messages independently of WPF overlay hit testing.

@@ -181,12 +181,15 @@ internal static partial class SelfTestRunner
                 if (!cleanupCollision && order != SettlementOrder.ForcedCountdown) {
                     ExpectBusy("正在运行其他任务");
                 }
-                void Publish(RunSnapshot last, long revision)
+                void WriteState(WorkerSnapshot state)
                 {
                     // A later frame may be sent after the simulated cleanup and exit confirmation finish.
                     using var writeDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                    Task.Run(() => pipe.WriteAsync(StateEvent(snapshot with { StateRevision = revision,
-                        LastRun = last }), writeDeadline.Token)).GetAwaiter().GetResult();
+                    Task.Run(() => pipe.WriteAsync(StateEvent(state), writeDeadline.Token)).GetAwaiter().GetResult();
+                }
+                void Publish(RunSnapshot last, long revision)
+                {
+                    WriteState(snapshot with { StateRevision = revision, LastRun = last });
                     PumpUntil(() => coordinator.Snapshot.WorkerSnapshot?.StateRevision >= revision,
                         "必须观察到新的 Worker 快照。");
                     PumpOnboarding();
@@ -344,7 +347,7 @@ internal static partial class SelfTestRunner
                         AwaitWorker(coordinator, s => s.FreshReadyToStart && s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                             "完整补查未返回时，协调器应已发布 A 的新鲜终态。");
                     } else {
-                        Task.Run(() => pipe.WriteAsync(StateEvent(received), token)).GetAwaiter().GetResult();
+                        WriteState(received);
                     }
                     AwaitWorker(coordinator, s => s.WorkerSnapshot?.LastRun?.RunId == own.RunId,
                         "下一分钟到来时 Worker 应已报告此前 Run 的终态。");

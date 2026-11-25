@@ -37,6 +37,8 @@ internal sealed class ApplicationSettings
         RuntimePanelCollapsed = CreatePersistedToggle(
             Path.Combine(applicationDirectory, "config", "runtime-panel-collapsed.txt"),
             "application.runtimePanelCollapsed", "运行面板收起", false, null);
+        AutoStartDesktop = CreatePersistedToggle(Path.Combine(applicationDirectory, "config", "auto-session.txt"),
+            "application.autoSession", "打开程序时自动启动分身", false, null);
         CloseToTray = new SettingsToggle(SaveClosePreference);
         try {
             CloseToTray.Initialize(!File.Exists(_closePreferencePath)
@@ -109,6 +111,7 @@ internal sealed class ApplicationSettings
         Registry.Toggles.Add("update.checkOnStartup", CheckOnStartup);
         Registry.Toggles.Add("application.closeToTray", CloseToTray);
         Registry.Toggles.Add("application.autostart", Autostart);
+        Registry.Toggles.Add("application.autoSession", AutoStartDesktop);
         Registry.Toggles.Add("autorun.onManualLaunch", AutoRunOnManualLaunch);
         Registry.Choices.Add("autorun.configuration", AutoRunConfiguration);
         Registry.Toggles.Add("schedule.forceStart", ForceScheduledStart);
@@ -140,6 +143,7 @@ internal sealed class ApplicationSettings
     internal SettingsToggle CheckOnStartup { get; }
     internal SettingsToggle CloseToTray { get; }
     internal SettingsToggle Autostart { get; }
+    internal SettingsToggle AutoStartDesktop { get; }
     internal SettingsChoice AutoRunConfiguration { get; }
     internal SettingsChoice Appearance { get; }
     internal SettingsToggle SidebarCollapsed { get; }

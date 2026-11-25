@@ -9,7 +9,8 @@ internal enum UpdateDialogState { Idle, Checking, Available, Latest, CheckFailed
 
 public partial class SoftwareUpdateDialog : System.Windows.Controls.UserControl
 {
-    private static readonly MarkdownStyle NotesStyle = new(14, 22, 18, 22, "Brush.Text.Muted", "Brush.Text.Primary", ParagraphSpacing: 5);
+    private static readonly MarkdownStyle NotesStyle = new(14, 22, 18, 22, "Brush.Text.Muted", "Brush.Text.Primary",
+        ParagraphSpacing: 5, ShowLinkToolTips: false);
 
     public SoftwareUpdateDialog() => InitializeComponent();
 

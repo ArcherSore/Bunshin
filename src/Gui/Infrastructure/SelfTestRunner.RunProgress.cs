@@ -58,6 +58,8 @@ internal static partial class SelfTestRunner
                 plan, "Failed,NotRun,NotRun", null, "已处理 1 / 3 · 0 成功 · 1 失败"),
             ("用户停止", Last(Run(RunState.Cancelled, (succeeded, true), (cancelled, true), (cancelled, false))),
                 plan, "Succeeded,Stopped,NotRun", null, "上次运行：1 成功 · 已停止 · 1 未执行"),
+            ("首项启动前停止", Last(Run(RunState.Cancelled, (cancelled, false), (cancelled, false), (cancelled, false))),
+                plan, "NotRun,NotRun,NotRun", null, "上次运行：0 成功 · 已停止 · 3 未执行"),
             ("因失败中止", Last(Run(RunState.Failed, (succeeded, true), (failed, true), (cancelled, false))),
                 plan, "Succeeded,Failed,NotRun", null, "上次运行：1 成功 · 1 失败 · 1 未执行"),
             ("全部成功", Last(Run(RunState.Succeeded, (succeeded, true), (succeeded, true), (succeeded, true))),
@@ -87,8 +89,6 @@ internal static partial class SelfTestRunner
     // The console is one card with two sections; the activity log takes all height below the run control.
     private static void VerifyRuntimeConsole(AppLogger logger, string testDirectory)
     {
-        Require(MainWindow.SidebarWidth(600) == 340 && MainWindow.SidebarWidth(1200) == 420
-            && MainWindow.SidebarWidth(2000) == 540, "侧栏宽度应为主页内容的 35%，限制在 340–540。");
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "runtime-console"), (window, _) => {
             EndTour(window);
             var console = Named<FrameworkElement>(window, "RuntimeSidebar");
@@ -97,8 +97,8 @@ internal static partial class SelfTestRunner
                 window.Width = width;
                 window.Height = width == 920 ? 640 : width == 1180 ? 760 : 900;
                 PumpOnboarding();
-                Require(Math.Abs(console.ActualWidth - MainWindow.SidebarWidth(home.ActualWidth)) < 1
-                    && console.ActualWidth is >= 340 and <= 540
+                Require(Math.Abs(console.ActualWidth - 320) < 1
+                    && console.ActualWidth is >= 220 and <= 800
                     && Named<FrameworkElement>(window, "TasksView").ActualWidth > 0
                     && console.TransformToAncestor(home).Transform(new Point(console.ActualWidth, 0)).X
                         <= home.ActualWidth + PixelTolerance, $"{width} 宽度下侧栏宽度或主页布局不符。");
@@ -113,22 +113,25 @@ internal static partial class SelfTestRunner
             }
             var desktop = new DesktopToggle(DesktopAction.Show, true, DesktopStatus.Background);
 
-            foreach (var (state, endReason) in new (RuntimeControlState, string)[] {
-                (new(new RuntimeAction.Start(true), true, null, desktop, true), ""),
-                (new(new RuntimeAction.Stop(true), false, LockReason.RunActive, desktop, true), "请先停止任务"),
-                (new(new RuntimeAction.Prepare(true), true, null, desktop with { Enabled = false }, true),
-                    "未创建"),
+            foreach (var (state, showClose, endReason) in new (RuntimeControlState, bool, string)[] {
+                (new(new RuntimeAction.Start(true), true, null, desktop, true), true, ""),
+                (new(new RuntimeAction.Stop(true), false, LockReason.RunActive, desktop, true), true, "请先停止任务"),
+                (new(new RuntimeAction.Prepare(true), true, null,
+                    desktop with { Enabled = false, Status = DesktopStatus.NotRunning }, true), false, "未创建"),
                 (new(new RuntimeAction.InProgress(ProgressKind.PreparingEnvironment), false, LockReason.RuntimeBusy,
-                    desktop with { Enabled = false }, false), "处理中"),
+                    desktop with { Enabled = false, Status = DesktopStatus.Connecting }, false), false, "处理中"),
                 (new(new RuntimeAction.Recover(true, RecoveryReason.WorkerLost), false, LockReason.RuntimeBusy,
-                    desktop, true), "")
+                    desktop, true), true, "")
             }) {
                 window.ApplyRuntimeControls(state);
                 var end = Named<System.Windows.Controls.MenuItem>(window, "EndEnvironmentMenuItem");
+                var start = Named<System.Windows.Controls.MenuItem>(window, "StartSessionMenuItem");
                 Require(end.IsEnabled == (endReason.Length == 0)
-                    && string.IsNullOrEmpty(end.InputGestureText) == (endReason.Length == 0)
-                    && Named<System.Windows.Controls.MenuItem>(window, "OpenLogsMenuItem").IsEnabled,
-                    $"{state.Action} 时更多操作菜单的可用性或原因不符。");
+                    && (string?)end.ToolTip == (endReason.Length == 0 ? "注销分身，游戏随之关闭" : endReason)
+                    && end.Visibility == (showClose ? Visibility.Visible : Visibility.Collapsed)
+                    && start.Visibility == (showClose ? Visibility.Collapsed : Visibility.Visible)
+                    && start.IsEnabled == (state.Action is RuntimeAction.Prepare { Enabled: true }),
+                    $"{state.Action} 时分身菜单的动作、可用性或原因不符。");
             }
 
             SetOnboardingField(window, "_sessionSnapshot",
@@ -230,7 +233,9 @@ internal static partial class SelfTestRunner
             }
 
             Observe(idle with {
-                LastRun = run with { State = RunState.Succeeded, Items = [Item(PlanItemState.Succeeded, started)] }
+                LastRun = run with {
+                    State = RunState.Succeeded, EndedAtUtc = started, Items = [Item(PlanItemState.Succeeded, started)]
+                }
             });
             CheckSummary("Brush.Surface.Subdued", "Brush.Border.Subtle");
             RequireReadableText(window.RuntimeSidebar.RunProgressCaption, window.RuntimeSidebar.RunSummaryCard);

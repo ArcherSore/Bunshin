@@ -17,7 +17,7 @@ internal sealed record PlanItemProgressView(
 
 // The progress of the active Run, or of the last Run while it still describes the plan on screen.
 internal sealed record RunProgressView(
-    bool Active, IReadOnlyList<PlanItemProgressView> Items, int? CurrentIndex, DateTime? StartedAtUtc,
+    bool Active, RunState State, IReadOnlyList<PlanItemProgressView> Items, int? CurrentIndex, DateTime? StartedAtUtc,
     DateTime? EndedAtUtc)
 {
     internal int Total => Items.Count;
@@ -25,6 +25,7 @@ internal sealed record RunProgressView(
     internal int Failed => Count(PlanItemProgress.Failed);
     internal int Stopped => Count(PlanItemProgress.Stopped);
     internal int NotRun => Count(PlanItemProgress.NotRun);
+    internal bool WasStopped => State == RunState.Cancelled || Stopped > 0;
     // Only finished items count as processed; a stopped or skipped item never does.
     internal int Processed => Succeeded + Failed;
     internal PlanItemProgressView? Current => CurrentIndex is { } index ? Items[index] : null;
@@ -61,7 +62,7 @@ internal static class RunProgress
         if (run.Active) {
             return $"已处理 {run.Processed} / {run.Total} · {counts}";
         }
-        var stopped = run.Stopped == 0 ? "" : " · 已停止";
+        var stopped = run.WasStopped ? " · 已停止" : "";
         var notRun = run.NotRun == 0 ? "" : $" · {run.NotRun} 未执行";
         return $"上次运行：{counts}{stopped}{notRun}";
     }
@@ -87,6 +88,6 @@ internal static class RunProgress
         }).ToArray();
         var current = active && run.CurrentPlanItemIndex is { } index && index >= 0 && index < items.Length
             ? (int?)index : null;
-        return new RunProgressView(active, items, current, run.StartedAtUtc, run.EndedAtUtc);
+        return new RunProgressView(active, run.State, items, current, run.StartedAtUtc, run.EndedAtUtc);
     }
 }

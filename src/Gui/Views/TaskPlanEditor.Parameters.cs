@@ -28,7 +28,7 @@ public sealed partial class TaskPlanEditor
         var project = RequireProject();
         var drafts = _invalidInputDrafts.Where(pair => pair.Key.Item1 == project.ActiveConfigurationId)
             .ToDictionary(pair => (pair.Key.Item2, pair.Key.Item3), pair => pair.Value);
-        return ParameterInspector.Derive(configuration, drafts, project.OptionOwners);
+        return ParameterInspector.Derive(configuration, drafts);
     }
 
     private void FillParameterPreview(TextBlock preview, ProjectConfigurationView configuration, Border? container = null)
@@ -53,7 +53,11 @@ public sealed partial class TaskPlanEditor
             preview.ToolTip = message;
         } else {
             container?.ClearValue(BackgroundProperty);
-            preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            if (container is null) {
+                preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            } else {
+                preview.ClearValue(TextBlock.ForegroundProperty);
+            }
             var values = rows.Where(row => !row.IsGlobal).SelectMany(PreviewValues).ToArray();
             preview.Text = string.Join(" · ", values.Select(item => $"{item.Label} {item.Value}".ReplaceLineEndings(" ")));
             preview.ToolTip = values.Length == 0 ? null
@@ -120,10 +124,6 @@ public sealed partial class TaskPlanEditor
         if (row.Kind != ProjectOptionKind.Switch) {
             label.Children.Add(new TextBlock { Text = row.Label, Style = (Style)FindResource("Inspector.Label") });
         }
-        if (row.IsGlobal || row.SharedWith.Count > 1) {
-            label.Children.Add(CreateSharedHint(row));
-        }
-
         var caseNotes = new StackPanel();
         var inputs = new Dictionary<string, InspectorInputView>(StringComparer.Ordinal);
         var nested = new StackPanel();
@@ -147,18 +147,6 @@ public sealed partial class TaskPlanEditor
         var view = new InspectorRowView(row.Option.Name, panel, selector, caseNotes, inputs, nested, []);
         ApplyInspectorRow(view, row, animate: false);
         return view;
-    }
-
-    private FrameworkElement CreateSharedHint(InspectorRow row)
-    {
-        var text = row.IsGlobal ? "所有任务共用" : $"{row.SharedWith.Count} 个任务共用";
-        var hint = new TextBlock {
-            Text = text, Style = (Style)FindResource("Inspector.Shared"), Margin = new Thickness(0, 2, 0, 0),
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-            ToolTip = row.IsGlobal ? "所有任务共用一个值" : string.Join("\n", row.SharedWith)
-        };
-        ToolTipService.SetShowOnDisabled(hint, true);
-        return hint;
     }
 
     private FrameworkElement CreateInputCells(InspectorRow row, Dictionary<string, InspectorInputView> inputs)
@@ -222,13 +210,6 @@ public sealed partial class TaskPlanEditor
         editor.LostKeyboardFocus += OptionInputTextBox_LostKeyboardFocus;
         editor.PreviewKeyDown += OptionInputTextBox_PreviewKeyDown;
         BindConfigurationEditable(editor);
-        if (editor is Wpf.Ui.Controls.PasswordBox password) {
-            password.IsKeyboardFocusWithinChanged += (_, _) => {
-                if (!password.IsKeyboardFocusWithin) {
-                    password.SetCurrentValue(Wpf.Ui.Controls.PasswordBox.IsPasswordRevealedProperty, false);
-                }
-            };
-        }
         if (input.Input.InputType is ProjectInputType.Text or ProjectInputType.Password) {
             editor.MaxWidth = input.Input.IsPassword ? 200 : input.Input.IsInteger ? 88 : row.Depth > 0 ? 160 : 200;
             return (editor, LimitEditor(editor, editor.MaxWidth));

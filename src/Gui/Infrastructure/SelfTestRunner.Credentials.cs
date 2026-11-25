@@ -142,7 +142,7 @@ internal static partial class SelfTestRunner
             Require(action.Status == "未保存" && SettingsButtonFor(window, "childSession.credentials").IsEnabled,
                 "Settings 默认显示未保存，保存入口可用。");
             store.Save(FakeAccount, FakePassword);
-            ClickHome(window);
+            ClickOnboarding(window.SettingsView, "CloseSettingsButton");
             ClickOnboarding(window, "SettingsNavigationItem");
             var view = (SettingsView)window.FindName("SettingsView");
             Require(action.Status == $"已保存：{FakeAccount}" && !action.Status.Contains(FakePassword)
@@ -153,7 +153,7 @@ internal static partial class SelfTestRunner
                          (true, ((string?, string?)?)(FakeAccount, FakePassword)), (false, (FakeAccount, "")) }) {
                 vault.ReadFails = readFails;
                 vault.Saved = saved;
-                ClickHome(window);
+                ClickOnboarding(window.SettingsView, "CloseSettingsButton");
                 ClickOnboarding(window, "SettingsNavigationItem");
                 Require(action.Status.StartsWith("已保存的凭据无法读取或不完整", StringComparison.Ordinal)
                     && SettingsButtonFor(window, "childSession.credentials").IsEnabled,
@@ -165,7 +165,7 @@ internal static partial class SelfTestRunner
             Require(store.ReadUserName() == FakeAccount && action.Status == $"已保存：{FakeAccount}",
                 "从不完整的凭据重新保存必须覆盖原条目并刷新状态。");
             vault.Saved = null;
-            ClickHome(window);
+            ClickOnboarding(window.SettingsView, "CloseSettingsButton");
             ClickOnboarding(window, "SettingsNavigationItem");
             Require(action.Status == "未保存", "凭据从应用外删除后，进入 Settings 必须刷新为未保存。");
         }, credentials: store);

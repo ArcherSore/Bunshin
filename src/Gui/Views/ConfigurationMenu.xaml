@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              Placement="Bottom" VerticalOffset="2" MinWidth="242" HasDropShadow="True"
-             FontFamily="{StaticResource FontFamily.Ui}" FontSize="{StaticResource FontSize.Body}"
+             FontFamily="{StaticResource FontFamily.Ui}" FontSize="14"
              Foreground="{DynamicResource Brush.Text.Primary}"
              Background="{DynamicResource Brush.Canvas}" BorderBrush="{DynamicResource Brush.Border}">
     <ContextMenu.Resources>
@@ -11,7 +11,7 @@
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
             <Setter Property="Padding" Value="10,0" />
             <Setter Property="FontFamily" Value="{StaticResource FontFamily.Ui}" />
-            <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="Height" Value="32" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -28,10 +28,11 @@
                                     <ContentPresenter x:Name="Icon" ContentSource="Icon" Margin="0,0,12,0"
                                                       VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1" Text="{TemplateBinding Header}" VerticalAlignment="Center"
-                                               Foreground="{TemplateBinding Foreground}" TextTrimming="CharacterEllipsis" />
+                                               FontSize="{TemplateBinding FontSize}" Foreground="{TemplateBinding Foreground}"
+                                               TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}"
                                                FontSize="12" Margin="10,0,2,0" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                                               Foreground="{DynamicResource Brush.Text.Disabled}" />
                                     <ui:SymbolIcon x:Name="Chevron" Grid.Column="2" Symbol="ChevronRight16" FontSize="11"
                                                    Visibility="Collapsed" Foreground="{DynamicResource Brush.Text.Muted}" />
                                 </Grid>

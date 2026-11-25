@@ -160,7 +160,7 @@ internal static partial class SelfTestRunner
 
         var settings = OpenAboutSection(window);
         window.UpdateLayout();
-        var navigation = window.Sidebar.SectionNavigation;
+        var navigation = settings.SectionNavigation;
         var about = SettingsVisualDescendants(settings).OfType<ProjectAboutView>().Single();
         PumpUntil(() => about.TranslatePoint(default, settings).Y is >= 0 and var top && top < settings.ActualHeight,
             "设置页应已滚动到关于项目。");

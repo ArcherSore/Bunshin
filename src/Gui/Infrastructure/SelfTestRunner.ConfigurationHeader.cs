@@ -67,13 +67,14 @@ internal static partial class SelfTestRunner
             var scroll = list.ConfigurationScroll;
             var badge = (FrameworkElement)window.TaskPlanEditor.FindName("ConfigurationLockBadge");
             var menu = Named<UIElement>(window.Header, "ConfigurationMenuButton");
+            var name = Named<UIElement>(window.Header, "ConfigurationNameButton");
             Require(list.IsVisible && window.TaskPlanEditor.FindName("ConfigurationTabs") is null,
                 "任务配置应从执行计划上方移到侧栏。");
 
             window.SetPendingOperation(PendingOperation.PreparingEnvironment);
             window.UpdateLayout();
             Require(list.IsVisible && scroll.ScrollableHeight > 0 && add.IsVisible && !add.IsEnabled
-                && badge.IsVisible && !menu.IsEnabled, "锁定时应保留列表和说明、禁用管理操作。");
+                && badge.IsVisible && !menu.IsEnabled && !name.IsEnabled, "锁定时应保留列表和说明、禁用管理操作。");
             var priorOffset = scroll.VerticalOffset;
             scroll.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, -120) {
                 RoutedEvent = UIElement.MouseWheelEvent

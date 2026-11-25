@@ -139,7 +139,6 @@ internal static partial class SelfTestRunner
                 || !((System.Windows.UIElement)window.TaskPlanEditor.FindName("PlanScroll")).IsEnabled
                 || !buttons.Single(button => NameOf(button).StartsWith("Real task，", StringComparison.Ordinal))
                     .IsEnabled
-                || buttons.Single(button => NameOf(button) == "拖动以调整顺序").IsEnabled
                 || buttons.Single(button => NameOf(button).StartsWith("从执行计划移除", StringComparison.Ordinal))
                     .IsEnabled
                 || editors.Length < 3 || editors.Any(editor => editor.IsEnabled) || !LockBadgeShown()) {

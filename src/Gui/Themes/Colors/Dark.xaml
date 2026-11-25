@@ -34,6 +34,7 @@
     <SolidColorBrush x:Key="Brush.Primary" Color="#257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Foreground" Color="#6AABF1" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RuntimePanel.SwitchOff" Color="#24FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Switch.OffHover" Color="#3BFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Hover" Color="#2370CD" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Pressed" Color="#1D5FB0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Primary.Surface" Color="#33257DE0" po:Freeze="True" />
@@ -55,6 +56,7 @@
     <SolidColorBrush x:Key="Brush.Transparent" Color="#00FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.Field" Color="#0DFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.FieldHover" Color="#13FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Parameter.PasswordHover" Color="#37FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.Selected" Color="#404040" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.SwitchOff" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Parameter.InvalidRow" Color="#0FDC3C3D" po:Freeze="True" />
@@ -112,6 +114,7 @@
     <SolidColorBrush x:Key="Brush.Plan.Current" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Expanded" Color="#08FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Button" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Button.Hover" Color="#37FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Tag" Color="#0DFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Check" Color="#FFFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Progress" Color="#FF6AABF1" po:Freeze="True" />
@@ -148,5 +151,4 @@
     <DropShadowEffect x:Key="Effect.Surface.Light" Color="#000000" BlurRadius="8" ShadowDepth="1" Direction="270" Opacity="0.3" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Popover" Color="#000000" BlurRadius="24" ShadowDepth="7" Direction="270" Opacity="0.4" po:Freeze="True" />
     <DropShadowEffect x:Key="Effect.Surface.Drag" Color="#000000" BlurRadius="12" ShadowDepth="2" Direction="270" Opacity="0.4" po:Freeze="True" />
-    <DropShadowEffect x:Key="Effect.Surface.Drawer" Color="#000000" BlurRadius="16" ShadowDepth="3" Direction="180" Opacity="0.35" po:Freeze="True" />
 </ResourceDictionary>

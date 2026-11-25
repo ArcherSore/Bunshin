@@ -21,9 +21,6 @@
     <Style x:Key="Inspector.Error" TargetType="TextBlock" BasedOn="{StaticResource Inspector.Note}">
         <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
     </Style>
-    <Style x:Key="Inspector.Shared" TargetType="TextBlock" BasedOn="{StaticResource Inspector.Note}">
-        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
-    </Style>
     <Style x:Key="Inspector.InputLabel" TargetType="TextBlock" BasedOn="{StaticResource Inspector.Label}">
         <Setter Property="Margin" Value="0,0,0,4" />
         <Setter Property="FontSize" Value="12" />
@@ -49,13 +46,21 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ui:TextBox">
-                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8"
-                            Padding="{TemplateBinding Padding}">
-                        <ui:PassiveScrollViewer x:Name="PART_ContentHost"
-                                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                Style="{DynamicResource DefaultTextBoxScrollViewerStyle}" />
-                    </Border>
+                    <Grid>
+                        <Border x:Name="FocusHalo" Style="{StaticResource FieldFocusHaloStyle}" />
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8"
+                                Padding="{TemplateBinding Padding}">
+                            <ui:PassiveScrollViewer x:Name="PART_ContentHost"
+                                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                    Style="{DynamicResource DefaultTextBoxScrollViewerStyle}" />
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter TargetName="FocusHalo" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -75,37 +80,16 @@
 
     <Style x:Key="Option.PasswordBox" TargetType="ui:PasswordBox" BasedOn="{StaticResource Option.TextBox}">
         <Setter Property="ContextMenu" Value="{DynamicResource DefaultPasswordBoxContextMenu}" />
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="ui:PasswordBox">
-                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8"
-                            Padding="10,0,4,0">
-                        <DockPanel>
-                            <Button x:Name="RevealPassword" DockPanel.Dock="Right" Width="24" Height="24"
-                                    MinWidth="0" MinHeight="0" Padding="0" Cursor="Hand"
-                                    Style="{StaticResource SubtleButtonStyle}"
-                                    ToolTip="显示密码" AutomationProperties.Name="显示密码"
-                                    Command="{Binding TemplateButtonCommand, RelativeSource={RelativeSource TemplatedParent}}"
-                                    CommandParameter="reveal">
-                                <ui:SymbolIcon x:Name="RevealIcon" Symbol="Eye24" FontSize="14"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
-                            </Button>
-                            <ui:PassiveScrollViewer x:Name="PART_ContentHost"
-                                                    VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                                    Style="{DynamicResource DefaultTextBoxScrollViewerStyle}" />
-                        </DockPanel>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsPasswordRevealed" Value="True">
-                            <Setter TargetName="RevealIcon" Property="Symbol" Value="EyeOff24" />
-                            <Setter TargetName="RevealPassword" Property="ToolTip" Value="隐藏密码" />
-                            <Setter TargetName="RevealPassword" Property="AutomationProperties.Name" Value="隐藏密码" />
-                        </Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
+        <Style.Triggers>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="IsMouseOver" Value="True" />
+                    <Condition Property="IsKeyboardFocusWithin" Value="False" />
+                    <Condition Property="IsEnabled" Value="True" />
+                </MultiTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource Brush.Parameter.PasswordHover}" />
+            </MultiTrigger>
+        </Style.Triggers>
     </Style>
 
     <Style x:Key="Option.CaseItem" TargetType="ListBoxItem">
@@ -124,19 +108,9 @@
                 <ControlTemplate TargetType="ListBoxItem">
                     <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
-                        <DockPanel VerticalAlignment="Center">
-                            <ui:SymbolIcon x:Name="Check" Symbol="Checkmark12" FontSize="12"
-                                           Margin="0,0,4,0" Visibility="Collapsed"
-                                           Foreground="{DynamicResource Brush.Primary}" />
                             <TextBlock Text="{Binding Label}" FontSize="14" TextTrimming="CharacterEllipsis"
-                                       Foreground="{TemplateBinding Foreground}" />
-                        </DockPanel>
+                                       VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}" />
                     </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Check" Property="Visibility" Value="Visible" />
-                        </Trigger>
-                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -219,16 +193,15 @@
         <Setter Property="HorizontalAlignment" Value="Left" />
         <Setter Property="Height" Value="{StaticResource Height.OptionEditor}" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Parameter.SwitchOff}" />
         <Setter Property="Focusable" Value="True" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ui:ToggleSwitch">
                     <Border Background="{DynamicResource Brush.Transparent}">
                         <DockPanel VerticalAlignment="Center">
-                            <Border x:Name="Track" Width="32" Height="18" CornerRadius="9"
-                                    Background="{DynamicResource Brush.Parameter.SwitchOff}" Margin="0,0,10,0">
-                                <Ellipse x:Name="Knob" Width="14" Height="14" Margin="2"
-                                         HorizontalAlignment="Left" Fill="{DynamicResource Brush.Text.Inverse}" />
+                            <Border Style="{StaticResource SwitchTrackStyle}" Width="32" Height="18" Margin="0,0,10,0">
+                                <Ellipse x:Name="Knob" Style="{StaticResource SwitchKnobStyle}" />
                             </Border>
                             <TextBlock x:Name="Caption" FontSize="14" Text="{Binding OffContent, RelativeSource={RelativeSource TemplatedParent}}"
                                        TextWrapping="Wrap" Foreground="{DynamicResource Brush.Text.Muted}" />
@@ -236,8 +209,6 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Track" Property="Background" Value="{DynamicResource Brush.Primary}" />
-                            <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
                             <Setter TargetName="Caption" Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
                             <Setter TargetName="Caption" Property="Text" Value="{Binding OnContent,
                                     RelativeSource={RelativeSource TemplatedParent}}" />
@@ -256,96 +227,19 @@
                    TextTrimming="CharacterEllipsis" />
     </DataTemplate>
 
-    <Style x:Key="Option.ComboBox" TargetType="ComboBox">
-        <Setter Property="Height" Value="{StaticResource Height.OptionEditor}" />
-        <Setter Property="MaxDropDownHeight" Value="360" />
+    <Style x:Key="Option.ComboBox" TargetType="ComboBox" BasedOn="{StaticResource ChoiceBoxStyle}">
         <Setter Property="ItemTemplate" Value="{StaticResource Option.DropdownLabel}" />
         <Setter Property="TextSearch.TextPath" Value="Label" />
         <Setter Property="ItemContainerStyle">
             <Setter.Value>
-                <Style TargetType="ComboBoxItem">
-                    <Setter Property="Height" Value="32" />
-                    <Setter Property="Margin" Value="0,0,0,1" />
+                <Style TargetType="ComboBoxItem" BasedOn="{StaticResource ChoiceItemStyle}">
                     <Setter Property="ToolTip" Value="{Binding Description}" />
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="ComboBoxItem">
-                                <Border x:Name="Item" CornerRadius="8" Padding="10,0"
-                                        Background="{DynamicResource Brush.Transparent}">
-                                    <DockPanel VerticalAlignment="Center">
-                                        <ui:SymbolIcon x:Name="Check" DockPanel.Dock="Right" Symbol="Checkmark12"
-                                                       FontSize="12" Margin="6,0,0,0" Visibility="Collapsed"
-                                                       Foreground="{DynamicResource Brush.Primary}" />
-                                        <ContentPresenter />
-                                    </DockPanel>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsHighlighted" Value="True">
-                                        <Setter TargetName="Item" Property="Background" Value="{DynamicResource Brush.Plan.Hover}" />
-                                    </Trigger>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter TargetName="Check" Property="Visibility" Value="Visible" />
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
                     <Style.Triggers>
                         <DataTrigger Binding="{Binding Description}" Value="">
                             <Setter Property="ToolTip" Value="{x:Null}" />
                         </DataTrigger>
                     </Style.Triggers>
                 </Style>
-            </Setter.Value>
-        </Setter>
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="ComboBox">
-                    <Grid>
-                        <ToggleButton x:Name="DropdownToggle" Focusable="False" ClickMode="Press"
-                                      Style="{x:Null}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                      IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
-                            <ToggleButton.Template>
-                                <ControlTemplate TargetType="ToggleButton">
-                                    <Border x:Name="Field" CornerRadius="8" Padding="12,0,8,0"
-                                            Background="{DynamicResource Brush.Parameter.Field}">
-                                        <ui:SymbolIcon Symbol="ChevronDown12" FontSize="12"
-                                                       HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                       Foreground="{DynamicResource Brush.Text.Muted}" />
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="Field" Property="Background" Value="{DynamicResource Brush.Parameter.FieldHover}" />
-                                        </Trigger>
-                                        <Trigger Property="IsChecked" Value="True">
-                                            <Setter TargetName="Field" Property="Background" Value="{DynamicResource Brush.Parameter.SwitchOff}" />
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </ToggleButton.Template>
-                        </ToggleButton>
-                        <ContentPresenter IsHitTestVisible="False" Margin="12,0,28,0" VerticalAlignment="Center"
-                                          Content="{TemplateBinding SelectionBoxItem}"
-                                          ContentTemplate="{StaticResource Option.DropdownLabel}" />
-                        <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True"
-                               Placement="Bottom" HorizontalOffset="-16" VerticalOffset="-30">
-                            <views:ShadowBorder CornerRadius="12" Padding="6" MinWidth="200" Margin="16"
-                                                Shadow="{DynamicResource Effect.Surface.Popover}"
-                                                BorderThickness="1" BorderBrush="{DynamicResource Brush.Border.Subtle}"
-                                                Background="{DynamicResource Brush.Surface.Popover}"
-                                                MaxHeight="{TemplateBinding MaxDropDownHeight}">
-                                <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
-                                    <ItemsPresenter />
-                                </ScrollViewer>
-                            </views:ShadowBorder>
-                        </Popup>
-                    </Grid>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Opacity" Value="{StaticResource Opacity.Disabled}" />
-                        </Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>

@@ -37,7 +37,9 @@ public partial class MainWindow
             path = null;
         }
         Icon = icon ?? _defaultIcon;
-        _settings.ShowProjectAbout(project?.About, icon);
+        var about = project?.About;
+        _settings.ShowProjectAbout(about, icon);
+        Sidebar.ShowProjectName(about?.Name);
         var telemetry = project is null ? null : TelemetryOptionsFor(project);
         _settings.ShowTelemetryAvailability(telemetry is not null);
         _telemetry.Configure(telemetry);

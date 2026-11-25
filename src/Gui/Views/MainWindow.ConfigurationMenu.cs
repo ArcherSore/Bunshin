@@ -10,15 +10,17 @@ namespace Gui.Views;
 public partial class MainWindow
 {
     private ConfigurationMenu? _configurationMenu;
+    private ConfigurationNameEditing _configurationNameEditing = null!;
     private IReadOnlyList<Guid> _sidebarConfigurationOrder = [];
 
     private void InitializeConfigurationList()
     {
         var list = Sidebar.ConfigurationList;
         _sidebarConfigurationOrder = _settings.ReadSidebarConfigurationOrder();
-        TaskPlanEditor.CommitConfigurationName = list.CommitRename;
+        _configurationNameEditing = new(this, TaskPlanEditor.RenameConfiguration);
+        TaskPlanEditor.CommitConfigurationName = _configurationNameEditing.Commit;
         list.CanEdit = TaskPlanEditor.CanChangeConfiguration;
-        list.SaveRename = TaskPlanEditor.RenameConfiguration;
+        list.NameEditing = _configurationNameEditing;
         list.ConfigurationRequested += (_, id) => {
             if (TaskPlanEditor.ActivateConfiguration(id)) {
                 DismissSidebarOverlay();
@@ -31,6 +33,11 @@ public partial class MainWindow
         list.MoveRequested += (_, request) => MoveSidebarConfiguration(request.Id, request.Index);
         Sidebar.NewConfigurationRequested += (_, anchor) => OpenNewConfigurationMenu(anchor);
         Header.CanEditConfiguration = TaskPlanEditor.CanChangeConfiguration;
+        Header.ConfigurationRenameRequested += (_, _) => {
+            if (TaskPlanEditor.CanChangeConfiguration() && _projectPlan is { } project) {
+                _configurationNameEditing.Begin(project.ActiveConfigurationId, Header.ConfigurationNameInput, ActiveConfigurationName);
+            }
+        };
         Header.ConfigurationMenuRequested += (_, anchor) => {
             if (_projectPlan is { } project) {
                 OpenConfigurationMenu(project.ActiveConfigurationId, anchor);
@@ -160,6 +167,9 @@ public partial class MainWindow
 
     private void ApplyConfigurationLockToShell(bool editable, LockReason? reason)
     {
+        if (!editable) {
+            _configurationNameEditing.Cancel();
+        }
         if (!editable && _configurationMenu is { } menu) {
             menu.IsOpen = false;
         }

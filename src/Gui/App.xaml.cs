@@ -29,6 +29,14 @@ public partial class App : System.Windows.Application
     private bool _userExitRequested;
     internal ThemeService Themes { get; private set; } = null!;
 
+    static App()
+    {
+        System.Windows.Controls.ToolTipService.InitialShowDelayProperty.OverrideMetadata(
+            typeof(FrameworkElement), new FrameworkPropertyMetadata(400));
+        System.Windows.Controls.ToolTipService.BetweenShowDelayProperty.OverrideMetadata(
+            typeof(FrameworkElement), new FrameworkPropertyMetadata(0));
+    }
+
     private void ApplyStartupTheme(bool selfTest)
     {
         Themes = new ThemeService(Resources);

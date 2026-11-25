@@ -8,15 +8,9 @@ using System.Windows.Threading;
 using Gui.Infrastructure;
 using ProjectModel;
 using Protocol;
-using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
 using WpfCursors = System.Windows.Input.Cursors;
-using WpfDataObject = System.Windows.DataObject;
-using WpfDragEventArgs = System.Windows.DragEventArgs;
-using WpfDragDropEffects = System.Windows.DragDropEffects;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
-using WpfMouseEventArgs = System.Windows.Input.MouseEventArgs;
-using WpfPoint = System.Windows.Point;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfOrientation = System.Windows.Controls.Orientation;
 using WpfSymbolIcon = Wpf.Ui.Controls.SymbolIcon;
@@ -29,23 +23,18 @@ namespace Gui.Views;
 // Environment; the window decides when editing is allowed and settles what an edit means for the next Run.
 public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
 {
-    private const string PlanItemDragDataFormat = "Gui.PlanItem";
-
     private AppLogger _logger = null!;
     private Func<ProjectPlanModule?> _project = () => null;
     private Func<bool> _editable = () => false;
     private Action<string, Exception> _editFailed = (_, _) => { };
+    private Action<Uri> _openDescriptionLink = _ => { };
     private bool _updatingOptionEditors;
     private bool _taskShelfExpanded;
     // Labels of the tasks added since the add-task panel was last opened.
     private readonly List<string> _addedSinceShelfOpened = [];
     private readonly Dictionary<string, bool> _taskGroupExpanded = new(StringComparer.Ordinal);
     private (PlanItemKind Kind, string Name)? _expandedTask;
-    private ProjectTaskChoice? _dragTask;
-    private WpfPoint _dragStartPoint;
-    private readonly List<Border> _dropIndicators = [];
     private readonly Dictionary<(PlanItemKind Kind, string Name), Border> _planItemContainers = [];
-    private readonly Dictionary<(PlanItemKind Kind, string Name), FrameworkElement> _taskDescriptionButtons = [];
     private readonly List<(TextBlock Preview, Border Container, ProjectTaskChoice Task)> _planItemPreviews = [];
 
     private readonly Dictionary<(Guid, string, string), InputDraft> _invalidInputDrafts = new();
@@ -70,6 +59,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     public TaskPlanEditor()
     {
         InitializeComponent();
+        _planDragScroll.Tick += (_, _) => ScrollWhileDraggingPlanItem();
         BindConfigurationEditable(TaskShelfHeaderButton);
         BindConfigurationEditable(EmptyPlanAddButton);
     }
@@ -83,21 +73,19 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     // Raised after configuration edits and project renders so the shell can present the saved configurations.
     internal event EventHandler<ProjectPlanModule>? ConfigurationsRendered;
 
-    // The description drawer covers the whole home page, so the window shows and closes it.
-    internal event EventHandler<ProjectTaskChoice>? TaskDescriptionRequested;
-    internal event EventHandler? TaskDescriptionCloseRequested;
     internal event RoutedEventHandler? StartRequested;
     internal event RoutedEventHandler? StopRequested;
 
     // The window owns the project and the runtime state. Editable and the lock are read fresh on every check, so a
     // click never acts on a lock the window no longer shows; editFailed reports an edit that could not be saved.
     internal void Attach(AppLogger logger, Func<ProjectPlanModule?> project, Func<bool> editable,
-        Action<string, Exception> editFailed)
+        Action<string, Exception> editFailed, Action<Uri> openDescriptionLink)
     {
         _logger = logger;
         _project = project;
         _editable = editable;
         _editFailed = editFailed;
+        _openDescriptionLink = openDescriptionLink;
     }
 
     private ProjectPlanModule? Project => _project();
@@ -180,9 +168,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
 
     internal Border? PlanItemCard(ProjectTaskChoice task) =>
         _planItemContainers.GetValueOrDefault((task.Kind, task.Name));
-
-    internal FrameworkElement? TaskDescriptionButton(ProjectTaskChoice task) =>
-        _taskDescriptionButtons.GetValueOrDefault((task.Kind, task.Name));
 
     internal ProjectTaskChoice? TaskForOnboarding()
     {
@@ -372,7 +357,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     private void PlanItemHeader_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not WpfButton { Tag: ProjectTaskChoice task }
-            || !IsExpanded(task) && !HasParameters(GetConfigurationOrEmpty(task.Name, task.Kind))) {
+            || !IsExpanded(task) && !HasDetails(task, GetConfigurationOrEmpty(task.Name, task.Kind))) {
             return;
         }
         _expandedTask = IsExpanded(task) ? null : (task.Kind, task.Name);
@@ -393,19 +378,11 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             if (IsExpanded(task)) {
                 _expandedTask = null;
             }
-            TaskDescriptionCloseRequested?.Invoke(this, EventArgs.Empty);
             PlanEdited?.Invoke(this, EventArgs.Empty);
             RenderTaskPlan();
             _logger.Info($"已从执行计划移除任务：{task.Name}。 ");
         } catch (Exception exception) {
             HandleProjectEditError("移除执行计划任务失败", exception);
-        }
-    }
-
-    private void TaskDescriptionButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is WpfButton { Tag: ProjectTaskChoice task }) {
-            TaskDescriptionRequested?.Invoke(this, task);
         }
     }
 
@@ -650,10 +627,8 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     private void RenderPlanItems(ProjectPlanModule project)
     {
         PlanItemsPanel.Children.Clear();
-        _dropIndicators.Clear();
         _planItemContainers.Clear();
         _planItemPreviews.Clear();
-        _taskDescriptionButtons.Clear();
         _inspectorRows.Clear();
         var items = project.SelectedItems;
         EmptyPlanPanel.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -661,12 +636,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         EmptyPlanText.Text = $"从 {project.Tasks.Count + project.Pretasks.Count} 个可用任务中选择要执行的任务";
 
         foreach (var task in items) {
-            AddDropIndicator();
             var container = CreatePlanItem(task, IsExpanded(task));
             _planItemContainers.Add((task.Kind, task.Name), container);
             PlanItemsPanel.Children.Add(container);
         }
-        AddDropIndicator();
     }
 
     private bool IsExpanded(ProjectTaskChoice task) => _expandedTask == (task.Kind, task.Name);
@@ -683,37 +656,65 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     private static bool HasParameters(ProjectConfigurationView configuration) =>
         configuration.GlobalOptions.Count + configuration.TaskOptions.Count != 0;
 
+    private static bool HasDetails(ProjectTaskChoice task, ProjectConfigurationView configuration) =>
+        HasParameters(configuration) || !string.IsNullOrWhiteSpace(task.Description);
+
+    private FlowDocumentScrollViewer CreatePlanItemDescription(ProjectTaskChoice task)
+    {
+        var document = MarkdownDocument.Create([task.Description], _openDescriptionLink,
+            new MarkdownStyle(14, 20, 18, 22, "Brush.Text.Muted", CompactLists: true));
+        document.PagePadding = new Thickness(0);
+        var viewer = new FlowDocumentScrollViewer {
+            Document = document, IsToolBarVisible = false, Focusable = false,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        // The enclosing task list owns scrolling.
+        viewer.PreviewMouseWheel += (_, e) => {
+            if (viewer.Parent is UIElement parent) {
+                e.Handled = true;
+                parent.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta) {
+                    RoutedEvent = MouseWheelEvent
+                });
+            }
+        };
+        return viewer;
+    }
+
     private Border CreatePlanItem(ProjectTaskChoice task, bool expanded)
     {
         var configuration = GetConfigurationOrEmpty(task.Name, task.Kind);
-        var hasParameters = HasParameters(configuration);
-        expanded &= hasParameters;
+        var canExpand = HasDetails(task, configuration);
+        expanded &= canExpand;
         var container = new Border {
             Tag = task,
+            Margin = new Thickness(0, 0, 0, 2),
             Style = (Style)FindResource(expanded ? "PlanItemExpandedStyle" : "PlanItemStyle")
         };
         var layout = new Grid();
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        layout.Children.Add(CreatePlanItemHeader(task, expanded, hasParameters, configuration, container));
+        layout.Children.Add(CreatePlanItemHeader(task, expanded, canExpand, configuration, container));
 
         if (expanded) {
             var editor = new Border {
                 Style = (Style)FindResource("ParameterEditorStyle")
             };
             var remove = new WpfButton {
-                Tag = task, Height = 32, MinHeight = 0, Margin = new Thickness(0, 10, -8, 0),
-                Padding = new Thickness(10, 0, 6, 0), FontWeight = FontWeights.Normal,
+                Tag = task, Height = 32, MinHeight = 0, Margin = new Thickness(0, 10, 0, 0),
+                Padding = new Thickness(10, 0, 10, 0), FontWeight = FontWeights.Normal,
                 HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
-                Style = (Style)FindResource("SubtleButtonStyle")
+                Style = (Style)FindResource("Plan.RemoveAction")
             };
             var content = new StackPanel { Orientation = WpfOrientation.Horizontal };
             var removeIcon = CreateSymbolIcon(WpfSymbolRegular.Delete16);
             removeIcon.Margin = new Thickness(0, 0, 6, 0);
+            removeIcon.SetBinding(ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = remove });
             content.Children.Add(removeIcon);
-            var removeText = new TextBlock { Text = "从计划中移除", VerticalAlignment = VerticalAlignment.Center };
-            removeText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            var removeText = new TextBlock { Text = "从计划中移除", FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
+            removeText.SetBinding(TextBlock.ForegroundProperty, new System.Windows.Data.Binding(nameof(Foreground)) { Source = remove });
             content.Children.Add(removeText);
             remove.Content = content;
             AutomationProperties.SetName(remove, $"从执行计划移除 {task.Label}");
@@ -721,21 +722,15 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             remove.Click += RemovePlanItemButton_Click;
             var body = new StackPanel();
             if (!string.IsNullOrWhiteSpace(task.Description)) {
-                var description = new TextBlock {
-                    Text = task.Description.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                        .FirstOrDefault()?.Trim() ?? string.Empty,
-                    TextWrapping = TextWrapping.Wrap,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    FontSize = 14, LineHeight = 20, MaxHeight = 42, Margin = new Thickness(0, 0, 0, 14),
-                    Style = (Style)FindResource("MutedTextStyle")
-                };
-                body.Children.Add(description);
+                body.Children.Add(CreatePlanItemDescription(task));
             }
-            body.Children.Add(CreateParameterInspector(configuration));
+            if (HasParameters(configuration)) {
+                body.Children.Add(CreateParameterInspector(configuration));
+            }
             body.Children.Add(remove);
             editor.Child = body;
             container.SizeChanged += (_, args) =>
-                editor.Padding = new Thickness(args.NewSize.Width >= 420 ? 50 : 16, 0, 16, 14);
+                editor.Padding = new Thickness(args.NewSize.Width >= 420 ? 36 : 16, 0, 16, 14);
             Grid.SetRow(editor, 1);
             layout.Children.Add(editor);
         }
@@ -743,7 +738,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         return container;
     }
 
-    private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, bool hasParameters,
+    private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, bool canExpand,
         ProjectConfigurationView configuration, Border container)
     {
         var header = new Grid {
@@ -751,23 +746,14 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             Margin = new Thickness(0, 0, 4, 0)
         };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var dragHandle = CreateIconButton(WpfSymbolRegular.ReOrderDotsVertical20, "拖动以调整顺序", "拖动以调整顺序");
-        dragHandle.Tag = task;
-        dragHandle.Width = dragHandle.MinWidth = 22;
-        dragHandle.Cursor = WpfCursors.SizeAll;
-        dragHandle.PreviewMouseLeftButtonDown += PlanDragHandle_PreviewMouseLeftButtonDown;
-        dragHandle.PreviewMouseMove += PlanDragHandle_PreviewMouseMove;
-        BindConfigurationEditable(dragHandle);
-        ShowPlanActionOnInteraction(dragHandle, header);
-        header.Children.Add(dragHandle);
-        header.Children.Add(CreatePlanItemSelection(task));
+        var selection = CreatePlanItemSelection(task);
+        header.Children.Add(selection);
 
         var title = new DockPanel { ClipToBounds = true };
-        if (hasParameters) {
+        if (canExpand) {
             var chevron = CreateSymbolIcon(expanded ? WpfSymbolRegular.ChevronDown12 : WpfSymbolRegular.ChevronRight12);
             chevron.Margin = new Thickness(6, 0, 0, 0);
             chevron.SetResourceReference(ForegroundProperty, expanded ? "Brush.Text.Primary" : "Brush.Text.Disabled");
@@ -777,12 +763,15 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             DockPanel.SetDock(chevron, Dock.Right);
             title.Children.Add(chevron);
         }
-        title.Children.Add(CreatePlanRowTitle(task.Label, task.Kind, expanded));
-        if (!expanded && hasParameters) {
+        var rowTitle = CreatePlanRowTitle(task.Label, task.Kind, expanded);
+        BindUncheckedTone((TextBlock)rowTitle.Children[0], selection, "Brush.Text.Primary", "Brush.Text.Muted");
+        title.Children.Add(rowTitle);
+        if (!expanded && HasParameters(configuration)) {
             var preview = new TextBlock {
                 FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
+            BindUncheckedTone(preview, selection, "Brush.Text.Muted", "Brush.Text.Disabled");
             _planItemPreviews.Add((preview, container, task));
             FillParameterPreview(preview, configuration, container);
             title.Children.Add(preview);
@@ -792,51 +781,50 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             Padding = new Thickness(12, 0, 6, 0),
             Style = (Style)FindResource("PlanHeaderButtonStyle")
         };
-        if (!hasParameters) {
+        if (!canExpand) {
             main.Cursor = WpfCursors.Arrow;
         }
         AutomationProperties.SetName(main,
-            $"{task.Label}，{(hasParameters ? (expanded ? "已展开" : "已折叠") : "没有可配置的参数")}");
-        AutomationProperties.SetHelpText(main, hasParameters ? (expanded ? "点击收起参数" : "点击展开参数") : string.Empty);
+            $"{task.Label}，{(canExpand ? (expanded ? "已展开" : "已折叠") : "没有可配置的参数")}");
+        AutomationProperties.SetHelpText(main, canExpand ? (expanded ? "收起任务详情" : "展开任务详情") : string.Empty);
         main.Click += PlanItemHeader_Click;
-        Grid.SetColumn(main, 2);
+        AttachPlanItemDrag(main, container, task);
+        Grid.SetColumn(main, 1);
         header.Children.Add(main);
-        if (!string.IsNullOrWhiteSpace(task.Description)) {
-            var information = CreateIconButton(WpfSymbolRegular.Info16, $"查看 {task.Label} 的任务描述", "查看任务说明");
-            information.Tag = task;
-            information.Click += TaskDescriptionButton_Click;
-            _taskDescriptionButtons[(task.Kind, task.Name)] = information;
-            ShowPlanActionOnInteraction(information, header, VisibilityProperty, Visibility.Hidden, Visibility.Visible);
-            Grid.SetColumn(information, 3);
-            header.Children.Add(information);
-        }
-
-        // Rows without parameters still need a way to leave the plan.
-        if (!hasParameters) {
+        if (!HasParameters(configuration) && !expanded) {
             var remove = CreateIconButton(WpfSymbolRegular.Delete16, $"从执行计划移除 {task.Label}", "从执行计划移除");
             remove.Style = (Style)FindResource("TaskRemoveButtonStyle");
             remove.Tag = task;
             remove.Click += RemovePlanItemButton_Click;
             BindConfigurationEditable(remove);
             ShowPlanActionOnInteraction(remove, header);
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            Grid.SetColumn(remove, 4);
+            Grid.SetColumn(remove, 2);
             header.Children.Add(remove);
         }
         return header;
     }
 
-    private static void ShowPlanActionOnInteraction(FrameworkElement action, FrameworkElement row,
-        DependencyProperty? property = null, object? hidden = null, object? shown = null)
+    private static void BindUncheckedTone(TextBlock text, System.Windows.Controls.CheckBox selection, string normal, string uncheckedTone)
     {
-        property ??= OpacityProperty;
+        var style = new Style(typeof(TextBlock));
+        style.Setters.Add(new Setter(TextBlock.ForegroundProperty, new DynamicResourceExtension(normal)));
+        var uncheckedState = new DataTrigger {
+            Binding = new System.Windows.Data.Binding(nameof(selection.IsChecked)) { Source = selection }, Value = false
+        };
+        uncheckedState.Setters.Add(new Setter(TextBlock.ForegroundProperty, new DynamicResourceExtension(uncheckedTone)));
+        style.Triggers.Add(uncheckedState);
+        text.Style = style;
+    }
+
+    private static void ShowPlanActionOnInteraction(FrameworkElement action, FrameworkElement row)
+    {
         var style = new Style(action.GetType(), action.Style);
-        style.Setters.Add(new Setter(property, hidden ?? 0d));
+        style.Setters.Add(new Setter(OpacityProperty, 0d));
         foreach (var interaction in new[] { nameof(IsMouseOver), nameof(IsKeyboardFocusWithin) }) {
             var trigger = new DataTrigger {
                 Binding = new System.Windows.Data.Binding(interaction) { Source = row }, Value = true
             };
-            trigger.Setters.Add(new Setter(property, shown ?? 1d));
+            trigger.Setters.Add(new Setter(OpacityProperty, 1d));
             style.Triggers.Add(trigger);
         }
         action.Style = style;
@@ -847,8 +835,8 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         var selection = new System.Windows.Controls.CheckBox {
             IsChecked = RequireProject().IsItemEnabled(task.Kind, task.Name),
             Style = (Style)FindResource("Plan.Selection"), Padding = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0),
-            ToolTip = task.Applicable ? "是否执行此任务" : "当前控制器或资源不适用，运行时跳过"
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
+            ToolTip = task.Applicable ? null : "当前控制器或资源不适用，运行时跳过"
         };
         AutomationProperties.SetName(selection, $"执行 {task.Label}");
         BindConfigurationEditable(selection);
@@ -868,7 +856,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             PlanEdited?.Invoke(this, EventArgs.Empty);
             RefreshConfigurationValidity(RequireProject());
         };
-        Grid.SetColumn(selection, 1);
         return selection;
     }
 
@@ -897,126 +884,6 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         ToolTip = null
     };
 
-    private void AddDropIndicator()
-    {
-        var indicator = new Border {
-            Height = 2,
-            Margin = new Thickness(8, 0, 8, 0),
-            Background = WpfBrushes.Transparent,
-            IsHitTestVisible = false
-        };
-        _dropIndicators.Add(indicator);
-        PlanItemsPanel.Children.Add(indicator);
-    }
-
-    private void PlanDragHandle_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is WpfButton { Tag: ProjectTaskChoice task }) {
-            _dragTask = task;
-            _dragStartPoint = e.GetPosition(PlanItemsPanel);
-        }
-    }
-
-    private void PlanDragHandle_PreviewMouseMove(object sender, WpfMouseEventArgs e)
-    {
-        if (e.LeftButton != MouseButtonState.Pressed
-            || sender is not WpfButton { Tag: ProjectTaskChoice task }
-            || _dragTask != task) {
-            return;
-        }
-        var current = e.GetPosition(PlanItemsPanel);
-        if (Math.Abs(current.X - _dragStartPoint.X) < SystemParameters.MinimumHorizontalDragDistance
-            && Math.Abs(current.Y - _dragStartPoint.Y) < SystemParameters.MinimumVerticalDragDistance) {
-            return;
-        }
-
-        _expandedTask = null;
-        RenderTaskPlan();
-        if (_planItemContainers.TryGetValue((task.Kind, task.Name), out var container)) {
-            container.SetResourceReference(EffectProperty, "Effect.Surface.Drag");
-        }
-        try {
-            var data = new WpfDataObject(PlanItemDragDataFormat, task.Name);
-            _ = DragDrop.DoDragDrop(PlanItemsPanel, data, WpfDragDropEffects.Move);
-        } finally {
-            _dragTask = null;
-            ClearDropIndicators();
-            RenderTaskPlan();
-        }
-    }
-
-    private void PlanItemsPanel_DragOver(object sender, WpfDragEventArgs e)
-    {
-        var drop = ResolvePlanDrop(e);
-        ShowDropIndicator(drop?.Boundary ?? -1);
-        e.Effects = drop.HasValue ? WpfDragDropEffects.Move : WpfDragDropEffects.None;
-        e.Handled = true;
-    }
-
-    private void PlanItemsPanel_DragLeave(object sender, WpfDragEventArgs e) => ClearDropIndicators();
-
-    private void PlanItemsPanel_Drop(object sender, WpfDragEventArgs e)
-    {
-        e.Handled = true;
-        e.Effects = WpfDragDropEffects.None;
-        if (_dragTask is not { } task || ResolvePlanDrop(e) is not { } drop) {
-            return;
-        }
-        try {
-            _expandedTask = null;
-            if (RequireProject().MoveTask(task.Name, drop.TargetIndex, task.Kind)) {
-                PlanEdited?.Invoke(this, EventArgs.Empty);
-                _logger.Info($"已调整任务顺序：{task.Name} -> {drop.TargetIndex}。");
-            }
-            RenderTaskPlan();
-            e.Effects = WpfDragDropEffects.Move;
-        } catch (Exception exception) {
-            HandleProjectEditError("调整任务顺序失败", exception);
-        }
-    }
-
-    private (int Boundary, int TargetIndex)? ResolvePlanDrop(WpfDragEventArgs e)
-    {
-        if (!Editable || _dragTask is not { } task || Project is not { } project
-            || e.Data.GetData(PlanItemDragDataFormat) is not string name || name != task.Name) {
-            return null;
-        }
-        var items = project.SelectedItems;
-        var pointerY = e.GetPosition(PlanItemsPanel).Y;
-        var boundary = 0;
-        foreach (var item in items) {
-            var container = _planItemContainers[(item.Kind, item.Name)];
-            var top = container.TranslatePoint(new WpfPoint(0, 0), PlanItemsPanel).Y;
-            if (pointerY < top + container.ActualHeight / 2) {
-                break;
-            }
-            boundary++;
-        }
-        // Each kind is a contiguous block; an item can only move within its own block.
-        var start = items.TakeWhile(item => item.Kind != task.Kind).Count();
-        var group = items.Skip(start).TakeWhile(item => item.Kind == task.Kind).Select(item => item.Name).ToList();
-        var current = group.IndexOf(name);
-        var local = boundary - start;
-        if (current < 0 || local < 0 || local > group.Count) {
-            return null;
-        }
-        return (boundary, local > current ? local - 1 : local);
-    }
-
-    private void ShowDropIndicator(int boundary)
-    {
-        ClearDropIndicators();
-        if (boundary >= 0 && boundary < _dropIndicators.Count) {
-            _dropIndicators[boundary].SetResourceReference(Border.BackgroundProperty, "Brush.Primary");
-        }
-    }
-
-    private void ClearDropIndicators()
-    {
-        foreach (var indicator in _dropIndicators) {
-            indicator.Background = WpfBrushes.Transparent;
-        }
-    }
 
     private void HandleProjectEditError(string operation, Exception exception)
     {

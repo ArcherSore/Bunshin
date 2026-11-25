@@ -36,7 +36,7 @@ internal static partial class SelfTestRunner
             var activeName = project.Configurations.Single(configuration => configuration.Id == id).Name;
             foreach (var (name, view, title) in new[] {
                 ("Schedule", "ScheduleView", "定时"), ("Help", "HelpView", "帮助"),
-                ("Settings", "SettingsView", "设置"), ("Home", "HomeView", activeName)
+                ("Home", "HomeView", activeName)
             }) {
                 var item = name == "Home" ? sidebar.Home : Named<RailItem>(sidebar, name + "NavigationItem");
                 ClickConfigurationButton(item);
@@ -45,8 +45,11 @@ internal static partial class SelfTestRunner
             }
             ClickOnboarding(window, "HelpNavigationItem");
             ClickOnboarding(window, "SettingsNavigationItem");
-            ClickOnboarding(window, "SettingsBackButton");
-            Require(window.HelpView.IsVisible, "设置返回应恢复进入设置前的页面。");
+            Require(window.SettingsView.IsVisible && window.HelpView.IsVisible && !window.HelpView.IsEnabled
+                && AutomationProperties.GetName(titleBar) == "帮助", "设置应覆盖进入前的页面并阻止后台交互。");
+            ClickOnboarding(window.SettingsView, "CloseSettingsButton");
+            Require(!window.SettingsView.IsVisible && window.HelpView.IsVisible && window.HelpView.IsEnabled,
+                "关闭设置后应恢复进入设置前的页面交互。");
             Require(AutomationProperties.GetName(Named<RailItem>(sidebar, "ScheduleNavigationItem"))
                 .Contains("20:39", StringComparison.Ordinal), "定时入口应显示下次运行时间。");
 

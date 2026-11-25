@@ -326,7 +326,7 @@ internal static partial class SelfTestRunner
             window.Height = window.MinHeight;
             ClickOnboarding(window, "SettingsNavigationItem");
             var view = (SettingsView)window.FindName("SettingsView");
-            var list = window.Sidebar.SectionNavigation;
+            var list = view.SectionNavigation;
             var scroller = (ScrollViewer)view.FindName("SectionScroller");
             var sections = SettingsPageFor(window).Sections;
             Require(list.SelectedIndex == 0, "进入设置时目录应选中第一个分类。");

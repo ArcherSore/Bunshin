@@ -27,7 +27,6 @@ public partial class MainWindow
     private OnboardingStep _onboardingStep;
     private bool _onboardingOpenedTaskShelf;
     private ProjectTaskChoice? _onboardingTask;
-    private FrameworkElement? _onboardingDescriptionButton;
     private CancellationTokenSource? _onboardingStartCancellation;
     private CancellationTokenSource? _onboardingStepCancellation;
     private DispatcherOperation? _onboardingLayoutOperation;
@@ -53,8 +52,7 @@ public partial class MainWindow
     private bool CanPresentOnboarding => !_onboardingClosed && OnboardingCommandsAvailable
         && IsLoaded && IsVisible && WindowState != WindowState.Minimized
         && HomeView.Visibility == Visibility.Visible && _projectPlan is not null
-        && TaskPlanEditor.Workspace.Visibility == Visibility.Visible && !IsGlobalModalOpen
-        && TaskDescriptionOverlay.Visibility != Visibility.Visible;
+        && TaskPlanEditor.Workspace.Visibility == Visibility.Visible && !IsGlobalModalOpen && !SettingsOpen;
 
     private void ReplayOnboarding()
     {
@@ -63,6 +61,7 @@ public partial class MainWindow
         }
         _onboardingAutoEnded = true;
         CancelOnboardingStart();
+        CloseSettings();
         StartOnboarding(replay: true);
     }
 
@@ -87,7 +86,7 @@ public partial class MainWindow
         }
     }
 
-    private async Task ShowOnboardingStepAsync(bool animate, bool playPulse = true)
+    private async Task ShowOnboardingStepAsync(bool animate)
     {
         CancelOnboardingStep();
         var cancellation = new CancellationTokenSource();
@@ -105,10 +104,6 @@ public partial class MainWindow
             SetOnboardingTaskShelf(details && _onboardingTask is null);
             if (_onboardingTask is { } task) {
                 TaskPlanEditor.ExpandPlanItem(task);
-                _onboardingDescriptionButton = TaskPlanEditor.TaskDescriptionButton(task);
-                if (_onboardingDescriptionButton is { } description) {
-                    description.Visibility = Visibility.Visible;
-                }
             }
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded, cancellation.Token);
             if (!CanPresentOnboarding) {
@@ -117,7 +112,7 @@ public partial class MainWindow
             }
             if (_onboardingTask is not null) {
                 var card = ResolveOnboardingTarget();
-                // Keep the title and description entry visible when parameters exceed the viewport.
+                // Keep the title and the description visible when parameters exceed the viewport.
                 card.BringIntoView(new Rect(0, 0, card.ActualWidth,
                     Math.Min(card.ActualHeight, TaskPlanEditor.PlanViewportHeight)));
                 await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Loaded, cancellation.Token);
@@ -133,10 +128,6 @@ public partial class MainWindow
             if (SystemParameters.ClientAreaAnimation) {
                 OnboardingOverlay.OnboardingPopover.BeginAnimation(OpacityProperty,
                     new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)));
-            }
-            if (playPulse && _onboardingStep == OnboardingStep.TaskDetails && SystemParameters.ClientAreaAnimation) {
-                await Task.Delay(450, cancellation.Token);
-                await PlayOnboardingPulseAsync(cancellation.Token);
             }
         } catch (OperationCanceledException) when (cancellation.IsCancellationRequested) {
         } catch (Exception exception) {
@@ -178,8 +169,8 @@ public partial class MainWindow
         var (title, description) = _onboardingStep switch {
             OnboardingStep.AddTask => ("配置自动化任务", "点“添加任务”选择要执行的任务，拖动可以调整执行顺序。左侧可以保存多套配置。"),
             OnboardingStep.TaskDetails when empty => ("查看说明并设置参数", "添加任务后，会在执行计划中出现任务。"
-                + "点任务行展开参数，点 ⓘ 可以查看任务说明。"),
-            OnboardingStep.TaskDetails => ("查看说明并设置参数", "点任务行展开并调整参数，点 ⓘ 查看任务说明。"
+                + "点任务行，展开后可在顶部查看说明，并在下方调整参数。"),
+            OnboardingStep.TaskDetails => ("查看说明并设置参数", "点任务行，展开后可在顶部查看说明，并在下方调整参数。"
                 + "运行前先确认任务所需的游戏界面。"),
             OnboardingStep.Run => ("启动自动化", "配置完成后，点“运行”开始。需要时会先准备运行环境，任务开始后可以从这里停止。"),
             _ => ("观看桌面分身", "运行环境就绪后，点这里打开只读小窗。放大后可以允许操作，关闭小窗不会中断任务。")
@@ -246,7 +237,6 @@ public partial class MainWindow
             OnboardingOverlay.OnboardingOutline.Data = _onboardingHole;
         }
         PlaceOnboardingPopover(window, bounds, OnboardingBounds(target));
-        PositionOnboardingPulse();
     }
 
     private void PlaceOnboardingPopover(Rect window, Rect target, Rect control)
@@ -313,68 +303,10 @@ public partial class MainWindow
         }, DispatcherPriority.Background);
     }
 
-    private async Task PlayOnboardingPulseAsync(CancellationToken cancellation, int count = 3)
-    {
-        if (!PositionOnboardingPulse()) {
-            return;
-        }
-        var repetitions = Math.Clamp(count, 1, 3);
-        for (var index = 0; index < repetitions; index++) {
-            cancellation.ThrowIfCancellationRequested();
-            if (!IsOnboardingVisible || !SystemParameters.ClientAreaAnimation) {
-                return;
-            }
-            OnboardingOverlay.OnboardingPulse.Visibility = Visibility.Visible;
-            var duration = TimeSpan.FromMilliseconds(850);
-            var opacity = new DoubleAnimationUsingKeyFrames();
-            opacity.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            opacity.KeyFrames.Add(new LinearDoubleKeyFrame(0.38, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(100))));
-            opacity.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(duration)));
-            OnboardingOverlay.OnboardingPulse.BeginAnimation(OpacityProperty, opacity);
-            var scale = (ScaleTransform)OnboardingOverlay.OnboardingPulse.RenderTransform;
-            var expansion = new DoubleAnimation(1, 32.0 / 24, duration) {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-            };
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, expansion);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, expansion);
-            await Task.Delay(duration, cancellation);
-            if (index + 1 < repetitions) {
-                await Task.Delay(200, cancellation);
-            }
-        }
-        StopOnboardingPulse();
-    }
-
-    private bool PositionOnboardingPulse()
-    {
-        if (_onboardingTask is not { } task || TaskPlanEditor.TaskDescriptionButton(task) is not { } icon) {
-            return false;
-        }
-        Rect bounds;
-        try {
-            bounds = VisibleOnboardingBounds(icon);
-        } catch (InvalidOperationException) {
-            StopOnboardingPulse();
-            return false;
-        }
-        Canvas.SetLeft(OnboardingOverlay.OnboardingPulse, bounds.Left + bounds.Width / 2 - OnboardingOverlay.OnboardingPulse.Width / 2);
-        Canvas.SetTop(OnboardingOverlay.OnboardingPulse, bounds.Top + bounds.Height / 2 - OnboardingOverlay.OnboardingPulse.Height / 2);
-        return true;
-    }
-
-    private void StopOnboardingPulse()
-    {
-        OnboardingOverlay.OnboardingPulse.Visibility = Visibility.Collapsed;
-        OnboardingOverlay.OnboardingPulse.BeginAnimation(OpacityProperty, null);
-        var scale = (ScaleTransform)OnboardingOverlay.OnboardingPulse.RenderTransform;
-        scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-        scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-    }
 
     private void Onboarding_SystemParametersChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (!SystemParameters.ClientAreaAnimation) {
-            StopOnboardingPulse();
             _onboardingHole.BeginAnimation(RectangleGeometry.RectProperty, null);
             OnboardingOverlay.OnboardingPopover.BeginAnimation(OpacityProperty, null);
         }
@@ -463,12 +395,9 @@ public partial class MainWindow
 
     private void CancelOnboardingStep()
     {
-        _onboardingDescriptionButton?.ClearValue(VisibilityProperty);
-        _onboardingDescriptionButton = null;
         _onboardingTask = null;
         _onboardingStepCancellation?.Cancel();
         _onboardingStepCancellation = null;
-        StopOnboardingPulse();
         _onboardingHole.BeginAnimation(RectangleGeometry.RectProperty, null);
         OnboardingOverlay.OnboardingPopover.BeginAnimation(OpacityProperty, null);
     }
@@ -505,7 +434,7 @@ public partial class MainWindow
                 PauseOnboarding();
             } else if (_onboardingPaused) {
                 _onboardingPaused = false;
-                _ = ShowOnboardingStepAsync(animate: false, playPulse: false);
+                _ = ShowOnboardingStepAsync(animate: false);
             }
             return;
         }

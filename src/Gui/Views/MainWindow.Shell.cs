@@ -5,30 +5,25 @@ using System.Windows.Input;
 
 namespace Gui.Views;
 
-internal enum MainSection { Home, Schedule, Help, Settings }
+internal enum MainSection { Home, Schedule, Help }
 
 public partial class MainWindow
 {
     private bool _sidebarOverlayMode;
-    private MainSection _sectionBeforeSettings;
 
     private void InitializeShell()
     {
-        Sidebar.IsCollapsed = _settings.SidebarCollapsed.Value;
+        InitializeSidebarResize();
+        ShowSidebar(_settings.SidebarCollapsed.Value);
         Sidebar.SectionRequested += (_, section) => {
             DismissSidebarOverlay();
             SwitchSection(section);
         };
-        Sidebar.ShowSettingsSections(_settings.Page.Sections);
-        Sidebar.SettingsBackRequested += (_, _) => {
+        Sidebar.SettingsRequested += (_, _) => {
             DismissSidebarOverlay();
-            SwitchSection(_sectionBeforeSettings);
+            OpenSettings();
         };
-        Sidebar.SettingsSectionRequested += (_, index) => {
-            DismissSidebarOverlay();
-            SettingsView.ScrollToSection(index);
-        };
-        SettingsView.CurrentSectionChanged += (_, index) => Sidebar.MarkSettingsSection(index);
+        SettingsView.DismissRequested += (_, _) => CloseSettings();
         InitializeConfigurationList();
         Sidebar.UpdateRequested += (_, _) => {
             DismissSidebarOverlay();
@@ -43,16 +38,17 @@ public partial class MainWindow
                 UpdateRuntimePanelLayout();
             }
         };
-        MainWindowContent.SizeChanged += (_, e) => UpdateSidebarMode(e.NewSize.Width);
+        MainWindowContent.SizeChanged += (_, _) => UpdateRuntimePanelLayout();
         _scheduleTimer.Tick += (_, _) => RefreshSidebarSchedule();
         ScheduleView.PoliciesChanged += (_, _) => RefreshSidebarSchedule();
     }
 
     private void UpdateSidebarMode(double width)
     {
-        var minimumContentWidth = HomeView.ColumnDefinitions[0].MinWidth
-            + (RuntimePanelHidden ? 0 : MinimumRuntimeSidebarWidth);
-        var overlay = width < minimumContentWidth + ShellSidebar.ExpandedWidth;
+        if (_sidebarDrag is not null) {
+            return;
+        }
+        var overlay = width < HomeView.ColumnDefinitions[0].MinWidth + ReservedRuntimeSidebarWidth + SidebarPreferredWidth;
         if (overlay == _sidebarOverlayMode) {
             return;
         }
@@ -80,12 +76,12 @@ public partial class MainWindow
         var label = RuntimePanelCollapsed ? "展开运行面板" : "收起运行面板";
         RuntimePanelToggleButton.ToolTip = label;
         AutomationProperties.SetName(RuntimePanelToggleButton, label);
-        RuntimePanelToggleButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty,
-            RuntimePanelCollapsed ? "Brush.Transparent" : "Brush.Rail.Active");
+        RuntimePanelToggleButton.Tag = !RuntimePanelCollapsed;
     }
 
     private void ToggleSidebar()
     {
+        CancelSidebarDrag();
         var collapsed = !Sidebar.IsCollapsed;
         _settings.SidebarCollapsed.Value = collapsed;
         ShowSidebar(collapsed);
@@ -97,6 +93,7 @@ public partial class MainWindow
     private void ShowSidebar(bool collapsed)
     {
         Sidebar.IsCollapsed = collapsed;
+        Sidebar.Width = collapsed ? ShellSidebar.CompactWidth : SidebarPreferredWidth;
         var overlayOpen = _sidebarOverlayMode && !collapsed;
         SidebarDismissLayer.Visibility = overlayOpen ? Visibility.Visible : Visibility.Collapsed;
         KeyboardNavigation.SetTabNavigation(Sidebar, overlayOpen ? KeyboardNavigationMode.Cycle : KeyboardNavigationMode.Continue);
@@ -126,7 +123,7 @@ public partial class MainWindow
             }
             return true;
         }
-        if (e.Key == Key.Escape && !Sidebar.ConfigurationList.IsRenaming && DismissSidebarOverlay()) {
+        if (e.Key == Key.Escape && !_configurationNameEditing.IsEditing && DismissSidebarOverlay()) {
             Sidebar.FocusToggle();
             return true;
         }
@@ -139,13 +136,12 @@ public partial class MainWindow
         var title = _section switch {
             MainSection.Schedule => "定时",
             MainSection.Help => "帮助",
-            MainSection.Settings => "设置",
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
         var home = _section == MainSection.Home;
         Header.ShowPage(title, home, home && configuration is not null,
             showScheduleStatus: _section == MainSection.Schedule,
-            showPageHeading: _section is not (MainSection.Help or MainSection.Settings));
+            showPageHeading: _section != MainSection.Help);
         RefreshSidebarSchedule();
     }
 
@@ -167,8 +163,7 @@ public partial class MainWindow
     private void RefreshOnboardingRuntimePanel()
     {
         RuntimeSidebar.RevealDesktopSection(OnboardingNeedsRuntimePanel);
-        RuntimeSidebarVisibility(_section);
-        UpdateSidebarMode(MainWindowContent.ActualWidth);
+        UpdateRuntimePanelLayout();
     }
 
     private SchedulePreview CreateSidebarSchedulePreview(ProjectModel.ProjectPlanModule project) =>

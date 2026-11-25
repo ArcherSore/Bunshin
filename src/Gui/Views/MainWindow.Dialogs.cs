@@ -119,6 +119,7 @@ public partial class MainWindow
             if (previous is UIElement { IsVisible: true, IsEnabled: true } element) element.Focus();
             else if (ProjectReader.Visibility == Visibility.Visible) ProjectReader.FocusReader();
             else if (UpdateOverlay.Visibility == Visibility.Visible) UpdateOverlay.Focus();
+            else if (SettingsOpen) SettingsView.FocusDefault();
             else Sidebar.Home.Focus();
         }
         ReevaluateOnboarding();

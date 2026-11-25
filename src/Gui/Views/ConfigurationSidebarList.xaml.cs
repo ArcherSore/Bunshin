@@ -22,9 +22,7 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
     private bool _homeActive;
     private bool _running;
     private bool _editable;
-    private bool _committingRename;
     private LockReason? _lockReason;
-    private ConfigurationSidebarRow? _renaming;
     private ConfigurationSidebarRow? _pressed;
     private ConfigurationSidebarRow? _dragging;
     private WpfPoint _pressPoint;
@@ -44,12 +42,10 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
     }
 
     internal Func<bool> CanEdit { get; set; } = () => false;
-    internal Func<Guid, string, bool, bool>? SaveRename { get; set; }
+    internal ConfigurationNameEditing? NameEditing { get; set; }
     internal event EventHandler<Guid>? ConfigurationRequested;
     internal event EventHandler<(Guid Id, WpfButton Anchor)>? MenuRequested;
     internal event EventHandler<(Guid Id, int Index)>? MoveRequested;
-
-    internal bool IsRenaming => _renaming is not null;
 
     internal Guid? ActiveConfigurationId { get; private set; }
     internal RailItem? ActiveButton => ActiveConfigurationId is { } id ? _rows[id].SelectButton : null;
@@ -62,9 +58,7 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
         ActiveConfigurationId = active;
         foreach (var removed in _rows.Keys.Except(configurations.Select(c => c.Id)).ToArray()) {
             var row = _rows[removed];
-            if (_renaming == row) {
-                EndRename();
-            }
+            NameEditing?.Cancel(row.NameEditor);
             Rows.Children.Remove(row);
             _rows.Remove(removed);
         }
@@ -104,9 +98,6 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
         }
         _editable = editable;
         _lockReason = reason;
-        if (!editable) {
-            EndRename();
-        }
         RefreshRows();
     }
 
@@ -115,40 +106,8 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
         if (!CanEdit() || !_rows.TryGetValue(id, out var row)) {
             return;
         }
-        _renaming = row;
-        row.NameEditor.Text = row.ConfigurationName;
-        row.NameEditor.Visibility = Visibility.Visible;
-        row.BringIntoView();
-        // Wait for WPF to close the context menu and restore its previous focus.
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => {
-            if (_renaming == row) {
-                row.NameEditor.Focus();
-                row.NameEditor.SelectAll();
-            }
-        });
-    }
-
-    internal bool CommitRename(bool unattended)
-    {
-        if (_renaming is not { } row || _committingRename) {
-            return true;
-        }
-        _committingRename = true;
-        try {
-            var saved = SaveRename?.Invoke(row.Id, row.NameEditor.Text, unattended) ?? false;
-            EndRename();
-            return saved;
-        } finally {
-            _committingRename = false;
-        }
-    }
-
-    private void EndRename()
-    {
-        if (_renaming is { } row) {
-            _renaming = null;
-            row.NameEditor.Visibility = Visibility.Collapsed;
-        }
+        _pressed = null;
+        NameEditing?.Begin(id, row.NameEditor, row.ConfigurationName);
     }
 
     private void RevealActive()
@@ -207,22 +166,6 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
         row.SelectButton.PreviewKeyDown += (_, e) => Row_KeyDown(row, e);
         row.MenuButton.PreviewMouseLeftButtonDown += (_, e) => e.Handled = !CanEdit();
         row.MenuButton.Click += (_, _) => MenuRequested?.Invoke(this, (id, row.MenuButton));
-        row.NameEditor.LostKeyboardFocus += (_, _) => {
-            if (_renaming == row) {
-                CommitRename(unattended: false);
-            }
-        };
-        row.NameEditor.PreviewKeyDown += (_, e) => {
-            if (e.Key is Key.Enter or Key.Escape) {
-                if (e.Key == Key.Enter) {
-                    CommitRename(unattended: false);
-                } else {
-                    EndRename();
-                }
-                row.SelectButton.Focus();
-                e.Handled = true;
-            }
-        };
         return row;
     }
 
@@ -278,7 +221,6 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
         _dragging = row;
         row.SelectButton.ReleaseMouseCapture();
         row.ShowDragPlaceholder(true);
-        FloatingLabel.Text = row.ConfigurationName;
         try {
             DragDrop.DoDragDrop(this, new System.Windows.DataObject(DragFormat, row.Id), WpfDragDropEffects.Move);
         } finally {
@@ -343,16 +285,13 @@ public partial class ConfigurationSidebarList : System.Windows.Controls.UserCont
 
     private void ShowDragFeedback(WpfPoint point)
     {
-        DragFeedback.Visibility = Visibility.Visible;
+        if (_dragging is not { } dragged) {
+            return;
+        }
         var insertion = InsertionIndex(point.Y);
         var last = insertion == Rows.Children.Count;
         var row = (ConfigurationSidebarRow)Rows.Children[last ? insertion - 1 : insertion];
-        var edge = row.TranslatePoint(new WpfPoint(0, last ? row.ActualHeight + 1 : -1), DragFeedback).Y;
-        InsertionMarker.Width = row.ActualWidth;
-        Canvas.SetTop(InsertionMarker, edge - 4);
-        FloatingRow.Width = Math.Max(0, row.ActualWidth - 8);
-        Canvas.SetLeft(FloatingRow, 8);
-        Canvas.SetTop(FloatingRow, point.Y - 16);
+        DragFeedback.Show(dragged.ConfigurationName, point, row.ActualWidth, row, last);
     }
 
     private void ScrollWhileDragging()

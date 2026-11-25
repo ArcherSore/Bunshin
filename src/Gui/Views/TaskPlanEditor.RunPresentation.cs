@@ -163,8 +163,7 @@ public sealed partial class TaskPlanEditor
     private void AttachRunItemDetails(Border card, DockPanel row, ProjectTaskChoice task, string accessibleName)
     {
         var configuration = GetConfigurationOrEmpty(task.Name, task.Kind);
-        var hasParameters = HasParameters(configuration);
-        if (!hasParameters && string.IsNullOrWhiteSpace(task.Description)) {
+        if (!HasDetails(task, configuration)) {
             return;
         }
 
@@ -176,11 +175,9 @@ public sealed partial class TaskPlanEditor
             Style = (Style)FindResource("PlanHeaderButtonStyle"), Tag = task
         };
         AutomationProperties.SetName(header, accessibleName);
-        AutomationProperties.SetHelpText(header, hasParameters ? (expanded ? "收起参数" : "查看参数") : "查看任务说明");
+        AutomationProperties.SetHelpText(header, expanded ? "收起任务详情" : "展开任务详情");
         header.Click += (_, _) => {
-            if (!hasParameters) {
-                TaskDescriptionRequested?.Invoke(this, task);
-            } else if (_shownRun is { } run) {
+            if (_shownRun is { } run) {
                 _expandedRunTask = expanded ? null : key;
                 RenderRunRows(Project, run);
                 var replacement = RunRows.Children.OfType<Border>()
@@ -196,20 +193,20 @@ public sealed partial class TaskPlanEditor
         }
 
         card.SetResourceReference(Border.BackgroundProperty, "Brush.Plan.Expanded");
+        if (!string.IsNullOrWhiteSpace(task.Description)) {
+            var description = CreatePlanItemDescription(task);
+            description.Margin = new Thickness(36, 2, 12, 6);
+            body.Children.Add(description);
+        }
+        if (!HasParameters(configuration)) {
+            return;
+        }
         _runInspectorShown = true;
         _inspectorRows.Clear();
         var inspector = CreateParameterInspector(configuration);
         inspector.IsEnabled = false;
         inspector.Margin = new Thickness(36, 2, 12, 12);
         body.Children.Add(inspector);
-        if (!string.IsNullOrWhiteSpace(task.Description)) {
-            var information = CreateIconButton(WpfSymbolRegular.Info16, $"查看 {task.Label} 的任务描述", "查看任务说明");
-            information.Tag = task;
-            information.Margin = new Thickness(0, 0, 12, 8);
-            information.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
-            information.Click += TaskDescriptionButton_Click;
-            body.Children.Add(information);
-        }
     }
 
     private FrameworkElement CreateRunIcon(PlanItemProgress state)

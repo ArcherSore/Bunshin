@@ -6,6 +6,27 @@
              AutomationProperties.Name="运行面板">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="Panel.BooleanToVisibility" />
+        <Style x:Key="Panel.OutlineIcon" TargetType="Path">
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Stroke" Value="{DynamicResource Brush.Text.Muted}" />
+            <Setter Property="StrokeThickness" Value="1.3" />
+            <Setter Property="StrokeStartLineCap" Value="Round" />
+            <Setter Property="StrokeEndLineCap" Value="Round" />
+            <Setter Property="StrokeLineJoin" Value="Round" />
+        </Style>
+        <Style x:Key="Panel.RowIcon" TargetType="Path" BasedOn="{StaticResource Panel.OutlineIcon}">
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <TranslateTransform Y="1" />
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <GeometryGroup x:Key="Panel.CalendarIcon">
+            <RectangleGeometry Rect="2.25,3.25,11.5,10.5" RadiusX="1.5" RadiusY="1.5" />
+            <PathGeometry Figures="M2.25,6.5 H13.75 M5.5,1.75 V4.75 M10.5,1.75 V4.75" />
+        </GeometryGroup>
         <Style x:Key="Panel.QuietButton" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
             <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
@@ -17,9 +38,10 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border CornerRadius="{StaticResource Radius.Control}" Background="{TemplateBinding Background}"
+                        <Border CornerRadius="8" Background="{TemplateBinding Background}"
                                 Padding="{TemplateBinding Padding}">
-                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -36,58 +58,58 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="Panel.TextAction" TargetType="Button" BasedOn="{StaticResource Panel.QuietButton}">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{DynamicResource Brush.Transparent}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="Panel.SectionToggle" TargetType="Button" BasedOn="{StaticResource Panel.QuietButton}">
-            <Setter Property="Padding" Value="0,2,5,2" />
-            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Padding" Value="16,0,0,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="Medium" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Padding="{TemplateBinding Padding}" CornerRadius="{StaticResource Radius.Control}"
-                                Background="{TemplateBinding Background}">
+                        <Border Padding="{TemplateBinding Padding}" Background="{DynamicResource Brush.Transparent}">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <ContentPresenter />
-                                <ui:SymbolIcon x:Name="Chevron" Symbol="ChevronDown16"
+                                <TextBlock Text="{TemplateBinding Content}" FontSize="{TemplateBinding FontSize}"
+                                           FontWeight="{TemplateBinding FontWeight}" Foreground="{TemplateBinding Foreground}" />
+                                <ui:SymbolIcon x:Name="Chevron" Symbol="ChevronDown16" Opacity="0"
                                     Margin="5,0,0,0" FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}" />
+                                <TextBlock Text="{TemplateBinding AutomationProperties.HelpText}" Margin="8,0,0,0"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
                             </StackPanel>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="Tag" Value="Collapsed">
                                 <Setter TargetName="Chevron" Property="Symbol" Value="ChevronRight16" />
                             </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}" />
-                            </Trigger>
+                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=DockPanel}}" Value="True">
+                                <Setter TargetName="Chevron" Property="Opacity" Value="1" />
+                            </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="Panel.Grip" TargetType="Thumb">
-            <Setter Property="Width" Value="20" />
-            <Setter Property="Cursor" Value="SizeNS" />
-            <Setter Property="Focusable" Value="True" />
-            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Thumb">
-                        <Border Background="{DynamicResource Brush.Transparent}">
-                            <Path Data="M1,1h1 M5,1h1 M1,5h1 M5,5h1 M1,9h1 M5,9h1"
-                                  Stroke="{TemplateBinding Foreground}" StrokeThickness="1"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
         <Style x:Key="Panel.Section" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Rail.Border}" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
         </Style>
         <Style x:Key="Panel.SectionHeader" TargetType="DockPanel">
-            <Setter Property="Height" Value="42" />
-            <Setter Property="Margin" Value="16,2,8,0" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Margin" Value="0,6,8,0" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
         </Style>
         <Style x:Key="Panel.Action" TargetType="Button" BasedOn="{StaticResource Panel.QuietButton}">
             <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
@@ -103,21 +125,16 @@
         <Style x:Key="Panel.ScheduleToggle" TargetType="ToggleButton">
             <Setter Property="Width" Value="32" />
             <Setter Property="Height" Value="18" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="{DynamicResource Brush.RuntimePanel.SwitchOff}" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="Track" Background="{DynamicResource Brush.RuntimePanel.SwitchOff}" CornerRadius="9">
-                            <Ellipse x:Name="Knob" Width="14" Height="14" Margin="2" HorizontalAlignment="Left"
-                                     Fill="{DynamicResource Brush.Text.Inverse}" />
+                        <Border Style="{StaticResource SwitchTrackStyle}">
+                            <Ellipse x:Name="Knob" Style="{StaticResource SwitchKnobStyle}" />
                         </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Track" Property="Background" Value="{DynamicResource Brush.Primary}" />
-                                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -132,198 +149,51 @@
             </Grid.RowDefinitions>
             <Border x:Name="DesktopSection" Style="{StaticResource Panel.Section}" KeyboardNavigation.TabNavigation="Local">
                 <StackPanel>
-                    <DockPanel Style="{StaticResource Panel.SectionHeader}" LastChildFill="False">
-                        <Thumb x:Name="DesktopSectionGrip" DockPanel.Dock="Right" Style="{StaticResource Panel.Grip}"
-                               AutomationProperties.Name="调整桌面分身区块顺序" />
-                        <Button x:Name="RuntimeMoreButton" DockPanel.Dock="Right" Width="26"
+                    <DockPanel Style="{StaticResource Panel.SectionHeader}">
+                        <Button x:Name="RuntimeMoreButton" DockPanel.Dock="Right" Width="28" Height="28"
+                                Padding="0" VerticalAlignment="Center" Cursor="Hand"
                                 Style="{StaticResource Panel.QuietButton}" Click="RuntimeMoreButton_Click"
                                 ToolTip="分身管理" AutomationProperties.Name="分身管理">
                             <ui:SymbolIcon Symbol="MoreHorizontal20" FontSize="15" />
                             <Button.ContextMenu>
-                                <ContextMenu x:Name="RuntimeMoreMenu" Width="256" Padding="4"
-                                    Background="{DynamicResource Brush.Surface}"
-                                    BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
-                                    FontFamily="{StaticResource FontFamily.Ui}" FontSize="13"
-                                    FontWeight="Normal"
-                                    Foreground="{DynamicResource Brush.Console.MenuText}">
-                                    <ContextMenu.Template>
-                                        <ControlTemplate TargetType="ContextMenu">
-                                            <Border Background="{TemplateBinding Background}"
-                                                BorderBrush="{TemplateBinding BorderBrush}"
-                                                BorderThickness="1" CornerRadius="6" Padding="4">
-                                                <ItemsPresenter
-                                                KeyboardNavigation.DirectionalNavigation="Cycle" />
-                                            </Border>
-                                        </ControlTemplate>
-                                    </ContextMenu.Template>
-                                        <ContextMenu.Resources>
-                            <Style TargetType="Separator">
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="Separator">
-                                            <Border Height="1" Margin="6,4"
-                                                Background="{DynamicResource Brush.Border.Subtle}" />
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                            <Style TargetType="MenuItem">
-                                <Setter Property="FontSize" Value="13" />
-                                <Setter Property="FontWeight" Value="Normal" />
-                                <Setter Property="Foreground"
-                                        Value="{DynamicResource Brush.Console.MenuText}" />
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="MenuItem">
-                                            <Border x:Name="Row" CornerRadius="6"
-                                                Padding="10,6"
-                                                Background="{DynamicResource Brush.Transparent}"
-                                                MinHeight="32">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="16" />
-                                                        <ColumnDefinition Width="10" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <ContentPresenter x:Name="IconHost"
-                                                        ContentSource="Icon"
-                                                        VerticalAlignment="Center" />
-                                                    <Border x:Name="CheckBox"
-                                                        Visibility="Collapsed"
-                                                        Width="16" Height="16"
-                                                        BorderBrush="{DynamicResource
-                                                            Brush.Border.Strong}"
-                                                        BorderThickness="1"
-                                                        CornerRadius="4">
-                                                        <Path x:Name="Check"
-                                                            Visibility="Collapsed"
-                                                            Data="M3 7L6 10L12 4"
-                                                            Stroke="{DynamicResource
-                                                                Brush.Text.Inverse}"
-                                                            StrokeThickness="1.5" />
-                                                    </Border>
-                                                    <StackPanel Grid.Column="2">
-                                                        <TextBlock
-                                                            Text="{TemplateBinding Header}"
-                                                            FontSize="13"
-                                                            FontWeight="Normal"
-                                                            Foreground="{TemplateBinding Foreground}" />
-                                                        <TextBlock x:Name="Note" Margin="0,1,0,0"
-                                                            Text="{TemplateBinding Tag}"
-                                                            FontSize="11.5"
-                                                            FontWeight="Normal"
-                                                            Foreground="{DynamicResource
-                                                                Brush.Text.Muted}" />
-                                                    </StackPanel>
-                                                </Grid>
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsHighlighted"
-                                                Value="True">
-                                                    <Setter TargetName="Row"
-                                                        Property="Background"
-                                                        Value="{DynamicResource
-                                                            Brush.Surface.Disabled}" />
-                                                </Trigger>
-                                                <MultiTrigger>
-                                                    <MultiTrigger.Conditions>
-                                                        <Condition Property="IsHighlighted"
-                                                            Value="True" />
-                                                        <Condition Property="Name"
-                                                            Value="EndEnvironmentMenuItem" />
-                                                    </MultiTrigger.Conditions>
-                                                    <Setter TargetName="Row"
-                                                        Property="Background"
-                                                        Value="{DynamicResource Brush.Error.Surface}" />
-                                                </MultiTrigger>
-                                                <Trigger Property="IsCheckable"
-                                                Value="True">
-                                                    <Setter TargetName="IconHost"
-                                                        Property="Visibility"
-                                                        Value="Collapsed" />
-                                                    <Setter TargetName="CheckBox"
-                                                        Property="Visibility"
-                                                        Value="Visible" />
-                                                </Trigger>
-                                                <Trigger Property="IsChecked" Value="True">
-                                                    <Setter TargetName="CheckBox"
-                                                        Property="Background"
-                                                        Value="{DynamicResource Brush.Primary}" />
-                                                    <Setter TargetName="CheckBox"
-                                                        Property="BorderBrush"
-                                                        Value="{DynamicResource Brush.Primary}" />
-                                                    <Setter TargetName="Check"
-                                                        Property="Visibility"
-                                                        Value="Visible" />
-                                                </Trigger>
-                                                <Trigger Property="IsEnabled" Value="False">
-                                                    <Setter Property="Foreground"
-                                                    Value="{DynamicResource Brush.Text.Disabled}" />
-                                                    <Setter TargetName="Row"
-                                                        Property="Background"
-                                                        Value="{DynamicResource Brush.Transparent}" />
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                                    </ContextMenu.Resources>
-                                    <MenuItem x:Name="StartSessionMenuItem" Header="仅启动分身"
-                                        Tag="不运行任务" >
-                                        <MenuItem.Icon>
-                                            <Viewbox Width="16" Height="16">
-                                                <Canvas Width="20" Height="20">
-                                                    <Path StrokeThickness="1.5"
-                                                        StrokeStartLineCap="Round"
-                                                        StrokeEndLineCap="Round"
-                                                        StrokeLineJoin="Round"
-                                                        Stroke="{DynamicResource
-                                                            Brush.Console.MenuText}"
-                                                        Data="M10 3.5v6M6.4 5.9a5.7 5.7 0 1 0 7.2 0" />
-                                                </Canvas>
-                                            </Viewbox>
-                                        </MenuItem.Icon>
+                                <ContextMenu x:Name="RuntimeMoreMenu" MinWidth="132"
+                                             Style="{StaticResource FloatingContextMenuStyle}"
+                                             Background="{DynamicResource Brush.Surface.Popover}">
+                                    <MenuItem x:Name="StartSessionMenuItem" Header="仅打开分身"
+                                              Style="{StaticResource TrayMenuItemStyle}"
+                                              ToolTip="打开分身，不运行任务" />
+                                    <MenuItem x:Name="EndEnvironmentMenuItem" Header="关闭分身" Visibility="Collapsed"
+                                              ToolTipService.ShowOnDisabled="True">
+                                        <MenuItem.Style>
+                                            <Style TargetType="MenuItem" BasedOn="{StaticResource TrayMenuItemStyle}">
+                                                <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
+                                                <Setter Property="Background" Value="{DynamicResource Brush.Error.Surface}" />
+                                            </Style>
+                                        </MenuItem.Style>
                                     </MenuItem>
-                                    <MenuItem x:Name="OpenLogsMenuItem" Header="打开日志目录" />
-                                    <MenuItem x:Name="EndEnvironmentMenuItem" Header="结束桌面分身"
-                                        Tag="注销分身，游戏随之关闭"
-                                        Foreground="{DynamicResource Brush.Error.Foreground}"
-                                        >
-                                        <MenuItem.Icon>
-                                            <Viewbox Width="16" Height="16">
-                                                <Canvas Width="20" Height="20">
-                                                    <Path StrokeThickness="1.5"
-                                                        StrokeStartLineCap="Round"
-                                                        StrokeEndLineCap="Round"
-                                                        StrokeLineJoin="Round"
-                                                        Stroke="{DynamicResource
-                                                            Brush.Error.Foreground}"
-                                                        Data="M8 4.5H5.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H8
-                                                            M11.5 6.5 15 10l-3.5 3.5M15 10H8" />
-                                                </Canvas>
-                                            </Viewbox>
-                                        </MenuItem.Icon>
-                                    </MenuItem>
-                                    <Separator x:Name="SessionMenuSeparator" />
-                                    <MenuItem x:Name="AutoSessionMenuItem" IsCheckable="True"
-                                        StaysOpenOnClick="True"
-                                        Header="打开程序时自动启动分身" Tag="不会自动开始任务" />
                                 </ContextMenu>
                             </Button.ContextMenu>
                         </Button>
                         <Button x:Name="DesktopSectionToggle" Content="桌面分身" Style="{StaticResource Panel.SectionToggle}" />
                     </DockPanel>
-                    <StackPanel x:Name="RuntimeControlCard" Margin="16,0,16,12">
-                        <DockPanel MinHeight="28">
+                    <StackPanel x:Name="RuntimeControlCard" Margin="6,0,6,12">
+                        <DockPanel MinHeight="32" Margin="10,0">
                             <Button x:Name="DesktopViewButton" DockPanel.Dock="Right" Padding="4,2,0,2"
-                                    Style="{StaticResource Panel.QuietButton}" ToolTipService.ShowOnDisabled="True">
+                                    Style="{StaticResource Panel.TextAction}" ToolTipService.ShowOnDisabled="True">
                                 <TextBlock x:Name="DesktopViewText" Text="显示窗口" TextDecorations="Underline">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
                                             <Setter Property="Foreground"
                                                     Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                                             <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                             Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Primary.Foreground}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsEnabled, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                             Value="False">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+                                                </DataTrigger>
                                                 <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}"
                                                              Value="Onboarding">
                                                     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
@@ -334,8 +204,14 @@
                                 </TextBlock>
                             </Button>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <ui:SymbolIcon Symbol="Desktop20" FontSize="16" Margin="0,0,11,0"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                                <Path Style="{StaticResource Panel.RowIcon}" Margin="0,0,11,0">
+                                    <Path.Data>
+                                        <GeometryGroup>
+                                            <RectangleGeometry Rect="1.75,2.75,12.5,8.5" RadiusX="1.5" RadiusY="1.5" />
+                                            <PathGeometry Figures="M5.5,13.5 H10.5 M8,11.25 V13.5" />
+                                        </GeometryGroup>
+                                    </Path.Data>
+                                </Path>
                                 <Border x:Name="RuntimeStatusPill">
                                     <StackPanel Orientation="Horizontal">
                                         <Ellipse x:Name="SessionStatusDot" Width="7" Height="7" VerticalAlignment="Center" />
@@ -344,44 +220,63 @@
                                 </Border>
                             </StackPanel>
                         </DockPanel>
-                        <DockPanel x:Name="NextRunRow" MinHeight="32">
-                            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                                <ui:SymbolIcon Symbol="Clock20" FontSize="16" Margin="0,0,11,0"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
-                                <TextBlock Text="下次运行" />
-                            </StackPanel>
-                            <TextBlock x:Name="NextRunText" Margin="12,0,0,0" TextAlignment="Right" TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}"
-                                       ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                        </DockPanel>
-                        <Border x:Name="RunSummaryCard" Visibility="Collapsed" CornerRadius="6" BorderThickness="1"
-                                ToolTip="{Binding Text, ElementName=RunProgressElapsed}">
-                            <StackPanel>
-                                <Grid>
+                        <Button x:Name="NextRunRow" MinHeight="32" Padding="10,0" Cursor="Hand"
+                                HorizontalContentAlignment="Stretch"
+                                Style="{StaticResource Panel.QuietButton}" AutomationProperties.Name="下次运行，打开定时页"
+                                AutomationProperties.HelpText="{Binding Text, ElementName=NextRunText}">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Path Style="{StaticResource Panel.RowIcon}" Margin="0,0,11,0">
+                                        <Path.Data>
+                                            <GeometryGroup>
+                                                <EllipseGeometry Center="8,8" RadiusX="5.75" RadiusY="5.75" />
+                                                <PathGeometry Figures="M8,5 V8.2 L10,9.5" />
+                                            </GeometryGroup>
+                                        </Path.Data>
+                                    </Path>
+                                    <TextBlock Text="下次运行" FontSize="14" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock x:Name="NextRunText" Margin="12,0,0,0" TextAlignment="Right" TextTrimming="CharacterEllipsis"
+                                           FontSize="14" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
+                            </DockPanel>
+                        </Button>
+                        <Border x:Name="RunSummaryCard" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" Padding="9,0">
+                            <!-- Keep the right edge fixed while rounded star columns redistribute pixels. -->
+                            <StackPanel UseLayoutRounding="False">
+                                <Grid MinHeight="32">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="27" />
+                                        <ColumnDefinition Width="28" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition x:Name="RunProgressCaptionColumn" Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:SymbolIcon Symbol="PlayCircle20" FontSize="16" HorizontalAlignment="Left"
-                                        Foreground="{DynamicResource Brush.Text.Muted}" />
-                                    <TextBlock x:Name="RuntimeStatusTitle" Grid.Column="1" TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-                                    <TextBlock x:Name="RunProgressCaption" Grid.Column="2" Margin="8,0,0,0" FontSize="12"
+                                    <Path Style="{StaticResource Panel.RowIcon}" HorizontalAlignment="Left">
+                                        <Path.Data>
+                                            <GeometryGroup>
+                                                <EllipseGeometry Center="8,8" RadiusX="5.75" RadiusY="5.75" />
+                                                <PathGeometry Figures="M6.75,5.75 V10.25 L10.25,8 Z" />
+                                            </GeometryGroup>
+                                        </Path.Data>
+                                    </Path>
+                                    <TextBlock x:Name="RuntimeStatusTitle" Grid.Column="1" FontSize="14"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="RunProgressCaption" Grid.Column="2" Margin="8,3,0,3"
+                                               FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                               TextAlignment="Right" TextWrapping="Wrap" SnapsToDevicePixels="True"
                                                Foreground="{DynamicResource Brush.Text.Muted}" />
                                 </Grid>
                                 <StackPanel x:Name="RunProgressPanel">
-                                    <Canvas x:Name="RunProgressBar" Height="3" Margin="27,8,0,4" ClipToBounds="True"
+                                    <Canvas x:Name="RunProgressBar" Height="3" Margin="28,2,0,6" ClipToBounds="True"
                                             Background="{DynamicResource Brush.Progress.Track}"
+                                            ToolTip="{Binding Text, ElementName=RunProgressElapsed}"
                                             AutomationProperties.HelpText="{Binding Text, ElementName=RunProgressElapsed}"
                                             SizeChanged="RunProgressBar_SizeChanged" />
                                     <TextBlock x:Name="RunProgressElapsed" Visibility="Collapsed" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        <TextBlock x:Name="RuntimeStatusDetail" Margin="27,3,0,0" TextWrapping="Wrap" FontSize="12"
+                        <TextBlock x:Name="RuntimeStatusDetail" Margin="37,3,10,0" TextWrapping="Wrap" FontSize="12"
                                    Foreground="{DynamicResource Brush.Text.Secondary}" />
-                        <Grid>
+                        <Grid Margin="10,0">
                             <Button x:Name="RetryEnvironmentButton" Visibility="Collapsed"
                                     Style="{StaticResource Panel.Action}" ToolTipService.ShowOnDisabled="True">
                                 <TextBlock x:Name="RetryEnvironmentText" />
@@ -402,17 +297,16 @@
             <Border x:Name="ScheduleSection" Grid.Row="1" Style="{StaticResource Panel.Section}"
                     KeyboardNavigation.TabNavigation="Local">
                 <StackPanel>
-                    <DockPanel Style="{StaticResource Panel.SectionHeader}" LastChildFill="False">
-                        <Thumb x:Name="ScheduleSectionGrip" DockPanel.Dock="Right" Style="{StaticResource Panel.Grip}"
-                               AutomationProperties.Name="调整定时区块顺序" />
+                    <DockPanel Style="{StaticResource Panel.SectionHeader}">
                         <Button x:Name="RuntimeSchedulePageButton" DockPanel.Dock="Right" Width="26"
                                 Style="{StaticResource Panel.QuietButton}" ToolTip="打开定时页"
                                 AutomationProperties.Name="打开定时页">
-                            <ui:SymbolIcon Symbol="Open16" FontSize="13" />
+                            <Viewbox Width="14" Height="14">
+                                <Path Style="{StaticResource Panel.OutlineIcon}"
+                                      Data="M6.5,3.5 H3.5 V12.5 H12.5 V9.5 M9,3 H13 V7 M13,3 L7.5,8.5" />
+                            </Viewbox>
                         </Button>
                         <Button x:Name="ScheduleSectionToggle" Content="定时" Style="{StaticResource Panel.SectionToggle}" />
-                        <TextBlock x:Name="ScheduleSectionSummary" VerticalAlignment="Center" Margin="8,0,0,0"
-                                   Foreground="{DynamicResource Brush.Text.Muted}" Visibility="Collapsed" />
                     </DockPanel>
                     <Grid x:Name="ScheduleSectionBody" Margin="16,0,16,10">
                         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -425,8 +319,8 @@
                                                 Style="{StaticResource Panel.ScheduleToggle}"
                                                 IsChecked="{Binding Enabled, Mode=OneWay}" Click="SchedulePolicyToggle_Click"
                                                 AutomationProperties.Name="{Binding Name}" />
-                                            <ui:SymbolIcon DockPanel.Dock="Left" Symbol="CalendarLtr20" FontSize="16"
-                                                Margin="0,0,11,0" Foreground="{DynamicResource Brush.Text.Muted}" />
+                                            <Path DockPanel.Dock="Left" Style="{StaticResource Panel.RowIcon}"
+                                                  Margin="0,0,11,0" Data="{StaticResource Panel.CalendarIcon}" />
                                             <TextBlock x:Name="PolicyLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                                        ToolTip="{Binding Summary}">
                                                 <Run Text="{Binding Name, Mode=OneWay}" />
@@ -446,8 +340,8 @@
                             </ItemsControl>
                         </ScrollViewer>
                         <DockPanel x:Name="RuntimeScheduleEmpty" MinHeight="24" LastChildFill="False">
-                            <ui:SymbolIcon Symbol="CalendarLtr20" FontSize="16" Margin="0,0,11,0"
-                                           Foreground="{DynamicResource Brush.Text.Muted}" />
+                             <Path Style="{StaticResource Panel.RowIcon}" Margin="0,0,11,0"
+                                   Data="{StaticResource Panel.CalendarIcon}" />
                             <TextBlock Text="暂无定时" Foreground="{DynamicResource Brush.Text.Muted}" VerticalAlignment="Center" />
                         </DockPanel>
                     </Grid>
@@ -460,9 +354,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-                    <DockPanel Style="{StaticResource Panel.SectionHeader}" LastChildFill="False">
-                        <Thumb x:Name="ActivitySectionGrip" DockPanel.Dock="Right" Style="{StaticResource Panel.Grip}"
-                               AutomationProperties.Name="调整运行动态区块顺序" />
+                    <DockPanel Style="{StaticResource Panel.SectionHeader}">
                         <Button x:Name="ClearActivityButton" DockPanel.Dock="Right" Width="26"
                                 Style="{StaticResource Panel.QuietButton}"
                                 ToolTip="清空运行动态" AutomationProperties.Name="清空运行动态">
@@ -470,7 +362,8 @@
                                 <Binding Path="HasItems" ElementName="HomeLogListBox"
                                          Converter="{StaticResource Panel.BooleanToVisibility}" />
                             </Button.Visibility>
-                            <ui:SymbolIcon Symbol="Delete20" FontSize="16" />
+                            <Path Style="{StaticResource Panel.OutlineIcon}"
+                                  Data="M3,4.5 H13 M6.5,4.5 V3 H9.5 V4.5 M4.5,4.5 L5.1,13 H10.9 L11.5,4.5" />
                         </Button>
                         <Button x:Name="ActivitySectionToggle" Content="运行动态" Style="{StaticResource Panel.SectionToggle}" />
                     </DockPanel>
@@ -484,20 +377,18 @@
                             <ListBox.Resources>
                                 <DataTemplate DataType="{x:Type models:RunLogGroup}">
                                     <DockPanel Margin="0,9,0,3" LastChildFill="False">
-                                        <TextBlock Text="{Binding Label}" MaxWidth="220" FontWeight="Medium" FontSize="13"
+                                        <TextBlock Text="{Binding Label}" MaxWidth="180" FontWeight="Medium" FontSize="14"
                                                    TextTrimming="CharacterEllipsis"
                                                    Foreground="{DynamicResource Brush.Text.Primary}" />
-                                        <TextBlock x:Name="GroupStatus" Text="{Binding StatusText}" Margin="8,0,0,0"
+                                        <TextBlock x:Name="GroupStatus" Text="{Binding StatusText}" Margin="8,0,0,0" FontSize="14"
                                                    Foreground="{DynamicResource Brush.Text.Muted}" />
                                     </DockPanel>
                                     <DataTemplate.Triggers>
                                         <DataTrigger Binding="{Binding Status}" Value="{x:Static models:RunLogStatus.Running}">
-                                            <Setter TargetName="GroupStatus" Property="Foreground"
-                                                    Value="{DynamicResource Brush.Primary.Foreground}" />
+                                            <Setter TargetName="GroupStatus" Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding Status}" Value="{x:Static models:RunLogStatus.Succeeded}">
-                                            <Setter TargetName="GroupStatus" Property="Foreground"
-                                                    Value="{DynamicResource Brush.Success.Foreground}" />
+                                            <Setter TargetName="GroupStatus" Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding Status}" Value="{x:Static models:RunLogStatus.Failed}">
                                             <Setter TargetName="GroupStatus" Property="Foreground"
@@ -508,9 +399,10 @@
                                 <DataTemplate DataType="{x:Type models:LogEntry}">
                                     <DockPanel MinHeight="22">
                                         <TextBlock DockPanel.Dock="Left" Width="72" Text="{Binding Timestamp, StringFormat=HH:mm:ss}"
-                                                   FontFamily="{StaticResource FontFamily.Monospace}" FontSize="12"
+                                                   FontFamily="{StaticResource FontFamily.Monospace}" FontSize="13"
                                                    Padding="0,2,0,0" Foreground="{DynamicResource Brush.Activity.Caption}" />
-                                        <TextBlock Text="{Binding Message}" FontSize="12" Padding="0,2,0,2" TextWrapping="Wrap"
+                                        <TextBlock Text="{Binding Message}" FontFamily="{StaticResource FontFamily.Monospace}"
+                                                   FontSize="13" Padding="0,2,0,2" TextWrapping="Wrap"
                                                    AutomationProperties.HelpText="{Binding DisplayLevel}" />
                                     </DockPanel>
                                 </DataTemplate>
@@ -527,15 +419,19 @@
                                     </Style.Triggers>
                                 </Style>
                             </DockPanel.Style>
-                            <ui:SymbolIcon Symbol="DocumentText20" FontSize="16" Margin="0,0,11,0"
-                                           Foreground="{DynamicResource Brush.Text.Muted}" />
+                            <Path Style="{StaticResource Panel.RowIcon}" Margin="0,0,11,0">
+                                <Path.Data>
+                                    <GeometryGroup>
+                                        <RectangleGeometry Rect="3,2.25,10,11.5" RadiusX="1.5" RadiusY="1.5" />
+                                        <PathGeometry Figures="M5.5,5.5 H10.5 M5.5,8 H10.5 M5.5,10.5 H8.5" />
+                                    </GeometryGroup>
+                                </Path.Data>
+                            </Path>
                             <TextBlock Text="暂无运行动态" Foreground="{DynamicResource Brush.Text.Muted}" VerticalAlignment="Center" />
                         </DockPanel>
                     </Grid>
                 </Grid>
             </Border>
-            <Border x:Name="DropMarker" Height="2" Margin="16,0" IsHitTestVisible="False" Visibility="Collapsed"
-                    Background="{DynamicResource Brush.Primary}" />
         </Grid>
     </Border>
 </UserControl>

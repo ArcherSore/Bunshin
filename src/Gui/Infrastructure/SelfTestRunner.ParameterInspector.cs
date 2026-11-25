@@ -29,7 +29,7 @@ internal static partial class SelfTestRunner
         project.AddItem(Protocol.PlanItemKind.MaaTask, "StressTask");
         project.AddItem(Protocol.PlanItemKind.MaaTask, "ThirdTask");
         List<InspectorRow> Rows(IReadOnlyDictionary<(string, string), InputDraft> drafts) => ParameterInspector.Flatten(
-            ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts, project.OptionOwners)).ToList();
+            ParameterInspector.Derive(project.GetConfiguration("StressTask"), drafts)).ToList();
         rows = Rows(none);
         Require(rows.Select(row => (row.Option.Name, row.Depth)).SequenceEqual(new[] {
             ("ServerRange", 0), ("Mode", 0), ("Nested", 1), ("Level1", 0), ("Level2", 1), ("Level3", 2)
@@ -38,11 +38,6 @@ internal static partial class SelfTestRunner
             "标签回退必须为选项 label、第一个输入 label、选项名。");
         Require(rows[3].CaseDescription == "Goes one level deeper" && rows[1].CaseDescription is null,
             "选中 case 有说明时才给出 case 说明。");
-        Require(rows[0].IsGlobal && rows[0].SharedWith.Count == 0
-            && rows[1].SharedWith.SequenceEqual(new[] { "Real task", "Stress task", "Third task" })
-            && rows[2].SharedWith.SequenceEqual(new[] { "Real task", "Stress task", "Third task" })
-            && rows[3].SharedWith.Count == 1 && rows[5].SharedWith.Count == 1,
-            "共用提示必须列出项目中使用同一选项的任务，全局选项另行标记。");
 
         project.SetInputValue("ServerRange", "retry_count", "3");
         project.SetInputValue("ServerRange", "server_range", "979");
@@ -74,6 +69,7 @@ internal static partial class SelfTestRunner
         var plain = json["task"]![0]!.DeepClone();
         plain["name"] = "PlainTask";
         plain["label"] = "Plain task";
+        plain["description"] = "";
         plain["option"] = new JsonArray();
         json["global_option"] = new JsonArray();
         json["task"]!.AsArray().Add(plain);
@@ -102,21 +98,24 @@ internal static partial class SelfTestRunner
             Click("Stress task，已折叠");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" }) && InspectorRows() == 5,
                 "展开另一张卡片时必须收起之前的卡片。");
-            Click("拖动以调整顺序");
             Click("从执行计划移除 Plain task");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" })
-                && !project.SelectedTaskNames.Contains("PlainTask"), "拖动手柄与移除按钮不得切换展开。");
+                && !project.SelectedTaskNames.Contains("PlainTask"), "移除按钮不得切换展开。");
             project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
             InvokeEditor(window, "RenderTaskPlan");
             Click("Plain task，没有可配置的参数");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" }), "无参数任务的标题区不得展开空白区域。");
-            Click("查看 Stress task 的任务描述");
-            var drawer = (System.Windows.UIElement)window.FindName("TaskDescriptionOverlay");
-            Require(drawer.Visibility == System.Windows.Visibility.Visible
-                && Expanded().SequenceEqual(new[] { "Stress task，已展开" }), "任务说明按钮只打开说明，不切换展开。");
-            InvokeOnboarding(window, "CloseTaskDescriptionDrawer");
+            var description = ConfigurationDescendants(items)
+                .OfType<System.Windows.Controls.FlowDocumentScrollViewer>().Single();
+            // This fixture renders the controls without showing their window.
+            Require(description.Visibility == System.Windows.Visibility.Visible && description.Document.Blocks.Count > 0
+                && Expanded().SequenceEqual(new[] { "Stress task，已展开" })
+                && Buttons().All(button => NameOf(button) != "查看 Stress task 的任务描述"),
+                "任务说明应随任务卡展开，收在同一个详情区。");
             Click("Stress task，已展开");
-            Require(Expanded().Length == 0 && InspectorRows() == 0, "再次点击已展开的标题区必须收起。");
+            Require(Expanded().Length == 0 && InspectorRows() == 0
+                && !ConfigurationDescendants(items).OfType<System.Windows.Controls.FlowDocumentScrollViewer>().Any(),
+                "再次点击已展开的标题区必须同时收起说明和参数。");
 
             Click("Stress task，已折叠");
             window.SetPendingOperation(PendingOperation.PreparingEnvironment);

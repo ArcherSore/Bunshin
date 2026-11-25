@@ -16,7 +16,7 @@ namespace Gui.Views;
 internal sealed record MarkdownStyle(
     double FontSize, double LineHeight, double Heading1Size, double HeadingLineHeight, string BrushKey,
     string? StrongBrushKey = null, double ParagraphSpacing = 8, string LinkBrushKey = "Brush.Primary",
-    FontWeight? StrongWeight = null, bool CompactLists = false);
+    FontWeight? StrongWeight = null, bool CompactLists = false, bool ShowLinkToolTips = true);
 
 // Render Markdown as native document elements: no HTML, scripts or remote image loading.
 internal static class MarkdownDocument
@@ -155,12 +155,12 @@ internal static class MarkdownDocument
                     rendered = new Run(task.Checked ? "☑ " : "☐ ");
                     break;
                 case AutolinkInline auto:
-                    rendered = Link(auto.Url, new Run(auto.Url), openLink, style.LinkBrushKey);
+                    rendered = Link(auto.Url, new Run(auto.Url), openLink, style, showAddress: false);
                     break;
                 case LinkInline link:
                     var label = new Span();
                     AddInlines(label.Inlines, link, openLink, style);
-                    rendered = Link(link.Url, label, openLink, style.LinkBrushKey);
+                    rendered = Link(link.Url, label, openLink, style);
                     break;
                 case EmphasisInline emphasis:
                     var styled = new Span();
@@ -189,13 +189,17 @@ internal static class MarkdownDocument
         }
     }
 
-    private static WpfInline Link(string? url, WpfInline label, Action<Uri> openLink, string brushKey)
+    private static WpfInline Link(string? url, WpfInline label, Action<Uri> openLink, MarkdownStyle style,
+        bool showAddress = true)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("https" or "http")) {
             return label;
         }
-        var link = new Hyperlink(label) { NavigateUri = uri, ToolTip = uri.AbsoluteUri };
-        link.SetResourceReference(TextElement.ForegroundProperty, brushKey);
+        var link = new Hyperlink(label) { NavigateUri = uri };
+        if (style.ShowLinkToolTips && showAddress) {
+            link.ToolTip = uri.AbsoluteUri;
+        }
+        link.SetResourceReference(TextElement.ForegroundProperty, style.LinkBrushKey);
         link.RequestNavigate += (_, args) =>
         {
             openLink(uri);

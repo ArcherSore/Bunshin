@@ -97,8 +97,8 @@ public sealed partial class TaskPlanEditor
         }
         PlanEdited?.Invoke(this, EventArgs.Empty);
         _expandedTask = null;
-        _dragTask = null;
-        TaskDescriptionCloseRequested?.Invoke(this, EventArgs.Empty);
+        _pressedPlanHeader = null;
+        ClearPlanDragFeedback();
         RenderTaskPlan();
     }
 
