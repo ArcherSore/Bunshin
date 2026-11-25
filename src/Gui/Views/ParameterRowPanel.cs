@@ -1,110 +1,49 @@
 using System.Windows;
-using System.Windows.Media;
-using WpfBrush = System.Windows.Media.Brush;
 using WpfPanel = System.Windows.Controls.Panel;
 using WpfSize = System.Windows.Size;
 
 namespace Gui.Views;
 
-// One parameter inspector row: the label cell and the value cell side by side, stacked when the editor is narrow.
-// The row draws its own separators, nesting guide and invalid marker so the cells stay plain content.
+// Labels line up with the top of the control and stack above it when the remaining space is narrow.
 internal sealed class ParameterRowPanel : WpfPanel
 {
-    internal const double NarrowWidth = 470;
     internal const double IndentStep = 18;
+    private const double ColumnGap = 14;
+    private const double MinimumControlWidth = 180;
     private double? _labelWidth;
-    private double _labelHeight;
-    private bool _invalid;
 
     internal int Depth { get; init; }
-    internal bool Separated { get; init; }
-    private static readonly DependencyProperty LineBrushProperty = RegisterBrush("LineBrush");
-    private static readonly DependencyProperty GuideBrushProperty = RegisterBrush("GuideBrush");
-    private static readonly DependencyProperty InvalidBrushProperty = RegisterBrush("InvalidBrush");
-
-    internal ParameterRowPanel()
-    {
-        SetResourceReference(LineBrushProperty, "Brush.Border.Subtle");
-        SetResourceReference(GuideBrushProperty, "Brush.Parameter.Guide");
-        SetResourceReference(InvalidBrushProperty, "Brush.Error");
-    }
-
-    private static DependencyProperty RegisterBrush(string name) => DependencyProperty.Register(name,
-        typeof(WpfBrush), typeof(ParameterRowPanel),
-        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
-
-    private WpfBrush? LineBrush => (WpfBrush?)GetValue(LineBrushProperty);
-    private WpfBrush? GuideBrush => (WpfBrush?)GetValue(GuideBrushProperty);
-    private WpfBrush? InvalidBrush => (WpfBrush?)GetValue(InvalidBrushProperty);
-
-    internal bool IsInvalid
-    {
-        get => _invalid;
-        set {
-            _invalid = value;
-            InvalidateVisual();
-        }
-    }
-
+    internal bool IsInvalid { get; set; }
     internal bool IsStacked => _labelWidth is null;
 
-    // The label column takes about a third of the editor, bounded so short and long labels both stay readable.
-    internal static double? CalculateLabelWidth(double width) =>
-        !double.IsFinite(width) || width < NarrowWidth ? null : Math.Clamp(Math.Round(width * 0.36), 140, 280);
+    internal static double? CalculateLabelWidth(double width, int depth)
+    {
+        var label = depth == 0 ? 114 : 98;
+        return width >= label + ColumnGap + MinimumControlWidth ? label : null;
+    }
+
+    private double ValueLeft => _labelWidth is { } width ? width + ColumnGap : 0;
+    private double ValueTop => IsStacked && InternalChildren[0].DesiredSize.Height > 0
+        ? InternalChildren[0].DesiredSize.Height + 4 : 0;
 
     protected override WpfSize MeasureOverride(WpfSize availableSize)
     {
         var width = double.IsFinite(availableSize.Width) ? availableSize.Width : 600;
-        _labelWidth = CalculateLabelWidth(width);
+        _labelWidth = CalculateLabelWidth(width, Depth);
         var (label, value) = (InternalChildren[0], InternalChildren[1]);
-        if (_labelWidth is { } labelWidth) {
-            label.Measure(new WpfSize(labelWidth, double.PositiveInfinity));
-            value.Measure(new WpfSize(Math.Max(0, width - labelWidth - 1), double.PositiveInfinity));
-            return new WpfSize(width, Math.Max(44, Math.Max(label.DesiredSize.Height, value.DesiredSize.Height)));
-        }
-        label.Measure(new WpfSize(width, double.PositiveInfinity));
-        value.Measure(new WpfSize(Math.Max(0, width - StackedIndent), double.PositiveInfinity));
-        return new WpfSize(width, StackedValueTop(label.DesiredSize.Height) + value.DesiredSize.Height + 4);
+        label.Measure(new WpfSize(_labelWidth ?? width, double.PositiveInfinity));
+        value.Measure(new WpfSize(Math.Max(0, width - ValueLeft), double.PositiveInfinity));
+        return new WpfSize(width, Math.Max(label.DesiredSize.Height, ValueTop + value.DesiredSize.Height));
     }
 
     protected override WpfSize ArrangeOverride(WpfSize finalSize)
     {
         var (label, value) = (InternalChildren[0], InternalChildren[1]);
-        if (_labelWidth is { } labelWidth) {
-            label.Arrange(new Rect(0, 0, labelWidth, finalSize.Height));
-            value.Arrange(new Rect(labelWidth + 1, 0, Math.Max(0, finalSize.Width - labelWidth - 1),
-                finalSize.Height));
-            _labelHeight = finalSize.Height;
-        } else {
-            _labelHeight = label.DesiredSize.Height;
-            label.Arrange(new Rect(0, 0, finalSize.Width, _labelHeight));
-            value.Arrange(new Rect(StackedIndent, StackedValueTop(_labelHeight),
-                Math.Max(0, finalSize.Width - StackedIndent), value.DesiredSize.Height));
-        }
+        label.Arrange(new Rect(0, 0, _labelWidth ?? finalSize.Width, label.DesiredSize.Height));
+        value.Arrange(new Rect(ValueLeft, ValueTop, Math.Max(0, finalSize.Width - ValueLeft),
+            value.DesiredSize.Height));
         return finalSize;
     }
-
-    protected override void OnRender(DrawingContext dc)
-    {
-        base.OnRender(dc);
-        if (Separated && LineBrush is not null) {
-            dc.DrawRectangle(LineBrush, null, new Rect(0, 0, ActualWidth, 1));
-        }
-        if (_labelWidth is { } labelWidth && LineBrush is not null) {
-            dc.DrawRectangle(LineBrush, null, new Rect(labelWidth, 0, 1, ActualHeight));
-        }
-        if (Depth > 0 && GuideBrush is not null) {
-            dc.DrawRectangle(GuideBrush, null, new Rect(Depth * IndentStep - 2, 0, 2, ActualHeight));
-        }
-        if (_invalid && InvalidBrush is not null) {
-            dc.DrawRectangle(InvalidBrush, null, new Rect(0, 0, 3, _labelHeight));
-        }
-    }
-
-    // Stacked, the value lines up with the label text and sits just under it.
-    private double StackedIndent => Depth * IndentStep + 2;
-
-    private static double StackedValueTop(double labelHeight) => Math.Max(0, labelHeight - 10);
 }
 
 // The inputs of one input option side by side, each between 140 and 220 wide, wrapping when the row is narrow.
