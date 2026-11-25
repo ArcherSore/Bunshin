@@ -30,7 +30,7 @@ public partial class MainWindow
             OpenUpdateDialog();
         };
         Sidebar.ToggleRequested += (_, _) => ToggleSidebar();
-        Header.OpenLogsRequested += (_, _) => TryOpenLogsDirectory();
+        Header.OpenDebugDirectoryRequested += (_, _) => TryOpenDirectory(Path.Combine(_applicationDirectory, "debug"), "调试目录");
         Header.ScheduleStatusRequested += (_, _) => SwitchSection(MainSection.Home);
         RegisterName("RuntimePanelToggleButton", Header.Actions);
         _settings.RuntimePanelCollapsed.PropertyChanged += (_, e) => {

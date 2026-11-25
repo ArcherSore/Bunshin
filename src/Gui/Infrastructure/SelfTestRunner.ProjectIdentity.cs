@@ -70,6 +70,20 @@ internal static partial class SelfTestRunner
             Require(window.Title == "项目窗口标题" && configurationTitle.IsVisible && configurationTitle.Text == activeName,
                 "窗口标题应显示 PI title，页眉应显示当前配置。");
             Require(window.Icon is BitmapSource { PixelWidth: FixtureIconSize }, "系统窗口须显示 PI icon。");
+
+            var sidebarIcon = Named<System.Windows.Controls.Image>(window, "SidebarProjectIcon");
+            Require(sidebarIcon.IsVisible && sidebarIcon.Source is BitmapSource { PixelWidth: FixtureIconSize },
+                "展开的侧栏标题须显示 PI icon。");
+            ClickOnboarding(window, "SidebarToggleButton");
+            Require(!sidebarIcon.IsVisible, "收起侧栏时须隐藏标题图标。");
+            ClickOnboarding(window, "SidebarToggleButton");
+
+            ClickOnboarding(window, "UpdateNavigationItem");
+            var updateIcon = Named<System.Windows.Controls.Image>(window.UpdateDialog, "UpdateProjectIcon");
+            Require(updateIcon.IsVisible && updateIcon.Source is BitmapSource { PixelWidth: FixtureIconSize },
+                "更新弹窗须显示 PI icon。");
+            ClickOnboarding(window, "CloseUpdateButton");
+
             var settings = OpenAboutSection(window);
             System.Windows.Controls.Image AboutIcon() => SettingsVisualDescendants(settings)
                 .OfType<System.Windows.Controls.Image>().Single(image => image.Name == "ProjectAboutIcon");
@@ -87,6 +101,9 @@ internal static partial class SelfTestRunner
             Require(window.Icon is BitmapSource { PixelWidth: not FixtureIconSize }
                 && identities.SingleOrDefault() is { Name: "SelfTestProject", IconPath: null },
                 "无法加载的 icon 必须回到默认图标，托盘随之恢复。");
+            Require(sidebarIcon.Source is BitmapSource { PixelWidth: not FixtureIconSize }
+                && updateIcon.Source is BitmapSource { PixelWidth: not FixtureIconSize },
+                "无法加载的 icon 必须使侧栏和更新弹窗恢复为应用图标。");
             PumpUntil(() => AboutIcon().Source is BitmapSource { PixelWidth: not FixtureIconSize },
                 "关于页在 icon 无法加载时必须显示应用图标。");
         }, beforeLoad: directory => {

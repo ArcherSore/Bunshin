@@ -21,7 +21,7 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
         set => SetValue(ActionsProperty, value);
     }
 
-    internal event EventHandler? OpenLogsRequested;
+    internal event EventHandler? OpenDebugDirectoryRequested;
     internal event EventHandler? ScheduleStatusRequested;
     internal event EventHandler? ConfigurationRenameRequested;
     internal event EventHandler<WpfButton>? ConfigurationMenuRequested;
@@ -45,7 +45,7 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
         ConfigurationTitleActions.Visibility = showConfigurationMenu ? Visibility.Visible : Visibility.Collapsed;
         AutomationProperties.SetName(ConfigurationNameButton, $"重命名配置 {title}");
         AutomationProperties.SetName(TitleBar, title);
-        OpenLogsButton.Visibility = showHomeActions ? Visibility.Visible : Visibility.Collapsed;
+        OpenDebugDirectoryButton.Visibility = showHomeActions ? Visibility.Visible : Visibility.Collapsed;
         ScheduleStatusLink.Visibility = showScheduleStatus ? Visibility.Visible : Visibility.Collapsed;
         PageActions.Visibility = showScheduleStatus ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -66,7 +66,7 @@ public partial class ShellHeader : System.Windows.Controls.UserControl
     private void ConfigurationMenu_Click(object sender, RoutedEventArgs e) =>
         ConfigurationMenuRequested?.Invoke(this, ConfigurationMenuButton);
 
-    private void OpenLogs_Click(object sender, RoutedEventArgs e) => OpenLogsRequested?.Invoke(this, EventArgs.Empty);
+    private void OpenDebugDirectory_Click(object sender, RoutedEventArgs e) => OpenDebugDirectoryRequested?.Invoke(this, EventArgs.Empty);
     private void ScheduleStatus_Click(object sender, RoutedEventArgs e) =>
         ScheduleStatusRequested?.Invoke(this, EventArgs.Empty);
 }
