@@ -79,6 +79,13 @@
     <SolidColorBrush x:Key="Brush.Timeline.Hatch" Color="#18000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Night" Color="#F4F4F4" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Track" Color="#FAFAFA" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Hover" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Current" Color="#1A000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Expanded" Color="#09000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Button" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Tag" Color="#0D000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Check" Color="#FFFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Plan.Progress" Color="#FF1757AC" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureSurface" Color="#0FC83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureBorder" Color="#33C83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Schedule.ChipRemoveHover" Color="#1F000000" po:Freeze="True" />
