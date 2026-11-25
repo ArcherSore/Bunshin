@@ -27,6 +27,8 @@ internal sealed class ApplicationSettings
         _autoRunConfigurationPath = Path.Combine(applicationDirectory, "config", "autorun-configuration.txt");
         _autostart = autostart ?? AutostartTask.ForCurrentProcess();
         _logger = logger;
+        SidebarCollapsed = CreatePersistedToggle(Path.Combine(applicationDirectory, "config", "sidebar-collapsed.txt"),
+            "application.sidebarCollapsed", "侧栏收起", false, null);
         CloseToTray = new SettingsToggle(SaveClosePreference);
         try {
             CloseToTray.Initialize(!File.Exists(_closePreferencePath)
@@ -132,6 +134,7 @@ internal sealed class ApplicationSettings
     internal SettingsToggle Autostart { get; }
     internal SettingsChoice AutoRunConfiguration { get; }
     internal SettingsChoice Appearance { get; }
+    internal SettingsToggle SidebarCollapsed { get; }
     internal SettingsToggle AutoRunOnManualLaunch { get; }
     internal SettingsToggle ForceScheduledStart { get; }
     internal SettingsToggle SaveOnError { get; }

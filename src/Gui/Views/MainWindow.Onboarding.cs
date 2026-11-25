@@ -250,7 +250,7 @@ public partial class MainWindow
     {
         const double inset = 16;
         const double gap = 12;
-        var topInset = Math.Max(inset, OnboardingBounds(MainNavigation).Top + inset);
+        var topInset = Math.Max(inset, OnboardingBounds(ShellContent).Top + inset);
         OnboardingPopover.Width = Math.Min(312, Math.Max(1, window.Width - inset * 2));
         OnboardingPopover.MaxHeight = Math.Max(1, window.Height - topInset - inset);
         OnboardingPopover.Measure(new WpfSize(OnboardingPopover.Width, OnboardingPopover.MaxHeight));
@@ -468,7 +468,7 @@ public partial class MainWindow
                     element) {
                     element.Focus();
                 } else {
-                    HomeNavigationItem.Focus();
+                    Sidebar.Home.Focus();
                 }
             }
         } catch (Exception exception) {

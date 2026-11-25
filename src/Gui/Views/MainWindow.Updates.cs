@@ -134,13 +134,6 @@ public partial class MainWindow
             string.IsNullOrWhiteSpace(notes) ? "此版本暂无更新说明。" : notes, OpenUpdateLink);
     }
 
-    private void ViewUpdate_Click(object sender, RoutedEventArgs e)
-    {
-        // This footer action opens a dialog, not a navigation destination.
-        e.Handled = true;
-        OpenUpdateDialog();
-    }
-
     private void OpenUpdateDialog()
     {
         if (IsGlobalModalOpen || _exitInProgress || _onboardingActive) {
@@ -286,12 +279,8 @@ public partial class MainWindow
         var latest = _updateCheckState == UpdateCheckState.UpToDate;
         var failed = _updateCheckState == UpdateCheckState.CheckFailed;
         var ready = available && _preparedReference is not null;
-        UpdateNavigationBadge.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
-        UpdateNavigationLoading.Visibility = checking ? Visibility.Visible : Visibility.Collapsed;
-        UpdateNavigationIcon.Visibility = checking ? Visibility.Hidden : Visibility.Visible;
-        UpdateNavigationItem.ToolTip = checking ? "正在检查更新…" : available ? "发现新版本" : "软件更新";
-        System.Windows.Automation.AutomationProperties.SetName(
-            UpdateNavigationItem, $"更新，{UpdateNavigationItem.ToolTip}");
+        Sidebar.ShowUpdate(_preparingUpdate ? UpdateMarker.Downloading
+            : checking ? UpdateMarker.Checking : available ? UpdateMarker.Available : UpdateMarker.None);
         UpdateCheckingPanel.Visibility = checking ? Visibility.Visible : Visibility.Collapsed;
         UpdateResultPanel.Visibility = checking ? Visibility.Collapsed : Visibility.Visible;
         DialogCheckUpdateButton.Visibility = checking || available ? Visibility.Collapsed : Visibility.Visible;

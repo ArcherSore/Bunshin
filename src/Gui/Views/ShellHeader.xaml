@@ -1,0 +1,56 @@
+<UserControl x:Class="Gui.Views.ShellHeader"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:views="clr-namespace:Gui.Views">
+    <UserControl.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ControlFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ui:TitleBarButton" BasedOn="{StaticResource {x:Type ui:TitleBarButton}}">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="44" />
+        </Style>
+    </UserControl.Resources>
+    <!-- WPF-UI handles the window's native caption hit testing. -->
+    <Grid Height="44" Background="{DynamicResource Brush.Canvas}">
+        <ui:TitleBar x:Name="TitleBar" Height="44" Padding="20,0,0,0" FontSize="14" FontWeight="Medium"
+                     Foreground="{DynamicResource Brush.Text.Primary}" Background="{DynamicResource Brush.Transparent}"
+                     ButtonsForeground="{DynamicResource Brush.Text.Primary}"
+                     ButtonsBackground="{DynamicResource Brush.Rail.Hover}">
+            <ui:TitleBar.TrailingContent>
+                <Border BorderBrush="{DynamicResource Brush.Rail.Border}" BorderThickness="0,0,1,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
+                        <Button x:Name="OpenLogsButton" Click="OpenLogs_Click" ToolTip="打开日志目录"
+                                AutomationProperties.Name="打开日志目录">
+                            <ui:SymbolIcon Symbol="FolderOpen24" FontSize="16" />
+                        </Button>
+                        <ContentPresenter
+                            Content="{Binding Actions, RelativeSource={RelativeSource AncestorType=views:ShellHeader}}" />
+                    </StackPanel>
+                </Border>
+            </ui:TitleBar.TrailingContent>
+        </ui:TitleBar>
+        <Border Height="1" VerticalAlignment="Bottom" Background="{DynamicResource Brush.Rail.Border}"
+                IsHitTestVisible="False" />
+    </Grid>
+</UserControl>

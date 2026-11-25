@@ -239,7 +239,9 @@ public sealed partial class TaskPlanEditor
             : editor != _configurationNameEditor || CommitConfigurationName(unattended);
     }
 
-    private void NewConfigurationButton_Click(object sender, RoutedEventArgs e)
+    private void NewConfigurationButton_Click(object sender, RoutedEventArgs e) => CreateEmptyConfiguration();
+
+    internal void CreateEmptyConfiguration()
     {
         ChangeConfiguration(() => {
             var id = Project!.CreateConfiguration();

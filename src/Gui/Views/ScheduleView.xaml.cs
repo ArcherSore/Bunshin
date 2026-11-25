@@ -77,6 +77,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
     }
 
     internal event EventHandler? HomeRequested;
+    internal event EventHandler? PoliciesChanged;
 
     // The shared-times hint is closed once for every configuration; the file under the config folder remembers it.
     internal void Attach(Func<ProjectPlanModule?> project, Func<Guid, string?> invalidReason,
@@ -549,6 +550,7 @@ public sealed partial class ScheduleView : System.Windows.Controls.UserControl
             _editFailed(operation, exception);
         }
         Refresh();
+        PoliciesChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void EditPolicy(Guid policyId, Func<SchedulePolicy, SchedulePolicy> change, bool clearSelection = false,

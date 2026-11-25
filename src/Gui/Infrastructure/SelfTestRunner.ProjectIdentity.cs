@@ -64,11 +64,12 @@ internal static partial class SelfTestRunner
     private static void VerifyProjectIdentityWindow(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "identity-window"), (window, directory) => {
-            var titleBar = Named<TitleBar>(window, "AppTitleBar");
-            var icon = Named<ImageIcon>(window, "AppTitleBarIcon");
-            Require(window.Title == "项目窗口标题" && titleBar.Title == window.Title, "窗口和标题栏必须显示 PI title。");
-            Require(icon.Source is BitmapSource { PixelWidth: FixtureIconSize } && window.Icon == icon.Source,
-                "窗口和标题栏必须显示 PI icon。");
+            var titleBar = Named<TitleBar>(Named<ShellHeader>(window, "Header"), "TitleBar");
+            var project = ProjectOf(window);
+            var activeName = project.Configurations.Single(item => item.Id == project.ActiveConfigurationId).Name;
+            Require(window.Title == "项目窗口标题" && titleBar.Title == activeName,
+                "窗口标题应显示 PI title，页眉应显示当前配置。");
+            Require(window.Icon is BitmapSource { PixelWidth: FixtureIconSize }, "系统窗口须显示 PI icon。");
             var settings = OpenAboutSection(window);
             System.Windows.Controls.Image AboutIcon() => SettingsVisualDescendants(settings)
                 .OfType<System.Windows.Controls.Image>().Single(image => image.Name == "ProjectAboutIcon");
@@ -81,9 +82,9 @@ internal static partial class SelfTestRunner
             File.WriteAllText(Path.Combine(directory, "assets", "icon.png"), "not an image");
             SetIdentity(directory, null, "assets/icon.png");
             InvokeOnboarding(window, "LoadProject");
-            Require(window.Title == "SelfTestProject 1.0.0" && titleBar.Title == window.Title,
-                "重新加载后标题必须刷新为默认的 name 与 version。");
-            Require(icon.Source is BitmapSource { PixelWidth: not FixtureIconSize } && window.Icon is not null
+            Require(window.Title == "SelfTestProject 1.0.0",
+                "重新加载后系统窗口标题必须刷新为默认的 name 与 version。");
+            Require(window.Icon is BitmapSource { PixelWidth: not FixtureIconSize }
                 && identities.SingleOrDefault() is { Name: "SelfTestProject", IconPath: null },
                 "无法加载的 icon 必须回到默认图标，托盘随之恢复。");
             PumpUntil(() => AboutIcon().Source is BitmapSource { PixelWidth: not FixtureIconSize },
