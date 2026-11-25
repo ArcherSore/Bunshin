@@ -1,5 +1,6 @@
 using System.Windows.Media;
 using Gui.Infrastructure;
+using Gui.Themes;
 using ProjectModel;
 using Protocol;
 
@@ -9,6 +10,7 @@ internal sealed class ApplicationSettings
 {
     private readonly string _updatePreferencePath;
     private readonly string _closePreferencePath;
+    private readonly string _appearancePath;
     private readonly string _autoRunConfigurationPath;
     private readonly AutostartTask _autostart;
     private readonly AppLogger _logger;
@@ -17,7 +19,8 @@ internal sealed class ApplicationSettings
     internal ApplicationSettings(string applicationDirectory, AppLogger logger,
         Func<Task> checkUpdate, Func<Task> exportDiagnostics, Action replayOnboarding, Func<Task> openAfdian,
         Func<Task> manageChildSessionCredentials, Func<Task> clearDebugFiles, Action viewWelcome,
-        Action<Uri> openLink, Action<string> readLicense, AutostartTask? autostart = null)
+        Action<Uri> openLink, Action<string> readLicense, AutostartTask? autostart = null,
+        Action<AppThemeMode>? applyAppearance = null)
     {
         _updatePreferencePath = Path.Combine(applicationDirectory, "config", "update-check.txt");
         _closePreferencePath = Path.Combine(applicationDirectory, "config", "close-to-tray.txt");
@@ -82,6 +85,17 @@ internal sealed class ApplicationSettings
             }
             return Task.CompletedTask;
         }) { IsVisible = false };
+        _appearancePath = AppearancePath(applicationDirectory);
+        Appearance = new SettingsChoice("跟随系统", id => {
+            var mode = ParseAppearance(id);
+            SaveAppearance(id);
+            applyAppearance?.Invoke(mode);
+        });
+        var appearanceId = ReadAppearance(applicationDirectory) switch {
+            AppThemeMode.Light => "light", AppThemeMode.Dark => "dark", _ => null
+        };
+        Appearance.SetOptions([new("light", "浅色"), new("dark", "深色")], appearanceId);
+        Registry.Choices.Add("appearance", Appearance);
         Registry.Toggles.Add("update.checkOnStartup", CheckOnStartup);
         Registry.Toggles.Add("application.closeToTray", CloseToTray);
         Registry.Toggles.Add("application.autostart", Autostart);
@@ -117,6 +131,7 @@ internal sealed class ApplicationSettings
     internal SettingsToggle CloseToTray { get; }
     internal SettingsToggle Autostart { get; }
     internal SettingsChoice AutoRunConfiguration { get; }
+    internal SettingsChoice Appearance { get; }
     internal SettingsToggle AutoRunOnManualLaunch { get; }
     internal SettingsToggle ForceScheduledStart { get; }
     internal SettingsToggle SaveOnError { get; }
@@ -136,6 +151,37 @@ internal sealed class ApplicationSettings
     internal SettingsValue CurrentVersion { get; } = new() { Text = "—" };
 
     internal event Action<SettingsToggle>? FrameworkOptionsChanged;
+
+    private static string AppearancePath(string applicationDirectory) =>
+        Path.Combine(applicationDirectory, "config", "appearance.txt");
+
+    private static AppThemeMode ParseAppearance(string? id) => id switch {
+        "light" => AppThemeMode.Light, "dark" => AppThemeMode.Dark, _ => AppThemeMode.FollowSystem
+    };
+
+    // A missing or unreadable file means the default, following the system.
+    internal static AppThemeMode ReadAppearance(string applicationDirectory)
+    {
+        try {
+            var path = AppearancePath(applicationDirectory);
+            return File.Exists(path) ? ParseAppearance(File.ReadAllText(path).Trim()) : AppThemeMode.FollowSystem;
+        } catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) {
+            return AppThemeMode.FollowSystem;
+        }
+    }
+
+    // Throws when the choice cannot be stored, so that the choice control restores the previous selection.
+    private void SaveAppearance(string? id)
+    {
+        try {
+            Directory.CreateDirectory(Path.GetDirectoryName(_appearancePath)!);
+            File.WriteAllText(_appearancePath, id ?? "system");
+        } catch (Exception exception) {
+            _logger.Warn("保存外观设置失败。", exception);
+            throw;
+        }
+        _logger.Info($"设置已更改{AppLogger.Field("key", "appearance")}{AppLogger.Field("value", id ?? "system")}");
+    }
 
     internal void ShowProjectAbout(ProjectAbout? about, ImageSource? icon)
     {

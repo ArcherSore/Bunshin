@@ -46,8 +46,8 @@
 ### 主题颜色源码检查
 
 `Gui`、`All` 及其他构建 GUI 的套件在构建前运行 `theme-sources`，使用 `-Only` 时也会执行。
-使用 `-NoBuild` 时，`theme-sources` 仍会编译检查工具。浅色配色字典
-`src/Gui/Themes/Colors/Light.xaml` 定义颜色键，可以使用色值并静态引用本字典的键。视图和
+使用 `-NoBuild` 时，`theme-sources` 仍会编译检查工具。浅色和深色配色字典
+`src/Gui/Themes/Colors/Light.xaml`、`Dark.xaml` 定义颜色键（两者键集必须一致），可以使用色值并静态引用本字典的键。视图和
 `DesignSystem.xaml` 样式用 `DynamicResource` 引用配色，字体、尺寸和控件样式仍可静态引用。
 C# 从配色资源取色，允许 `Transparent` 和基于原色 RGB 通道的透明度调整。
 

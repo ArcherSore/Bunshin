@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -5,6 +7,7 @@ using System.Windows.Media;
 using ProjectModel;
 using Protocol;
 using Gui.Settings;
+using Gui.Themes;
 using Updates;
 using Gui.Views;
 using WpfButton = System.Windows.Controls.Button;
@@ -69,6 +72,46 @@ internal static partial class SelfTestRunner
         }, requestExit: () => { exits++; return Task.CompletedTask; });
     }
 
+    private static void CheckAppearanceSetting(AppLogger logger, string testDirectory)
+    {
+        var directory = Path.Combine(testDirectory, "appearance-setting");
+        var applied = new List<AppThemeMode>();
+        ApplicationSettings Create() => new(directory, logger, () => Task.CompletedTask, () => Task.CompletedTask,
+            () => { }, () => Task.CompletedTask, () => Task.CompletedTask, () => Task.CompletedTask, () => { },
+            _ => { }, _ => { }, InertAutostart(), applied.Add);
+        var settings = Create();
+        var general = settings.Page.Sections.First();
+        var item = general.Items.Single(item => item.Definition.ChoiceKey == "appearance");
+        Require(item.Choice == settings.Appearance && settings.Appearance.Selected.Id is null
+            && ApplicationSettings.ReadAppearance(directory) == AppThemeMode.FollowSystem
+            && settings.Appearance.Options.Select(option => option.Id).SequenceEqual([null, "light", "dark"]),
+            "外观默认应为跟随系统，并提供浅色和深色两个选项。");
+        foreach (var (id, mode) in new[] { ("dark", AppThemeMode.Dark), ("light", AppThemeMode.Light) }) {
+            settings.Appearance.Selected = settings.Appearance.Options.Single(option => option.Id == id);
+            Require(applied[^1] == mode && ApplicationSettings.ReadAppearance(directory) == mode
+                && Create().Appearance.Selected.Id == id, $"选择 {id} 后应立即应用、保存并在重启后保留。");
+        }
+        settings.Appearance.Selected = settings.Appearance.Options[0];
+        Require(applied[^1] == AppThemeMode.FollowSystem
+            && ApplicationSettings.ReadAppearance(directory) == AppThemeMode.FollowSystem
+            && Create().Appearance.Selected.Id is null, "选回跟随系统后应立即应用并保存。");
+
+        settings.Appearance.Selected = settings.Appearance.Options.Single(option => option.Id == "dark");
+        var preference = new FileInfo(Path.Combine(directory, "config", "appearance.txt"));
+        using var identity = WindowsIdentity.GetCurrent();
+        var denyRead = new FileSystemAccessRule(identity.User!, FileSystemRights.ReadData, AccessControlType.Deny);
+        var security = preference.GetAccessControl();
+        security.AddAccessRule(denyRead);
+        preference.SetAccessControl(security);
+        try {
+            Require(ApplicationSettings.ReadAppearance(directory) == AppThemeMode.FollowSystem
+                && Create().Appearance.Selected.Id is null, "外观文件不可读时，启动和设置页都应回到跟随系统。");
+        } finally {
+            security.RemoveAccessRule(denyRead);
+            preference.SetAccessControl(security);
+        }
+    }
+
     private static void VerifyDeclarativeSettings(AppLogger logger, string testDirectory)
     {
         var directory = Path.Combine(testDirectory, "settings-bindings");
@@ -92,6 +135,7 @@ internal static partial class SelfTestRunner
         Require(force.Toggle == settings.ForceScheduledStart && force.Definition.JoinPrevious
             && autorun.IndexOf(force) == autorun.IndexOf(manual) + 1,
             "强制定时启动开关应绑定对应偏好，并紧随「手动启动时也自动执行」并入同一张卡片。");
+        CheckAppearanceSetting(logger, testDirectory);
         foreach (var item in items.Where(item => item.Action is not null)) {
             item.Action!.ExecuteAsync().GetAwaiter().GetResult();
         }

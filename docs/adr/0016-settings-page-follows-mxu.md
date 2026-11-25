@@ -9,3 +9,7 @@
 ## 依据
 
 用户在原型对比后拍板。参考源码：MXU 的 [`src/components/SettingsPage.tsx`](https://github.com/MaaXYZ/MXU/blob/main/src/components/SettingsPage.tsx) 和 `src/components/settings/`，文案在 `src/i18n/locales/zh-CN.ts`；MFAAvalonia 的 [`MFAAvalonia/Views/Pages/SettingsView.axaml`](https://github.com/MaaXYZ/MFAAvalonia/blob/master/MFAAvalonia/Views/Pages/SettingsView.axaml)。
+
+## 更新（2026-11-24）
+
+界面按 Claude 设计分析稿改版后，设置页改为一页长滚动、左侧分类随滚动高亮，“外观”并入“通用”分区，“关于”并入最后一节；MXU 目录式的清爽风格仍是取舍依据，但具体版式以设计稿为准（见 ADR 0020）。

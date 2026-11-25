@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 internal static partial class Program
 {
     private const string Light = "src/Gui/Themes/Colors/Light.xaml";
+    private const string Dark = "src/Gui/Themes/Colors/Dark.xaml";
     private const string Allowlist = "tools/ThemeSourceCheck/allowlist.tsv";
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
     private static readonly HashSet<string> NamedColors = typeof(Colors).GetProperties()
@@ -29,12 +30,20 @@ internal static partial class Program
 
         var documents = paths.Where(p => p.EndsWith(".xaml") && File.Exists(p))
             .ToDictionary(p => p, p => XDocument.Load(p, LoadOptions.SetLineInfo));
-        foreach (var element in documents[Light].Root!.Elements()) {
-            if ((string?)element.Attribute(Xaml + "Key") is not { } key) continue;
-            LightKeys.Add(key);
-            // Color entries define the raw scale. PaletteColor exposes a color under a component key.
-            if (element.Name.LocalName == "Color") PrimitiveKeys.Add(key);
+        var darkKeys = new HashSet<string>();
+        foreach (var (path, keys) in new[] { (Light, LightKeys), (Dark, darkKeys) }) {
+            foreach (var element in documents[path].Root!.Elements()) {
+                if ((string?)element.Attribute(Xaml + "Key") is not { } key) continue;
+                keys.Add(key);
+                // Color entries define the raw scale. PaletteColor exposes a color under a component key.
+                if (path == Light && element.Name.LocalName == "Color") PrimitiveKeys.Add(key);
+            }
         }
+        // Both palettes must define the same resources, otherwise a theme switch leaves some keys unresolved.
+        foreach (var key in LightKeys.Except(darkKeys).Order())
+            Findings.Add((Dark, 1, key, "missing in dark palette"));
+        foreach (var key in darkKeys.Except(LightKeys).Order())
+            Findings.Add((Light, 1, key, "missing in light palette"));
         foreach (var document in documents.Values)
             foreach (var element in document.Descendants())
                 if (IsColorProperty(element.Name.LocalName) && (string?)element.Attribute(Xaml + "Key") is { } key)
