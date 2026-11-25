@@ -123,8 +123,7 @@
             </Setter>
         </Style>
     </UserControl.Resources>
-    <Border Background="{DynamicResource Brush.Canvas}" BorderBrush="{DynamicResource Brush.Rail.Border}"
-            BorderThickness="1,0,0,0">
+    <Border Background="{DynamicResource Brush.Canvas}" Padding="1,0,0,0">
         <Grid x:Name="Sections">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />

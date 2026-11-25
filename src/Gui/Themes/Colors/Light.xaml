@@ -1,12 +1,8 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options"
-                    xmlns:themes="clr-namespace:Gui.Themes">
+                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
 
     <!-- Same key set as the other palette; values come from the design tokens. -->
-    <Color x:Key="Color.Shadow">#000000</Color>
-    <themes:PaletteColor x:Key="Color.Splitter.Shadow" ResourceKey="Color.Shadow" />
-
     <SolidColorBrush x:Key="Brush.Canvas" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Popover" Color="#FFFFFF" po:Freeze="True" />
@@ -64,7 +60,6 @@
     <SolidColorBrush x:Key="Brush.Illustration.Document" Color="#E0E0E0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Illustration.Detail" Color="#EBEBEB" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Illustration.Ink" Color="#FFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Splitter.FocusRing" Color="#99257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Progress.Track" Color="#14000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Warning.Surface" Color="#1FFBB315" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Warning.SurfaceHover" Color="#33FBB315" po:Freeze="True" />
@@ -105,16 +100,6 @@
     <LinearGradientBrush x:Key="Brush.Scroll.FadeBottom" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
         <GradientStop Offset="0" Color="#00FFFFFF" />
         <GradientStop Offset="1" Color="#FFFFFF" />
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Brush.Splitter.Tether" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
-        <GradientStop Offset="0" Color="#00000000" />
-        <GradientStop Offset="0.5" Color="#33000000" />
-        <GradientStop Offset="1" Color="#00000000" />
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="Brush.Splitter.Tether.Dragging" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
-        <GradientStop Offset="0" Color="#00257DE0" />
-        <GradientStop Offset="0.5" Color="#257DE0" />
-        <GradientStop Offset="1" Color="#00257DE0" />
     </LinearGradientBrush>
 
     <DropShadowEffect x:Key="Effect.Console.Card" Color="#000000" BlurRadius="18" ShadowDepth="4" Direction="270" Opacity="0.06" po:Freeze="True" />

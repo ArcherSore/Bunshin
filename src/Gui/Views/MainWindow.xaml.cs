@@ -27,7 +27,6 @@ namespace Gui.Views;
 public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 {
     private const int MaximumGuiLogEntries = 1000;
-    private const double MinimumRuntimeSidebarWidth = 340;
     private HwndSource? _modalWindowSource;
 
     private readonly AppLogger _logger;
@@ -60,13 +59,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private bool _exitInProgress;
     private bool _followLogs = true;
     private bool _projectConfigurationValid;
-    private double? _preferredRuntimeSidebarWidth;
-    private double? _savedRuntimeSidebarWidth;
-    private bool _updatingRuntimeSidebarWidth;
-    private bool _runtimeSidebarDragging;
-    private bool _runtimeSidebarKeyboardCue;
-    private static readonly DependencyPropertyDescriptor RuntimeSidebarWidthProperty =
-        DependencyPropertyDescriptor.FromProperty(ColumnDefinition.WidthProperty, typeof(ColumnDefinition));
     private IInputElement? _descriptionDrawerPreviousFocus;
     // Only the timing text changes while a Run is active; cards are never rebuilt for it.
     private readonly DispatcherTimer _runTimer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -167,13 +159,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         IsVisibleChanged += MainWindow_IsVisibleChanged;
         Activated += (_, _) => _ = CheckScheduledRunsAsync();
         StateChanged += MainWindow_StateChanged;
-        RuntimeSidebarWidthProperty.AddValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
-        foreach (var routedEvent in new[] {
-            MouseEnterEvent, MouseLeaveEvent, MouseMoveEvent, GotKeyboardFocusEvent, LostKeyboardFocusEvent,
-            PreviewKeyDownEvent, SizeChangedEvent, System.Windows.Controls.Primitives.Thumb.DragStartedEvent,
-            System.Windows.Controls.Primitives.Thumb.DragCompletedEvent }) {
-            RuntimeSidebarSplitter.AddHandler(routedEvent, new RoutedEventHandler(RuntimeSidebarHandle_Update), true);
-        }
         HomeView.SizeChanged += (_, _) => RuntimeSidebarVisibility(_section);
         _runTimer.Tick += (_, _) => RefreshRunTiming();
         SwitchSection(MainSection.Home);
@@ -306,7 +291,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             _scheduleTimer.Stop();
             _forcedStartTimer.Stop();
             _forcedStartCountdown?.TrySetResult(false);
-            RuntimeSidebarWidthProperty.RemoveValueChanged(RuntimeSidebarColumn, RuntimeSidebarColumn_WidthChanged);
             _updateCancellation?.Cancel();
             _sessionManager.StateChanged -= OnSessionStateChanged;
             _workerCoordinator.StateChanged -= OnWorkerStateChanged;
@@ -332,6 +316,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
 
     private void SwitchSection(MainSection section)
     {
+        CancelRuntimeSidebarDrag();
         _section = section;
         CloseTaskDescriptionDrawer();
         HomeView.Visibility = section == MainSection.Home
@@ -401,114 +386,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             ShowSessionButton_Click(sender, e);
         }
     }
-
-    private void RuntimeSidebarVisibility(MainSection section)
-    {
-        var home = section == MainSection.Home;
-        var visible = home && !RuntimePanelHidden;
-        ShowRuntimePanelToggle(home);
-        RuntimeSidebar.Visibility = RuntimeSidebarSplitter.Visibility = visible
-            ? Visibility.Visible : Visibility.Collapsed;
-        _updatingRuntimeSidebarWidth = true;
-        try {
-            // ActualWidth can exceed the allotted space when the columns' minimum sizes no longer fit.
-            var homeWidth = System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(HomeView).Width;
-            var minimum = visible ? MinimumRuntimeSidebarWidth + RuntimeSidebar.Margin.Right : 0;
-            var maximum = visible ? Math.Max(minimum, Math.Min(540 + RuntimeSidebar.Margin.Right,
-                homeWidth - HomeView.ColumnDefinitions[0].MinWidth)) : 0;
-            RuntimeSidebarColumn.MinWidth = minimum;
-            RuntimeSidebarColumn.MaxWidth = maximum;
-            var preferred = _preferredRuntimeSidebarWidth
-                ?? SidebarWidth(homeWidth) + RuntimeSidebar.Margin.Right;
-            RuntimeSidebarColumn.Width = new GridLength(Math.Clamp(preferred, minimum, maximum));
-        } finally {
-            _updatingRuntimeSidebarWidth = false;
-        }
-    }
-
-    private void RuntimeSidebarColumn_WidthChanged(object? sender, EventArgs e)
-    {
-        // Observe native mouse, keyboard and automation resizing; automatic layout never replaces the preference.
-        if (!_updatingRuntimeSidebarWidth) {
-            _preferredRuntimeSidebarWidth = RuntimeSidebarColumn.Width.Value;
-        }
-    }
-
-    // The GridSplitter does all resizing; this only places its handle and picks the visual state.
-    private void RuntimeSidebarHandle_Update(object sender, RoutedEventArgs e)
-    {
-        var splitter = RuntimeSidebarSplitter;
-        if (e.RoutedEvent == System.Windows.Controls.Primitives.Thumb.DragStartedEvent) {
-            _runtimeSidebarDragging = true;
-            _runtimeSidebarKeyboardCue = false;
-        } else if (e.RoutedEvent == System.Windows.Controls.Primitives.Thumb.DragCompletedEvent) {
-            _runtimeSidebarDragging = false;
-            SaveRuntimeSidebarWidth();
-        } else if (e is KeyboardEventArgs) {
-            if (e.RoutedEvent == LostKeyboardFocusEvent) {
-                // Arrow-key resizing has no drag end; leaving the splitter finishes it.
-                SaveRuntimeSidebarWidth();
-            }
-            // Like a focus rectangle, focus shows the handle only when it came from the keyboard.
-            _runtimeSidebarKeyboardCue = e.RoutedEvent != LostKeyboardFocusEvent
-                && InputManager.Current.MostRecentInputDevice is KeyboardDevice;
-        }
-        var pointer = _runtimeSidebarDragging || splitter.IsMouseOver;
-        var keyboard = _runtimeSidebarKeyboardCue && splitter.IsKeyboardFocused;
-        if ((pointer || keyboard) && splitter.Template.FindName("Handle", splitter) is FrameworkElement handle
-            && splitter.Template.FindName("Tether", splitter) is FrameworkElement tether) {
-            // Follow the pointer, kept 24 DIP from the console's ends so it clears the rounded corners.
-            var y = Math.Clamp(pointer ? Mouse.GetPosition(splitter).Y : splitter.ActualHeight / 2,
-                24, Math.Max(24, splitter.ActualHeight - 24));
-            handle.Margin = new Thickness(0, y - handle.Height / 2, 0, 0);
-            // The edge segment's clip starts 10 DIP down, below the corner radius.
-            tether.Margin = new Thickness(0, y - 10 - tether.Height / 2, 0, 0);
-        }
-        VisualStateManager.GoToState(splitter, _runtimeSidebarDragging ? "Dragging"
-            : splitter.IsMouseOver ? "Hover" : keyboard ? "Keyboard" : "Hidden", true);
-    }
-
-    private string RuntimeSidebarWidthPath =>
-        Path.Combine(_applicationDirectory, "config", "runtime-sidebar-width.txt");
-
-    // The saved width is the user's preference; layout still clamps it to the space each window size allows.
-    private double? LoadRuntimeSidebarWidth()
-    {
-        try {
-            if (!File.Exists(RuntimeSidebarWidthPath)) {
-                return null;
-            }
-            var text = File.ReadAllText(RuntimeSidebarWidthPath).Trim();
-            if (!double.TryParse(text, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var width)
-                || !double.IsFinite(width) || width <= 0) {
-                throw new InvalidDataException($"侧栏宽度必须为正数：{text}");
-            }
-            return width;
-        } catch (Exception exception) {
-            _logger.Warn("读取运行控制栏宽度失败，已使用默认宽度。", exception);
-            return null;
-        }
-    }
-
-    private void SaveRuntimeSidebarWidth()
-    {
-        if (_preferredRuntimeSidebarWidth is not { } width || width == _savedRuntimeSidebarWidth) {
-            return;
-        }
-        try {
-            Directory.CreateDirectory(Path.GetDirectoryName(RuntimeSidebarWidthPath)!);
-            File.WriteAllText(RuntimeSidebarWidthPath,
-                width.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
-            _savedRuntimeSidebarWidth = width;
-        } catch (Exception exception) {
-            _logger.Warn("保存运行控制栏宽度失败。", exception);
-        }
-    }
-
-    // The console takes about a third of the home page, bounded so neither it nor the task area gets cramped.
-    internal static double SidebarWidth(double homeWidth) =>
-        Math.Clamp(Math.Round(homeWidth * 0.35), MinimumRuntimeSidebarWidth, 540);
 
     private void OpenLogsMenuItem_Click(object sender, RoutedEventArgs e) => TryOpenLogsDirectory();
 
