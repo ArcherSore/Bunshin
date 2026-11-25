@@ -98,7 +98,6 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         HelpView.DataContext = new HelpPageModel();
         ScheduleView.Attach(() => _projectPlan, ScheduleInvalidReason, HandleOperationError, _scheduleClock,
             Path.Combine(_applicationDirectory, "config", "schedule-share-hint.txt"));
-        ScheduleView.HomeRequested += (_, _) => SwitchSection(MainSection.Home);
         TaskPlanEditor.Attach(logger, () => _projectPlan, () => CurrentControls.ConfigurationEditable,
             HandleOperationError);
         TaskPlanEditor.PlanEdited += (_, _) => {

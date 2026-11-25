@@ -25,6 +25,7 @@ public partial class MainWindow
         };
         Sidebar.ToggleRequested += (_, _) => ToggleSidebar();
         Header.OpenLogsRequested += (_, _) => TryOpenLogsDirectory();
+        Header.ScheduleStatusRequested += (_, _) => SwitchSection(MainSection.Home);
         RegisterName("RuntimePanelToggleButton", Header.Actions);
         _settings.RuntimePanelCollapsed.PropertyChanged += (_, e) => {
             if (e.PropertyName == nameof(_settings.RuntimePanelCollapsed.Value)) {
@@ -130,7 +131,7 @@ public partial class MainWindow
             _ => string.IsNullOrWhiteSpace(configuration) ? "首页" : configuration
         };
         var home = _section == MainSection.Home;
-        Header.ShowPage(title, home, home && configuration is not null);
+        Header.ShowPage(title, home, home && configuration is not null, _section == MainSection.Schedule);
         RefreshSidebarSchedule();
     }
 

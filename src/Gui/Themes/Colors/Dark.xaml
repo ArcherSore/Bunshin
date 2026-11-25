@@ -76,10 +76,15 @@
     <SolidColorBrush x:Key="Brush.Chart.Category5" Color="#B57BDB" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Chart.Category6" Color="#FA8080" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Grid" Color="#0DFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Track" Color="#08FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="#59FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Selected" Color="#EDFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Sibling" Color="#80FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Other" Color="#38FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Timeline.Skipped" Color="#FDD98A" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.GridStrong" Color="#1AFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Hatch" Color="#1FFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Night" Color="#141414" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Timeline.Track" Color="#1F1F1F" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Hover" Color="#13FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Current" Color="#26FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Expanded" Color="#08FFFFFF" po:Freeze="True" />
@@ -89,14 +94,20 @@
     <SolidColorBrush x:Key="Brush.Plan.Progress" Color="#FF6AABF1" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureSurface" Color="#1FDC3C3D" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.RunSummary.FailureBorder" Color="#4DDC3C3D" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Schedule.ChipRemoveHover" Color="#26FFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Timeline.Inactive" Color="#66FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Warning" Color="#FBB315" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Now" Color="#257DE0" po:Freeze="True" />
-    <LinearGradientBrush x:Key="Brush.Schedule.NextRun" StartPoint="0,0" EndPoint="1,0" po:Freeze="True">
-        <GradientStop Offset="0" Color="#134A91" />
-        <GradientStop Offset="1" Color="#1F68B8" />
-    </LinearGradientBrush>
+    <SolidColorBrush x:Key="Brush.Schedule.Card" Color="#09FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Field" Color="#0DFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Hover" Color="#0FFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Secondary" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.SecondaryHover" Color="#33FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.SwitchOff" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.DaySelected" Color="#EEEEEE" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.DaySelectedText" Color="#191919" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.PresetSelected" Color="#26FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Menu" Color="#303030" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.Link" Color="#6AABF1" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Schedule.AccentSurface" Color="#33257DE0" po:Freeze="True" />
     <LinearGradientBrush x:Key="Brush.Scroll.FadeTop" StartPoint="0,0" EndPoint="0,1" po:Freeze="True">
         <GradientStop Offset="0" Color="#191919" />
         <GradientStop Offset="1" Color="#00191919" />
