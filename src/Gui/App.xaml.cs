@@ -210,26 +210,27 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("显示主窗口", null, (_, _) => Dispatcher.Invoke(ShowMainWindow));
-        menu.Items.Add("显示子桌面", null, async (_, _) =>
-            await Dispatcher.InvokeAsync(async () => await ShowChildDesktopFromTrayAsync()).Task.Unwrap());
-        menu.Items.Add("结束桌面分身", null, async (_, _) =>
-            await Dispatcher.InvokeAsync(async () => await EndEnvironmentAsync()).Task.Unwrap());
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("退出程序", null, async (_, _) =>
-            await Dispatcher.InvokeAsync(async () => await RequestExitAsync()).Task.Unwrap());
-        menu.ItemClicked += (_, args) => _logger.Info($"托盘操作{AppLogger.Field("action", args.ClickedItem?.Text)}");
-
         _trayIcon = new Forms.NotifyIcon {
             Icon = LoadTrayIcon(),
             Text = AppIdentity.Name,
-            Visible = true,
-            ContextMenuStrip = menu
+            Visible = true
+        };
+        _trayIcon.MouseUp += (_, args) => {
+            if (args.Button != Forms.MouseButtons.Right) return;
+            Dispatcher.Invoke(() => TrayMenu.Show(TrayMenu.Build(TrayMenuEntries(),
+                action => _logger.Info($"托盘操作{AppLogger.Field("action", action)}"))));
         };
         _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowMainWindow);
         _trayIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(ShowMainWindow);
     }
+
+    internal IReadOnlyList<TrayMenuAction?> TrayMenuEntries() => [
+        new("显示主窗口", ShowMainWindow, Default: true),
+        new("显示子桌面", async () => await ShowChildDesktopFromTrayAsync()),
+        new("结束桌面分身", async () => await EndEnvironmentAsync(), Danger: true),
+        null,
+        new("退出程序", async () => await RequestExitAsync(), Danger: true)
+    ];
 
     private bool ShowBalloon(RunTerminalNotification notice)
     {

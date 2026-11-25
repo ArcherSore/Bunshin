@@ -420,6 +420,74 @@
         </Setter>
     </Style>
 
+    <!-- Tray menu: 220 wide popover, 32px rows, 6px row radius, 10px menu radius. -->
+    <Style x:Key="TrayContextMenuStyle" TargetType="{x:Type ContextMenu}">
+        <Setter Property="HasDropShadow" Value="False" />
+        <Setter Property="Width" Value="236" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type ContextMenu}">
+                    <Border Margin="8"
+                            Background="{DynamicResource Brush.Popover}"
+                            BorderBrush="{DynamicResource Brush.Border.Subtle}"
+                            BorderThickness="1"
+                            CornerRadius="10"
+                            Padding="3"
+                            SnapsToDevicePixels="True"
+                            Effect="{DynamicResource Effect.Surface.Drag}">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TrayMenuSeparatorStyle" TargetType="{x:Type Separator}">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Separator}">
+                    <Border Height="1" Margin="6,4" Background="{DynamicResource Brush.Border.Subtle}" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TrayMenuItemStyle" TargetType="{x:Type MenuItem}">
+        <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+        <Setter Property="FontFamily" Value="{StaticResource FontFamily.Ui}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type MenuItem}">
+                    <Border x:Name="Border"
+                            Background="{DynamicResource Brush.Transparent}"
+                            CornerRadius="{StaticResource Radius.Control}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <TextBlock Text="{TemplateBinding Header}"
+                                   Foreground="{TemplateBinding Foreground}"
+                                   FontFamily="{TemplateBinding FontFamily}"
+                                   FontSize="{TemplateBinding FontSize}"
+                                   FontWeight="{TemplateBinding FontWeight}"
+                                   VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource Brush.Rail.Hover}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="DestructiveMenuItemStyle" TargetType="{x:Type MenuItem}">
         <Setter Property="Foreground" Value="{DynamicResource Brush.Error.Foreground}" />
         <Setter Property="FontFamily" Value="{StaticResource FontFamily.Ui}" />

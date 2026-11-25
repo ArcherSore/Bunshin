@@ -5,6 +5,7 @@
     <!-- Same key set as the other palette; values come from the design tokens. -->
     <SolidColorBrush x:Key="Brush.Canvas" Color="#191919" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface" Color="#1F1F1F" po:Freeze="True" />
+    <SolidColorBrush x:Key="Brush.Popover" Color="#303030" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Popover" Color="#303030" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Subdued" Color="#1F1F1F" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Surface.Option" Color="#0B0B0B" po:Freeze="True" />
