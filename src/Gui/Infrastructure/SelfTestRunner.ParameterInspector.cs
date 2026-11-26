@@ -101,6 +101,11 @@ internal static partial class SelfTestRunner
             Click("从执行计划移除 Plain task");
             Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" })
                 && !project.SelectedTaskNames.Contains("PlainTask"), "移除按钮不得切换展开。");
+            Require(Buttons().Any(button => NameOf(button) == "从执行计划移除 Real task"),
+                "有参数的任务折叠时也必须提供移除按钮。");
+            Click("从执行计划移除 Real task");
+            Require(Expanded().SequenceEqual(new[] { "Stress task，已展开" })
+                && !project.SelectedTaskNames.Contains("RealTask"), "直接移除有参数的任务时应保留其他任务的展开状态。");
             project.AddItem(Protocol.PlanItemKind.MaaTask, "PlainTask");
             InvokeEditor(window, "RenderTaskPlan");
             Click("Plain task，没有可配置的参数");
@@ -128,6 +133,10 @@ internal static partial class SelfTestRunner
                 .Where(text => text.Text == "Goes one level deeper").ToArray();
             Require(editors.Length == 5 && editors.All(editor => !editor.IsEnabled) && notes.Length == 1
                 && notes.All(note => note.IsEnabled), "锁定时参数控件禁用，说明保持可读。");
+            window.SetPendingOperation(PendingOperation.None);
+            Click("从执行计划移除 Stress task");
+            Require(!project.SelectedTaskNames.Contains("StressTask") && Expanded().Length == 0 && InspectorRows() == 0,
+                "从展开的详情区移除任务后应收起参数检查器。");
         });
     }
 
