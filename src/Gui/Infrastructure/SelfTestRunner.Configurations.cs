@@ -303,11 +303,10 @@ internal static partial class SelfTestRunner
             SetExpandedTask(window, null);
             InvokeEditor(window, "RenderTaskPlan");
             var tags = ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBlock>().ToArray();
-            Require(tags.Any(tag => tag.ToolTip is string tip
-                && tip.Contains("ServerRange：978-1012", StringComparison.Ordinal)
-                && tip.Contains("出战队伍：7", StringComparison.Ordinal)
-                && tip.Contains("Nested：On", StringComparison.Ordinal)),
-                "折叠预览应保留参数的后备标签以及开关的选中值。");
+            Require(tags.Any(tag => Equals(tag.ToolTip, "ServerRange：978-1012"))
+                && tags.Any(tag => tag.Text == "出战队伍：7" && Equals(tag.ToolTip, "出战队伍：7"))
+                && tags.Any(tag => Equals(tag.ToolTip, "Nested：开")),
+                "折叠预览应优先显示首个输入的标签，两级标签均为空时显示选项名称，并显示开关状态。");
         });
     }
 
@@ -348,7 +347,7 @@ internal static partial class SelfTestRunner
                     RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent
                 });
             }
-            if (OtherPreview("Server：978-1012") is not { } restored
+            if (OtherPreview("Server range：978-1012") is not { } restored
                 || restored.Foreground == window.FindResource("Brush.Error.Foreground")
                 || !ConfigurationDescendants(items).Contains(input)) {
                 throw new InvalidOperationException("Esc 必须立即恢复其他摘要的已保存值，且不重建正在编辑的输入框。");

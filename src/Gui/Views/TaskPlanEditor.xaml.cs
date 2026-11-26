@@ -35,7 +35,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     private readonly Dictionary<string, bool> _taskGroupExpanded = new(StringComparer.Ordinal);
     private (PlanItemKind Kind, string Name)? _expandedTask;
     private readonly Dictionary<(PlanItemKind Kind, string Name), Border> _planItemContainers = [];
-    private readonly List<(TextBlock Preview, Border Container, ProjectTaskChoice Task)> _planItemPreviews = [];
+    private readonly List<(StackPanel Preview, Border Container, ProjectTaskChoice Task)> _planItemPreviews = [];
 
     private readonly Dictionary<(Guid, string, string), InputDraft> _invalidInputDrafts = new();
     private readonly List<InspectorRowView> _inspectorRows = [];
@@ -789,10 +789,11 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         BindUncheckedTone((TextBlock)rowTitle.Children[0], selection, "Brush.Text.Primary", "Brush.Text.Muted");
         title.Children.Add(rowTitle);
         if (!expanded && HasParameters(configuration)) {
-            var preview = new TextBlock {
-                FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis
+            var preview = new StackPanel {
+                Orientation = System.Windows.Controls.Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 0, 0), ClipToBounds = true
             };
+            System.Windows.Documents.TextElement.SetFontSize(preview, 14);
             BindUncheckedTone(preview, selection, "Brush.Text.Muted", "Brush.Text.Disabled");
             _planItemPreviews.Add((preview, container, task));
             FillParameterPreview(preview, configuration, container);
@@ -826,14 +827,14 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         return header;
     }
 
-    private static void BindUncheckedTone(TextBlock text, System.Windows.Controls.CheckBox selection, string normal, string uncheckedTone)
+    private static void BindUncheckedTone(FrameworkElement text, System.Windows.Controls.CheckBox selection, string normal, string uncheckedTone)
     {
-        var style = new Style(typeof(TextBlock));
-        style.Setters.Add(new Setter(TextBlock.ForegroundProperty, new DynamicResourceExtension(normal)));
+        var style = new Style(text.GetType());
+        style.Setters.Add(new Setter(System.Windows.Documents.TextElement.ForegroundProperty, new DynamicResourceExtension(normal)));
         var uncheckedState = new DataTrigger {
             Binding = new System.Windows.Data.Binding(nameof(selection.IsChecked)) { Source = selection }, Value = false
         };
-        uncheckedState.Setters.Add(new Setter(TextBlock.ForegroundProperty, new DynamicResourceExtension(uncheckedTone)));
+        uncheckedState.Setters.Add(new Setter(System.Windows.Documents.TextElement.ForegroundProperty, new DynamicResourceExtension(uncheckedTone)));
         style.Triggers.Add(uncheckedState);
         text.Style = style;
     }
