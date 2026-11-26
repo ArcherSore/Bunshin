@@ -814,7 +814,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         AttachPlanItemDrag(main, container, task);
         Grid.SetColumn(main, 1);
         header.Children.Add(main);
-        if (!HasParameters(configuration) && !expanded) {
+        if (!expanded) {
             var remove = CreateIconButton(WpfSymbolRegular.Delete16, $"从执行计划移除 {task.Label}", "从执行计划移除");
             remove.Style = (Style)FindResource("TaskRemoveButtonStyle");
             remove.Tag = task;
