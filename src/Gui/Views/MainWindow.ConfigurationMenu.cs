@@ -90,7 +90,6 @@ public partial class MainWindow
                 var item = menu.Item(preset.Label, action: () =>
                     ShowNewConfiguration(TaskPlanEditor.CreatePresetConfiguration(preset.Name)));
                 AutomationProperties.SetName(item, $"从预设新建配置：{preset.Label}");
-                item.ToolTip = preset.Description;
                 presets.Items.Add(item);
             }
             menu.Items.Add(presets);
