@@ -11,7 +11,7 @@ internal static partial class ProjectInterfaceLoader
         "interface_version", "name", "label", "title", "version", "description", "icon", "github", "contact",
         "license",
         "controller", "resource", "agent", "global_option", "task", "option", "group", "pretask", "preset", "welcome",
-        "telemetry"
+        "telemetry", "setting", "import"
     };
 
     private static readonly HashSet<string> AllowedControllerProperties = new(StringComparer.Ordinal)
@@ -101,6 +101,12 @@ internal static partial class ProjectInterfaceLoader
             throw new InvalidDataException($"只支持 interface_version=2，实际为 {interfaceVersion}。 ");
         }
 
+        var imports = ReadStringArray(root, "import", required: false, "$");
+        if (imports.Count > 0) {
+            root = MergeImports(root, projectRoot, imports);
+            bytes = JsonSerializer.SerializeToUtf8Bytes(root);
+        }
+
         var controllers = RequireArray(root, "controller", "$").EnumerateArray().ToArray();
         if (controllers.Length != 1) {
             throw new InvalidDataException("首版要求恰好一个 Win32 controller。 ");
@@ -139,13 +145,33 @@ internal static partial class ProjectInterfaceLoader
             projectRoot, controller, resources, agent);
         return new ProjectDefinition(
             projectRoot, provenance, controller, resources, agent, runtimeProfileDigest,
-            globalOptions, tasks, options, groups, pretasks, presets,
+            globalOptions, tasks, options, groups, pretasks, presets, ParseSettings(root, options),
             ReadWelcome(root), ProjectAboutResolver.Read(projectRoot, ReadKeyText(root, "label") ?? provenance.Name,
                 ReadOptionalDescription(root, "description"), ReadOptionalDescription(root, "contact"),
                 ReadOptionalDescription(root, "license"), ReadOptionalDescription(root, "github")),
             // The protocol defaults title to name and version, not to label.
             ReadKeyText(root, "title") ?? $"{provenance.Name} {provenance.Version}".TrimEnd(),
             ReadKeyText(root, "icon"), ProjectTelemetry.Read(root));
+    }
+
+    private static IReadOnlyList<ProjectSetting> ParseSettings(JsonElement root, IReadOnlyDictionary<string, OptionDefinition> options)
+    {
+        if (!root.TryGetProperty("setting", out var value)) {
+            return [];
+        }
+        RequireArrayValue(value, "$.setting");
+        var settings = new List<ProjectSetting>();
+        foreach (var item in value.EnumerateArray()) {
+            var path = $"$.setting[{settings.Count}]";
+            var obj = RequireObject(item, path);
+            var name = RequireString(obj, "name", path);
+            var references = ReadStringArray(obj, "option", required: false, path);
+            ValidateReferences(references, $"{path}.option", options);
+            settings.Add(new ProjectSetting(name, ReadDisplayString(obj, "label") ?? name,
+                ReadOptionalDescription(obj, "description") ?? string.Empty, ReadDisplayString(obj, "icon"),
+                OptionalBoolean(obj, "default_expand", path, true), references));
+        }
+        return settings;
     }
 
     private static string? ReadKeyText(JsonElement root, string name) =>

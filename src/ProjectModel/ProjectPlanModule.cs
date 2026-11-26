@@ -12,6 +12,9 @@ public sealed record ProjectTaskChoice(string Name, string Label, string Descrip
 
 public sealed record ProjectTaskGroup(string Name, string Label, string Description, string? Icon, bool DefaultExpand);
 
+public sealed record ProjectSetting(string Name, string Label, string Description, string? Icon, bool DefaultExpand,
+    IReadOnlyList<string> Options);
+
 public sealed record RunStartAttempt(Guid RunId, RunPlan Plan, string PlanDigest)
 {
     // Every non-empty password this Run uses, for telemetry to redact; never part of the Plan or its digest.
@@ -65,6 +68,7 @@ public sealed partial class ProjectPlanModule
     public ProjectWelcome? ResolveWelcome(Action<string> warn) => ProjectWelcomeResolver.Resolve(_project, warn);
     public IReadOnlyList<ProjectTaskChoice> Tasks { get; }
     public IReadOnlyList<ProjectTaskChoice> Pretasks { get; }
+    public IReadOnlyList<ProjectSetting> Settings => _project.Settings;
     public IReadOnlyList<ProjectTaskGroup> Groups => _project.Groups;
     public IReadOnlyList<string> SelectedPretaskNames => LoadConfig().SelectedPretasks;
     public IReadOnlyList<ProjectTaskChoice> SelectedItems
