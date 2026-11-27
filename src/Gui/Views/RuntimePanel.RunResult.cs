@@ -68,12 +68,18 @@ public partial class RuntimePanel
     }
 
     // About seven rows, fewer in a short panel, so the activity log below 全部任务 stays in view.
-    private void FitRunList(object sender, SizeChangedEventArgs e)
+    private void FitRunList()
     {
-        const double sevenRows = 196, twoRows = 56, activityRoom = 100;
+        // A hidden list keeps its last height, which would skew the sum.
+        if (!RunResultAllScroll.IsVisible) {
+            return;
+        }
+        const double sevenRows = 196, oneRow = 28, activityRoom = 100;
         var others = DesktopSection.ActualHeight + ScheduleSection.ActualHeight
             + RunResultSection.ActualHeight - RunResultAllScroll.ActualHeight;
-        RunResultAllScroll.MaxHeight = Math.Clamp(Sections.ActualHeight - others - activityRoom, twoRows, sevenRows);
+        // A collapsed activity log needs no more than its header.
+        var below = ActivitySectionBody.IsVisible ? activityRoom : ActivitySection.ActualHeight;
+        RunResultAllScroll.MaxHeight = Math.Clamp(Sections.ActualHeight - others - below, oneRow, sevenRows);
     }
 
     // Outcomes that need attention name their task; the rest only count.

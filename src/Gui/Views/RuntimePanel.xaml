@@ -295,11 +295,12 @@
                     <DockPanel Style="{StaticResource Panel.SectionHeader}">
                         <Button x:Name="RunResultSectionToggle" Content="本次运行" Style="{StaticResource Panel.SectionToggle}" />
                     </DockPanel>
-                    <StackPanel x:Name="RunResultSectionBody" Margin="6,0,6,12" TextElement.FontSize="14">
+                    <StackPanel x:Name="RunResultSectionBody" Margin="6,0,6,12">
+                        <!-- The application text style outranks an inherited size, so each text states its own. -->
                         <DockPanel MinHeight="30" Margin="10,0">
-                            <TextBlock x:Name="RunResultTime" DockPanel.Dock="Right" Margin="12,0,0,0"
+                            <TextBlock x:Name="RunResultTime" DockPanel.Dock="Right" Margin="12,0,0,0" FontSize="14"
                                        VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
-                            <TextBlock x:Name="RunResultCount" VerticalAlignment="Center"
+                            <TextBlock x:Name="RunResultCount" FontSize="14" VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis" />
                         </DockPanel>
                         <ItemsControl x:Name="RunResultMeter" Margin="9,4,9,6" Focusable="False">
@@ -321,25 +322,25 @@
                                         <!-- The square sits in the 16 wide icon slot the other panel rows use. -->
                                         <Border Style="{StaticResource Panel.RunMark}" Width="10" Height="10"
                                                 CornerRadius="3" Margin="3,1,14,0" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center"
+                                        <TextBlock Text="{Binding Label}" FontSize="14" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource Brush.Text.Secondary}" />
-                                        <TextBlock Text="{Binding Value}" Margin="12,0,0,0" TextAlignment="Right"
-                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                                                   ToolTip="{Binding Value}" />
+                                        <TextBlock Text="{Binding Value}" FontSize="14" Margin="12,0,0,0"
+                                                   TextAlignment="Right" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Value}" />
                                     </DockPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <Button x:Name="RunResultAllToggle" Style="{StaticResource Panel.QuietButton}" MinHeight="30"
-                                Padding="10,0" FontSize="14" Cursor="Hand" HorizontalContentAlignment="Stretch"
+                                Padding="10,0" Cursor="Hand" HorizontalContentAlignment="Stretch"
                                 Click="RunResultAllToggle_Click" AutomationProperties.Name="展开全部任务">
                             <DockPanel>
                                 <ui:SymbolIcon x:Name="RunResultAllChevron" Symbol="ChevronRight16" Width="16"
                                                FontSize="12" Margin="0,0,11,0" VerticalAlignment="Center"
                                                Foreground="{DynamicResource Brush.Text.Muted}" />
-                                <TextBlock x:Name="RunResultAllCount" DockPanel.Dock="Right" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource Brush.Text.Muted}" />
-                                <TextBlock Text="全部任务" VerticalAlignment="Center"
+                                <TextBlock x:Name="RunResultAllCount" DockPanel.Dock="Right" FontSize="14"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
+                                <TextBlock Text="全部任务" FontSize="14" VerticalAlignment="Center"
                                            Foreground="{DynamicResource Brush.Text.Secondary}" />
                             </DockPanel>
                         </Button>
@@ -356,11 +357,12 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock x:Name="TaskName" Text="{Binding Name}" VerticalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"
+                                            <TextBlock x:Name="TaskName" Text="{Binding Name}" FontSize="14"
+                                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Name}"
                                                        Foreground="{DynamicResource Brush.Text.Secondary}" />
                                             <TextBlock x:Name="TaskStatus" Grid.Column="1" Text="{Binding Status}"
-                                                       Margin="12,0,0,0" VerticalAlignment="Center"
+                                                       FontSize="14" Margin="12,0,0,0" VerticalAlignment="Center"
                                                        Foreground="{DynamicResource Brush.Text.Muted}" />
                                         </Grid>
                                         <DataTemplate.Triggers>

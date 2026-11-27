@@ -3,6 +3,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Gui.Settings;
 using ProjectModel;
 using Button = System.Windows.Controls.Button;
@@ -41,7 +42,11 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
             section.Toggle.Click += (_, _) => ToggleSection(id);
         }
         foreach (var element in new FrameworkElement[] { Sections, DesktopSection, ScheduleSection, RunResultSection }) {
-            element.SizeChanged += FitRunList;
+            element.SizeChanged += (_, _) => FitRunList();
+        }
+        // What reappears can keep its old size and raise no SizeChanged; fit once layout has caught up.
+        foreach (var element in new FrameworkElement[] { ActivitySectionBody, RunResultAllScroll }) {
+            element.IsVisibleChanged += (_, _) => Dispatcher.InvokeAsync(FitRunList, DispatcherPriority.Loaded);
         }
     }
 

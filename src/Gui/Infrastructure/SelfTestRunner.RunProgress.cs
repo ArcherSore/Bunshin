@@ -206,6 +206,11 @@ internal static partial class SelfTestRunner
             RequireLines(all, "启动QQ大厅|0:18", "进入游戏|失败 · 1:00", "丰饶之间|未执行", "通缉任务|未执行");
             RequireRowColor(1, "Brush.Text.Secondary", "Brush.Error.Foreground");
             RequireRowColor(3, "Brush.Text.Disabled", "Brush.Text.Disabled");
+            var sizes = Texts(Named<FrameworkElement>(window, "RunResultSectionBody"))
+                .Where(text => text.Text.Any(char.IsLetterOrDigit)) // Leaves out icon glyphs.
+                .Select(text => $"{text.Text}={text.FontSize}").ToArray();
+            Require(sizes.All(size => size.EndsWith("=14", StringComparison.Ordinal)),
+                $"运行结果分区内的文字应同一字号：{string.Join("；", sizes)}。");
             Capture("failed-expanded");
 
             // Recovery owns the panel: the result gives way and 桌面分身 explains the fault in plain rows.
@@ -255,12 +260,6 @@ internal static partial class SelfTestRunner
             Capture("long-expanded");
             foreach (var height in new[] { 900, 760, 640 }) {
                 window.Height = height;
-                // At the minimum height use a running plan: the retry row after a failure leaves no room there.
-                if (height == 640) {
-                    ObserveRuns(window, ResultRun(RunState.Running, names.Select((name, index) => (name,
-                        index < 6 ? succeeded : index == 6 ? running : pending,
-                        index <= 6 ? (int?)(18 + index) : null)).ToArray()));
-                }
                 window.UpdateLayout();
                 PumpUntil(() => scroll.ScrollableHeight > 0 && scroll.ActualHeight <= 196 + PixelTolerance
                     && (height != 900 || Math.Abs(scroll.ActualHeight - 196) <= PixelTolerance)
@@ -268,7 +267,15 @@ internal static partial class SelfTestRunner
                         .Transform(new Point(0, activity.ActualHeight)).Y <= panel.ActualHeight + PixelTolerance,
                     $"{height} 高度下 14 项应在列表内滚动且运行动态仍可见。");
             }
-            Capture("long-running-min-height");
+            Capture("long-failed-min-height");
+            // A collapsed activity log gives its room to the list, and takes it back when expanded.
+            var fitted = scroll.ActualHeight;
+            ClickOnboarding(window, "ActivitySectionToggle");
+            PumpUntil(() => !activity.IsVisible && scroll.ActualHeight > fitted + PixelTolerance
+                && scroll.ActualHeight <= 196 + PixelTolerance, "收起运行动态后全部任务的高度应回升。");
+            ClickOnboarding(window, "ActivitySectionToggle");
+            PumpUntil(() => Math.Abs(scroll.ActualHeight - fitted) <= PixelTolerance && activity.ActualHeight >= 22,
+                "展开运行动态后全部任务应重新让出空间。");
 
             void RequireMeter(params string[] brushes)
             {
