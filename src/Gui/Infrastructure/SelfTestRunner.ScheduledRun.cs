@@ -590,6 +590,22 @@ internal static partial class SelfTestRunner
                         "本次定时任务的失败提醒应已交付托盘一次。");
                     Require(session.HasChildSession && wts.LogoffAttempts.Count == 0,
                         "没有下一班时，交付失败提醒后应保留分身，注销次数应为零。");
+                    if (!tickBeforeDispatch) {
+                        ConnectTestDesktop(session, sessionId);
+                        SetOnboardingField(window, "_sessionSnapshot", session.Snapshot);
+                        InvokeOnboarding(window, "RefreshRuntimeControls");
+                        Require(ShownHeaderControls(window).Length == 0, "上次运行失败且环境就绪时，面板上不应有重试按钮。");
+                        Click(window, "StartPlanButton");
+                        var again = Task.Run(() => WorkerCoordinatorSelfTest.ReadRequestAsync(
+                            pipe, ProtocolOperations.RunStart, token, snapshot with { LastRun = done, StateRevision = 3 }));
+                        PumpUntil(() => again.IsCompleted, "上次运行失败后点击“运行”应直接提交任务。");
+                        Require(ProtocolJson.Deserialize<RunStartRequest>(again.Result.Data).RunId != own.RunId
+                            && preparations == 1, "失败后的“运行”应在现有环境里开始一次新的 Run。");
+                        var reply = WireEnvelope.Response(again.Result.Operation, again.Result.RequestId!.Value,
+                            new RunStartResponse("accepted"));
+                        Task.Run(() => pipe.WriteAsync(reply, token)).GetAwaiter().GetResult();
+                        PumpUntil(() => window.CurrentOperation == PendingOperation.None, "重新开始的操作应结束。");
+                    }
                 } else {
                     Require(wts.LogoffAttempts.Count == 0 && session.HasChildSession, "手停应保留现场。");
                     Require(failures.Count == 0, "手停不应通知运行失败。");

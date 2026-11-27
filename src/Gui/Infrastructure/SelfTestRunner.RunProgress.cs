@@ -201,6 +201,10 @@ internal static partial class SelfTestRunner
                 $"结束后应显示成功数、结束时间和用时：{count.Text}，{time.Text}。");
             RequireMeter("Brush.Success", "Brush.Error", "Brush.Progress.Track", "Brush.Progress.Track");
             RequireLines(outcomes, "失败|进入游戏", "成功|1", "未执行|2");
+            Require(ShownHeaderControls(window).Length == 0
+                && !Named<FrameworkElement>(window, "RuntimeStatusDetail").IsVisible
+                && Named<System.Windows.Controls.Button>(window, "StartPlanButton") is { IsVisible: true, IsEnabled: true },
+                "运行失败后面板不提供重试开始任务，由“运行”重新开始。");
             Capture("failed");
             ClickOnboarding(window, "RunResultAllToggle");
             RequireLines(all, "启动QQ大厅|0:18", "进入游戏|失败 · 1:00", "丰饶之间|未执行", "通缉任务|未执行");
@@ -417,12 +421,17 @@ internal static partial class SelfTestRunner
         });
     }
 
-    // The plan shows active item progress while the result section follows the whole Run.
+    // A Run leaves the plan looking as it did, only locked; the result section alone follows it.
     private static void VerifyRunProgressWiring(AppLogger logger, string testDirectory)
     {
         RunOnboardingScenario(logger, Path.Combine(testDirectory, "run-progress-wiring"), (window, _) => {
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
             EndTour(window);
+            // An unchecked task is left out of the Run; its row must not say so.
+            var project = ProjectOf(window);
+            project.AddItem(PlanItemKind.MaaTask, "Spare");
+            project.SetItemEnabled(PlanItemKind.MaaTask, "Spare", false);
+            InvokeEditor(window, "RenderTaskPlan");
             var empty = JsonDocument.Parse("{}").RootElement.Clone();
             var started = DateTime.UtcNow.AddSeconds(-65);
             var item = new RunPlanItem(Guid.NewGuid(), "RealTask", "Real task", "Entry", empty, empty);
@@ -445,22 +454,51 @@ internal static partial class SelfTestRunner
             var timer = (System.Windows.Threading.DispatcherTimer)typeof(MainWindow).GetField("_runTimer", flags)!
                 .GetValue(window)!;
             var items = Named<System.Windows.Controls.Panel>(window, "PlanItemsPanel");
+            var count = Named<TextBlock>(window, "PlanCountText");
             string CardText() => string.Join("\n", ConfigurationDescendants(items).OfType<TextBlock>()
                 .Select(text => text.Text));
+            // Everything in the rows that changes the configuration: selection, removal and parameter editors.
+            System.Windows.Controls.Control[] Editors() => ConfigurationDescendants(items)
+                .OfType<System.Windows.Controls.Control>()
+                .Where(control => control is System.Windows.Controls.Primitives.ToggleButton
+                    or System.Windows.Controls.TextBox or System.Windows.Controls.ComboBox
+                    or System.Windows.Controls.ListBox
+                    || control is System.Windows.Controls.Button button
+                        && AutomationProperties.GetName(button).Contains("移除", StringComparison.Ordinal))
+                .ToArray();
+            void ToggleDetails()
+            {
+                var header = ConfigurationDescendants(items).OfType<System.Windows.Controls.Button>()
+                    .Single(button => button.Tag is ProjectTaskChoice { Name: "RealTask" }
+                        && button.Style == window.FindResource("PlanHeaderButtonStyle"));
+                header.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                window.UpdateLayout();
+            }
+            Observe(idle);
+            if (ConfigurationDescendants(items).OfType<System.Windows.Controls.TextBox>().Any()) {
+                ToggleDetails(); // Starts from a folded card, so the expansion below shows the parameters.
+            }
             var idleCardText = CardText();
-            var runningItems = Named<System.Windows.Controls.Panel>(window, "RunRows");
+            var idleCount = count.Text;
+            var idleEditors = Editors().Length;
+            Require(idleEditors > 0 && Editors().All(editor => editor.IsEnabled), "空闲时任务行应可编辑。");
 
             Observe(idle with { RunState = RunState.Running, ActiveRun = run });
-            var card = runningItems.Children.OfType<System.Windows.Controls.Border>().Single();
-            Require(runningItems.IsVisible && timer.IsEnabled
+            Require(items.IsVisible && CardText() == idleCardText && count.Text == idleCount,
+                $"运行中任务行和计数应与空闲时一致：{count.Text}；{CardText()}");
+            Require(Editors().Length == idleEditors && Editors().All(editor => !editor.IsEnabled),
+                "运行中任务行应保持原样并锁定。");
+            ToggleDetails();
+            Require(Editors().Length > idleEditors && Editors().All(editor => !editor.IsEnabled),
+                "运行中仍可展开查看参数，但不能修改。");
+            ToggleDetails();
+            Require(timer.IsEnabled
                 && Named<System.Windows.Controls.Button>(window, "StopPlanButton").IsVisible
                 && !Named<System.Windows.Controls.Button>(window, "TaskShelfHeaderButton").IsEnabled
-                && ConfigurationDescendants(card).OfType<TextBlock>()
-                    .Any(text => text.Text.StartsWith("进行中 · 1:", StringComparison.Ordinal))
                 && Named<TextBlock>(window, "RunResultCount").Text == "0 / 1 项完成"
                 && Named<TextBlock>(window, "RunResultTime").Text.StartsWith("总用时 1:", StringComparison.Ordinal)
                 && RunningResultTask(window) == "Real task",
-                "计划显示当前项状态和用时，运行结果分区显示进度、当前项与总用时。");
+                "运行结果分区应显示进度、当前项与总用时。");
             var screenshots = Environment.GetEnvironmentVariable("BUNSHIN_PANEL_SCREENSHOTS");
             if (!string.IsNullOrEmpty(screenshots)) {
                 Directory.CreateDirectory(screenshots);
@@ -469,21 +507,27 @@ internal static partial class SelfTestRunner
                 PumpOnboarding();
                 SaveScreenshot(window, Path.Combine(screenshots, "panel-running.png"));
             }
-            InvokeOnboarding(window, "RefreshRunTiming");
-            Require(ReferenceEquals(card, runningItems.Children.OfType<System.Windows.Controls.Border>().Single()),
-                "计时刷新应更新用时且保留运行中的任务卡片。");
 
             Observe(idle with {
                 LastRun = run with {
                     State = RunState.Succeeded, EndedAtUtc = started, Items = [Item(PlanItemState.Succeeded, started)]
                 }
             });
-            Require(CardText() == idleCardText && !timer.IsEnabled, "Run 结束后卡片不展示结果，计时停止。");
+            Require(CardText() == idleCardText && count.Text == idleCount && !timer.IsEnabled
+                && Editors().All(editor => editor.IsEnabled), "Run 结束后任务行应恢复可编辑，计时停止。");
+            ToggleDetails();
+            Require(Editors().Length > idleEditors && Editors().All(editor => editor.IsEnabled),
+                "Run 结束后展开任务应可以修改参数。");
             window.ApplyRuntimeControls(new(new RuntimeAction.Prepare(true), true, null,
                 new DesktopToggle(DesktopAction.Show, false, DesktopStatus.NotRunning), true));
             Require(Named<UIElement>(window, "RunResultSection").IsVisible
                 && Named<TextBlock>(window, "RunResultCount").Text == "1 / 1 项成功",
                 "匹配当前配置的 Last Run 不能因运行环境需要重新准备而隐藏。");
+        }, beforeLoad: directory => {
+            var path = Path.Combine(directory, "interface.json");
+            var project = JsonNode.Parse(File.ReadAllText(path))!;
+            project["task"]!.AsArray().Add((JsonNode)new JsonObject { ["name"] = "Spare", ["entry"] = "Entry" });
+            File.WriteAllText(path, project.ToJsonString());
         });
     }
 }

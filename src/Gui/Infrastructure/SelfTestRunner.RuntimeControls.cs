@@ -32,7 +32,8 @@ internal static partial class SelfTestRunner
                 (new RuntimeAction.Prepare(true), "StartSessionMenuItem", true, null),
                 (new RuntimeAction.Prepare(false), "StartSessionMenuItem", false, null),
                 (new RuntimeAction.Retry(RetryTarget.Prepare, true), "RetryEnvironmentButton", true, null),
-                (new RuntimeAction.Retry(RetryTarget.Start, false), "RetryEnvironmentButton", false, null),
+                (new RuntimeAction.Retry(RetryTarget.Start, true), "StartPlanButton", true, null),
+                (new RuntimeAction.Retry(RetryTarget.Start, false), "StartPlanButton", false, null),
                 (new RuntimeAction.Start(true), "StartPlanButton", true, null),
                 (new RuntimeAction.Start(false), "StartPlanButton", false, null),
                 (new RuntimeAction.Stop(true), "StopPlanButton", true, null),
@@ -64,30 +65,32 @@ internal static partial class SelfTestRunner
                 (new RuntimeAction.Start(false, StartBlocker.NoTasks), "StartPlanButton", true),
                 (new RuntimeAction.Start(false, StartBlocker.ConfigurationInvalid), "StartPlanButton", true),
                 (new RuntimeAction.Start(false, StartBlocker.RuntimeNotReady), "StartPlanButton", true),
-                (new RuntimeAction.Retry(RetryTarget.Prepare, true), "RetryEnvironmentButton", false),
-                (new RuntimeAction.Retry(RetryTarget.Start, true), "RetryEnvironmentButton", false),
-                (new RuntimeAction.Retry(RetryTarget.Start, false, StartBlocker.NoTasks), "RetryEnvironmentButton",
-                    true)
+                (new RuntimeAction.Retry(RetryTarget.Start, true), "StartPlanButton", false),
+                (new RuntimeAction.Retry(RetryTarget.Start, false, StartBlocker.NoTasks), "StartPlanButton", true)
             }) {
                 window.ApplyRuntimeControls(new RuntimeControlState(action, true, null, idleDesktop, true));
                 var button = Named<FrameworkElement>(window, control);
                 Require(button.ToolTip is string == explained && ToolTipService.GetShowOnDisabled(button)
                     && AutomationProperties.GetHelpText(button) == (button.ToolTip as string ?? ""),
                     $"{action} 的说明不符。");
-                if (control == "StartPlanButton" && explained) {
+                if (action is RuntimeAction.Start && explained) {
                     reasons.Add((string)button.ToolTip!);
                 }
             }
             Require(reasons.Distinct().Count() == reasons.Count, "不同的阻止原因应有不同的说明。");
 
-            // The retry button names what it retries, and recovery always says why it is needed.
-            string RetryLabel(RetryTarget target)
-            {
+            // After a failed Run the panel only repeats what blocks the next one; Run itself is the way to retry.
+            foreach (var blocker in new StartBlocker?[] { null, StartBlocker.NoTasks }) {
                 window.ApplyRuntimeControls(new RuntimeControlState(
-                    new RuntimeAction.Retry(target, true), true, null, idleDesktop, true));
-                return Named<TextBlock>(window, "RetryEnvironmentText").Text;
+                    new RuntimeAction.Retry(RetryTarget.Start, blocker is null, blocker), true, null, idleDesktop,
+                    true));
+                var detail = Named<TextBlock>(window, "RuntimeStatusDetail");
+                var reason = Named<FrameworkElement>(window, "StartPlanButton").ToolTip as string;
+                Require(ShownHeaderControls(window).Length == 0 && detail.IsVisible == blocker is not null
+                    && (blocker is null || detail.Text == reason), $"运行失败后的面板说明不符：{detail.Text}");
             }
-            Require(RetryLabel(RetryTarget.Prepare) != RetryLabel(RetryTarget.Start), "重试按钮应写明重试什么。");
+
+            // Recovery always says why it is needed.
             foreach (var reason in Enum.GetValues<RecoveryReason>()) {
                 foreach (var enabled in new[] { true, false }) {
                     window.ApplyRuntimeControls(new RuntimeControlState(
