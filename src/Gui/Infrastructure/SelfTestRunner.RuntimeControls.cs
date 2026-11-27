@@ -79,8 +79,15 @@ internal static partial class SelfTestRunner
             }
             Require(reasons.Distinct().Count() == reasons.Count, "不同的阻止原因应有不同的说明。");
 
-            // After a failed Run the panel only repeats what blocks the next one; Run itself is the way to retry.
+            // After a failed Run the panel only repeats what blocks the next one; Run itself is the way to retry, so
+            // the schedule header reads as it does for any ready Runtime Environment.
+            (string, System.Windows.Media.Brush) ScheduleHeader() => (
+                AutomationProperties.GetName(Named<WpfButton>(window, "ScheduleStatusLink")),
+                Named<System.Windows.Shapes.Ellipse>(window, "ScheduleStatusDot").Fill);
             foreach (var blocker in new StartBlocker?[] { null, StartBlocker.NoTasks }) {
+                window.ApplyRuntimeControls(new RuntimeControlState(
+                    new RuntimeAction.Start(blocker is null, blocker), true, null, idleDesktop, true));
+                var readyHeader = ScheduleHeader();
                 window.ApplyRuntimeControls(new RuntimeControlState(
                     new RuntimeAction.Retry(RetryTarget.Start, blocker is null, blocker), true, null, idleDesktop,
                     true));
@@ -88,7 +95,14 @@ internal static partial class SelfTestRunner
                 var reason = Named<FrameworkElement>(window, "StartPlanButton").ToolTip as string;
                 Require(ShownHeaderControls(window).Length == 0 && detail.IsVisible == blocker is not null
                     && (blocker is null || detail.Text == reason), $"运行失败后的面板说明不符：{detail.Text}");
+                Require(ScheduleHeader() == readyHeader, $"运行失败后的定时页眉应与就绪时一致：{ScheduleHeader().Item1}");
             }
+            window.ApplyRuntimeControls(new RuntimeControlState(
+                new RuntimeAction.Retry(RetryTarget.Prepare, true), true, null, idleDesktop, true));
+            var failedHeader = ScheduleHeader();
+            window.ApplyRuntimeControls(new RuntimeControlState(
+                new RuntimeAction.Start(true), true, null, idleDesktop, true));
+            Require(failedHeader != ScheduleHeader(), $"运行环境准备失败时定时页眉不应显示就绪：{failedHeader.Item1}");
 
             // Recovery always says why it is needed.
             foreach (var reason in Enum.GetValues<RecoveryReason>()) {

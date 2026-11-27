@@ -591,10 +591,14 @@ internal static partial class SelfTestRunner
                     Require(session.HasChildSession && wts.LogoffAttempts.Count == 0,
                         "没有下一班时，交付失败提醒后应保留分身，注销次数应为零。");
                     if (!tickBeforeDispatch) {
+                        // A hidden window shows no control at all, so what the user is offered is checked once it opens.
+                        window.Show();
                         ConnectTestDesktop(session, sessionId);
                         SetOnboardingField(window, "_sessionSnapshot", session.Snapshot);
                         InvokeOnboarding(window, "RefreshRuntimeControls");
-                        Require(ShownHeaderControls(window).Length == 0, "上次运行失败且环境就绪时，面板上不应有重试按钮。");
+                        PumpUntil(() => Named<System.Windows.UIElement>(window, "DesktopViewButton").IsVisible
+                            && HeaderShows(window, "StartPlanButton", enabled: true),
+                            "上次运行失败且环境就绪时，面板上应没有重试按钮，“运行”应可见可用。");
                         Click(window, "StartPlanButton");
                         var again = Task.Run(() => WorkerCoordinatorSelfTest.ReadRequestAsync(
                             pipe, ProtocolOperations.RunStart, token, snapshot with { LastRun = done, StateRevision = 3 }));
