@@ -168,12 +168,12 @@ public partial class MainWindow
                 "等待当前任务安全结束…", false),
             RuntimeAction.InProgress => (StatusTone.Busy, "处理中", "正在关闭分身和其中的程序…", false),
             RuntimeAction.Stop => (StatusTone.Run, "运行中", string.Empty, false),
-            RuntimeAction.Start { Blocker: { } blocker } => (StatusTone.Ok, "就绪", StartBlockerText(blocker), true),
-            RuntimeAction.Start => (StatusTone.Ok, "就绪", string.Empty, false),
-            RuntimeAction.Retry { Target: RetryTarget.Prepare } => (StatusTone.Bad, "需重试",
-                "重新准备运行环境后再开始任务", false),
-            RuntimeAction.Retry retry => (StatusTone.Bad, "需重试",
-                retry.Blocker is { } blocker ? StartBlockerText(blocker) : string.Empty, true),
+            // A failed Run leaves nothing to retry here, so a ready Runtime Environment reads as ready.
+            RuntimeAction.Start or RuntimeAction.Retry { Target: RetryTarget.Start } =>
+                PlanStartBlocker(state.Action) is { } blocker
+                    ? (StatusTone.Ok, "就绪", StartBlockerText(blocker), true)
+                    : (StatusTone.Ok, "就绪", string.Empty, false),
+            RuntimeAction.Retry => (StatusTone.Bad, "需重试", "重新准备运行环境后再开始任务", false),
             RuntimeAction.Recover { Reason: var reason } => (StatusTone.Bad, "故障", RecoveryText(reason), false),
             _ => (StatusTone.Idle, string.Empty, string.Empty, false)
         };
