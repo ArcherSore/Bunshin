@@ -396,17 +396,21 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         : !state.CommandsAvailable ? "处理中"
         : !state.Desktop.Enabled ? "未创建" : null;
 
-    private void StartPlanButton_Click(object sender, RoutedEventArgs e)
+    private void StartPlanButton_Click(object sender, RoutedEventArgs e) => StartPlan(continueRun: false);
+
+    // Starts exactly as 运行 does, from the record's first unsuccessful item.
+    private void ContinueRunButton_Click(object sender, RoutedEventArgs e) => StartPlan(continueRun: true);
+
+    private void StartPlan(bool continueRun)
     {
         switch (CurrentControls.Action) {
             case RuntimeAction.Prepare { Enabled: true } when PlanStartBlocker(CurrentControls.Action) is null:
-                PrepareAndRunButton_Click(sender, e);
+            case RuntimeAction.Retry { Target: RetryTarget.Prepare, Enabled: true }:
+                PrepareAndRun(continueRun);
                 break;
             case RuntimeAction.Start { Enabled: true }:
-                StartRunButton_Click(sender, e);
-                break;
-            case RuntimeAction.Retry { Enabled: true }:
-                RetryRuntimeHeaderButton_Click(sender, e);
+            case RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true }:
+                StartRun(continueRun);
                 break;
             default:
                 LogIgnoredAction();
@@ -423,13 +427,25 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         _ => null
     };
 
-    private async void PrepareAndRunButton_Click(object sender, RoutedEventArgs e)
+    private void PrepareAndRunButton_Click(object sender, RoutedEventArgs e) => PrepareAndRun(continueRun: false);
+
+    private async void PrepareAndRun(bool continueRun)
     {
-        if (!TaskPlanEditor.CommitRunInput() || TaskPlanEditor.RevealInvalidParameter() || OperationOrExitInProgress) {
+        if (!TaskPlanEditor.CommitRunInput() || TaskPlanEditor.RevealInvalidParameter() || OperationOrExitInProgress
+            || !TryReadContinuation(continueRun, out var tail)) {
             LogIgnoredAction();
             return;
         }
-        await PrepareFromPanelAsync(startRun: true);
+        await PrepareFromPanelAsync(startRun: true, tail: tail);
+    }
+
+    // Read on the click, before preparation can replace the Worker and its record. Passed along rather than kept, so
+    // automatic runs and 重试准备运行环境 always run the whole plan.
+    private bool TryReadContinuation(bool continueRun,
+        out IReadOnlyList<(PlanItemKind Kind, string Name)>? tail)
+    {
+        tail = continueRun ? CurrentContinuation() : null;
+        return !continueRun || tail is not null;
     }
 
     private async void PrepareEnvironmentButton_Click(object sender, RoutedEventArgs e)
@@ -438,23 +454,23 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     }
 
     // Only a manual "仅启动分身" shows the Child Session window; every other preparation keeps it hidden.
-    private async Task PrepareFromPanelAsync(
-        bool startRun = false, bool unattended = false, bool showDesktop = false)
+    private async Task PrepareFromPanelAsync(bool startRun = false, bool unattended = false, bool showDesktop = false,
+        IReadOnlyList<(PlanItemKind Kind, string Name)>? tail = null)
     {
         if (OperationOrExitInProgress) {
             LogIgnoredAction();
             return;
         }
         await RunOperationAsync(PendingOperation.PreparingEnvironment,
-            () => PrepareCurrentEnvironmentAsync(startRun, showDesktop), unattended, startsRun: startRun);
+            () => PrepareCurrentEnvironmentAsync(startRun, showDesktop, tail: tail), unattended, startsRun: startRun);
     }
 
     private async Task PrepareCurrentEnvironmentAsync(bool startRun, bool showDesktop = false,
-        RunSource source = RunSource.Manual)
+        RunSource source = RunSource.Manual, IReadOnlyList<(PlanItemKind Kind, string Name)>? tail = null)
     {
         await PrepareProjectEnvironmentAsync(project: null, showDesktop);
         if (startRun && !_exitInProgress && !_environment.Closing && await WaitForRunStartAsync()) {
-            await StartCurrentPlanAsync(source, PendingOperation.PreparingEnvironment);
+            await StartCurrentPlanAsync(source, PendingOperation.PreparingEnvironment, tail);
         }
     }
 
@@ -510,20 +526,25 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
     }
 
-    private async void StartRunButton_Click(object sender, RoutedEventArgs e)
+    private void StartRunButton_Click(object sender, RoutedEventArgs e) => StartRun(continueRun: false);
+
+    private async void StartRun(bool continueRun)
     {
         if (!TaskPlanEditor.CommitRunInput() || TaskPlanEditor.RevealInvalidParameter()
             || CurrentControls.Action is not (RuntimeAction.Start { Enabled: true }
-                or RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true })) {
+                or RuntimeAction.Retry { Target: RetryTarget.Start, Enabled: true })
+            || !TryReadContinuation(continueRun, out var tail)) {
             LogIgnoredAction();
             return;
         }
-        await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(), startsRun: true);
+        await RunOperationAsync(PendingOperation.StartingRun, () => StartCurrentPlanAsync(tail: tail), startsRun: true);
     }
 
-    // Called only while the application operation gate is held, after preparation or a direct Start.
+    // Called only while the application operation gate is held, after preparation or a direct Start. A tail is
+    // the end of the plan 继续运行 covers.
     private async Task StartCurrentPlanAsync(RunSource source = RunSource.Manual,
-        PendingOperation operation = PendingOperation.StartingRun)
+        PendingOperation operation = PendingOperation.StartingRun,
+        IReadOnlyList<(PlanItemKind Kind, string Name)>? tail = null)
     {
         // The operation may wait behind another one, so the session is checked again when it runs.
         if (_sessionManager.Snapshot.State != ChildSessionState.Connected) {
@@ -545,12 +566,14 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         }
 
         var intent = CreateRunIntent(source, project.ActiveConfigurationId, ActiveConfigurationName, operation);
+        // A plan that did not start is reused only by the next 运行 of the same input; 继续运行 covers a different part
+        // of the plan, so it neither reuses one nor leaves its own to be reused.
         var retry = intent with { RetryOf = _lastStartKey };
-        var attempt = orchestration.Lifecycle.ReusableAttempt(retry, worker.WorkerInstanceId);
+        var attempt = tail is null ? orchestration.Lifecycle.ReusableAttempt(retry, worker.WorkerInstanceId) : null;
         if (attempt != null) intent = retry;
-        else attempt = CreateConfigurationAttempt(project, project.ActiveConfigurationId);
+        else attempt = CreateConfigurationAttempt(project, project.ActiveConfigurationId, tail);
         var key = new RunKey(worker.WorkerInstanceId, attempt.RunId);
-        _lastStartKey = key;
+        _lastStartKey = tail is null ? key : null;
         await SubmitRunAsync(intent, key, attempt);
     }
 

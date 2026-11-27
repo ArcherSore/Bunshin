@@ -1,4 +1,5 @@
 using ProjectModel;
+using Protocol;
 
 namespace Gui.Views;
 
@@ -19,8 +20,10 @@ public partial class MainWindow
     }
 
     // Unfixed invalid drafts block the configuration like they block Start, without saving them.
-    private RunStartAttempt CreateConfigurationAttempt(ProjectPlanModule project, Guid configurationId) =>
-        project.CreateRunStartAttempt(configurationId, inputErrors: TaskPlanEditor.InvalidInputs(configurationId));
+    private RunStartAttempt CreateConfigurationAttempt(ProjectPlanModule project, Guid configurationId,
+        IReadOnlyList<(PlanItemKind Kind, string Name)>? tail = null) =>
+        project.CreateRunStartAttempt(configurationId, inputErrors: TaskPlanEditor.InvalidInputs(configurationId),
+            tail: tail);
 
     // A missing id must not throw: a configuration deleted in the meantime only loses its name in the log.
     private string? ConfigurationName(Guid id) =>

@@ -71,6 +71,26 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- The underlined text of a Panel.TextAction link. -->
+        <Style x:Key="Panel.LinkText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="TextDecorations" Value="Underline" />
+            <Setter Property="Foreground"
+                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Button}}"
+                             Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Primary.Foreground}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsEnabled, RelativeSource={RelativeSource AncestorType=Button}}"
+                             Value="False">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}"
+                             Value="Onboarding">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="Panel.SectionToggle" TargetType="Button" BasedOn="{StaticResource Panel.QuietButton}">
             <Setter Property="Padding" Value="16,0,0,0" />
             <Setter Property="Cursor" Value="Hand" />
@@ -206,28 +226,7 @@
                         <DockPanel MinHeight="32" Margin="10,0">
                             <Button x:Name="DesktopViewButton" DockPanel.Dock="Right" Padding="4,2,0,2"
                                     Style="{StaticResource Panel.TextAction}" ToolTipService.ShowOnDisabled="True">
-                                <TextBlock x:Name="DesktopViewText" Text="显示窗口" TextDecorations="Underline">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                            <Setter Property="Foreground"
-                                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                             Value="True">
-                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Primary.Foreground}" />
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding IsEnabled, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                             Value="False">
-                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                             Value="Onboarding">
-                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
+                                <TextBlock x:Name="DesktopViewText" Text="显示窗口" Style="{StaticResource Panel.LinkText}" />
                             </Button>
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Path Style="{StaticResource Panel.RowIcon}" Margin="0,0,11,0">
@@ -292,6 +291,11 @@
                     KeyboardNavigation.TabNavigation="Local">
                 <StackPanel>
                     <DockPanel Style="{StaticResource Panel.SectionHeader}">
+                        <Button x:Name="ContinueRunButton" DockPanel.Dock="Right" Visibility="Collapsed"
+                                Margin="0,0,8,0" Padding="4,2,0,2" Style="{StaticResource Panel.TextAction}"
+                                ToolTipService.ShowOnDisabled="True" AutomationProperties.Name="继续运行">
+                            <TextBlock Text="继续运行" Style="{StaticResource Panel.LinkText}" />
+                        </Button>
                         <Button x:Name="RunResultSectionToggle" Content="本次运行" Style="{StaticResource Panel.SectionToggle}" />
                     </DockPanel>
                     <StackPanel x:Name="RunResultSectionBody" Margin="6,0,6,12">
