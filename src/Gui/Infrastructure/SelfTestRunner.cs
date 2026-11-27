@@ -217,6 +217,8 @@ internal static partial class SelfTestRunner
         new(Group.RuntimeControls, nameof(VerifyRuntimeConsole), c => VerifyRuntimeConsole(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyRunProgressWiring),
             c => VerifyRunProgressWiring(c.Logger, c.Directory)),
+        new(Group.RuntimeControls, nameof(VerifyRunResultSection),
+            c => VerifyRunResultSection(c.Logger, c.Directory)),
         new(Group.RuntimeControls, nameof(VerifyChildSessionEndResponsiveness),
             c => VerifyChildSessionEndResponsiveness(c.Logger)),
         new(Group.RuntimeControls, nameof(VerifyStartupAndExitWiring),

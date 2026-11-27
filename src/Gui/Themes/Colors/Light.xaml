@@ -118,8 +118,6 @@
     <SolidColorBrush x:Key="Brush.Plan.Tag" Color="#0D000000" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Check" Color="#FFFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Progress" Color="#FF1757AC" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.RunSummary.FailureSurface" Color="#0FC83839" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.RunSummary.FailureBorder" Color="#33C83839" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Warning" Color="#FBB315" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Now" Color="#257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Schedule.Card" Color="#09000000" po:Freeze="True" />

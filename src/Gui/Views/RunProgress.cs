@@ -25,10 +25,8 @@ internal sealed record RunProgressView(
     internal int Failed => Count(PlanItemProgress.Failed);
     internal int Stopped => Count(PlanItemProgress.Stopped);
     internal int NotRun => Count(PlanItemProgress.NotRun);
-    internal bool WasStopped => State == RunState.Cancelled || Stopped > 0;
     // Only finished items count as processed; a stopped or skipped item never does.
     internal int Processed => Succeeded + Failed;
-    internal PlanItemProgressView? Current => CurrentIndex is { } index ? Items[index] : null;
 
     private int Count(PlanItemProgress state) => Items.Count(item => item.State == state);
 }
@@ -55,25 +53,10 @@ internal static class RunProgress
         _ => item.StartedAtUtc is null ? PlanItemProgress.NotRun : PlanItemProgress.Stopped
     };
 
-    // "已处理 2 / 5 · 2 成功" while running, "上次运行：3 成功 · 1 失败 · 已停止 · 1 未执行" afterwards.
-    internal static string Caption(RunProgressView run)
-    {
-        var counts = $"{run.Succeeded} 成功{(run.Failed == 0 ? "" : $" · {run.Failed} 失败")}";
-        if (run.Active) {
-            return $"已处理 {run.Processed} / {run.Total} · {counts}";
-        }
-        var stopped = run.WasStopped ? " · 已停止" : "";
-        var notRun = run.NotRun == 0 ? "" : $" · {run.NotRun} 未执行";
-        return $"上次运行：{counts}{stopped}{notRun}";
-    }
-
-    internal static string AccessibleCaption(RunProgressView run) =>
-        $"已处理 {run.Processed} / {run.Total}，成功 {run.Succeeded}，失败 {run.Failed}";
-
     internal static string FormatDuration(TimeSpan duration)
     {
         var whole = TimeSpan.FromSeconds(Math.Max(0, Math.Floor(duration.TotalSeconds)));
-        return whole.TotalHours >= 1 ? $"{(int)whole.TotalHours}:{whole:mm\\:ss}" : whole.ToString("mm\\:ss");
+        return whole.TotalHours >= 1 ? $"{(int)whole.TotalHours}:{whole:mm\\:ss}" : whole.ToString("m\\:ss");
     }
 
     // Elapsed time of a span that may still be open; an unstarted span has none.

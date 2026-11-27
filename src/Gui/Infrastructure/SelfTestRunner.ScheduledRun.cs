@@ -240,7 +240,7 @@ internal static partial class SelfTestRunner
                     PumpUntil(() => start.IsCompleted, "观察到运行中的任务后应完成定时提交。");
                     Require(!window.IsVisible, "定时启动和进度更新应保持窗口隐藏。");
                     window.Show();
-                    PumpUntil(() => window.RuntimeSidebar.RunProgressPanel.IsVisible, "打开窗口后应显示当前运行的进度。");
+                    PumpUntil(() => window.RuntimeSidebar.RunResultSection.IsVisible, "打开窗口后应显示当前运行的进度。");
                     Require(window.Sidebar.ConfigurationList.ActiveConfigurationId == target && !window.TaskPlanEditor.EmptyPlanPanel.IsVisible,
                         "恢复可见时目标标签、执行计划与正在运行的任务应一致。");
                     Require(failures.Count == 0 && start.Result.Reason is null, "Worker 已运行时回复超时不得报告启动失败。");

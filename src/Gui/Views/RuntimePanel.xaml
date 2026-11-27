@@ -101,6 +101,31 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- The colour of one Plan Item's state, shared by the run result's meter and legend squares. -->
+        <Style x:Key="Panel.RunMark" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Brush.Text.Disabled}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding State}" Value="Succeeded">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Success}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Running">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Primary}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Failed">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Error}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Stopped">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Warning}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- Unfinished segments read as the empty track. -->
+        <Style x:Key="Panel.RunSegment" TargetType="Border" BasedOn="{StaticResource Panel.RunMark}">
+            <Setter Property="Background" Value="{DynamicResource Brush.Progress.Track}" />
+            <Setter Property="Height" Value="3" />
+            <Setter Property="Margin" Value="1,0" />
+            <Setter Property="CornerRadius" Value="1.5" />
+        </Style>
         <Style x:Key="Panel.Section" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource Brush.Transparent}" />
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Rail.Border}" />
@@ -143,6 +168,7 @@
     <Border Background="{DynamicResource Brush.Canvas}" Padding="1,0,0,0">
         <Grid x:Name="Sections">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -240,40 +266,9 @@
                                            FontSize="14" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
                             </DockPanel>
                         </Button>
-                        <Border x:Name="RunSummaryCard" Visibility="Collapsed" CornerRadius="8" BorderThickness="1" Padding="9,0">
-                            <!-- Keep the right edge fixed while rounded star columns redistribute pixels. -->
-                            <StackPanel UseLayoutRounding="False">
-                                <Grid MinHeight="32">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="28" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition x:Name="RunProgressCaptionColumn" Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Path Style="{StaticResource Panel.RowIcon}" HorizontalAlignment="Left">
-                                        <Path.Data>
-                                            <GeometryGroup>
-                                                <EllipseGeometry Center="8,8" RadiusX="5.75" RadiusY="5.75" />
-                                                <PathGeometry Figures="M6.75,5.75 V10.25 L10.25,8 Z" />
-                                            </GeometryGroup>
-                                        </Path.Data>
-                                    </Path>
-                                    <TextBlock x:Name="RuntimeStatusTitle" Grid.Column="1" FontSize="14"
-                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="RunProgressCaption" Grid.Column="2" Margin="8,3,0,3"
-                                               FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Right"
-                                               TextAlignment="Right" TextWrapping="Wrap" SnapsToDevicePixels="True"
-                                               Foreground="{DynamicResource Brush.Text.Muted}" />
-                                </Grid>
-                                <StackPanel x:Name="RunProgressPanel">
-                                    <Canvas x:Name="RunProgressBar" Height="3" Margin="28,2,0,6" ClipToBounds="True"
-                                            Background="{DynamicResource Brush.Progress.Track}"
-                                            ToolTip="{Binding Text, ElementName=RunProgressElapsed}"
-                                            AutomationProperties.HelpText="{Binding Text, ElementName=RunProgressElapsed}"
-                                            SizeChanged="RunProgressBar_SizeChanged" />
-                                    <TextBlock x:Name="RunProgressElapsed" Visibility="Collapsed" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
+                        <TextBlock x:Name="RecoveryTitleText" Visibility="Collapsed" Margin="37,6,10,0"
+                                   TextWrapping="Wrap" FontSize="14"
+                                   Foreground="{DynamicResource Brush.Error.Foreground}" />
                         <TextBlock x:Name="RuntimeStatusDetail" Margin="37,3,10,0" TextWrapping="Wrap" FontSize="12"
                                    Foreground="{DynamicResource Brush.Text.Secondary}" />
                         <Grid Margin="10,0">
@@ -294,7 +289,110 @@
                     </StackPanel>
                 </StackPanel>
             </Border>
-            <Border x:Name="ScheduleSection" Grid.Row="1" Style="{StaticResource Panel.Section}"
+            <Border x:Name="RunResultSection" Grid.Row="1" Style="{StaticResource Panel.Section}" Visibility="Collapsed"
+                    KeyboardNavigation.TabNavigation="Local">
+                <StackPanel>
+                    <DockPanel Style="{StaticResource Panel.SectionHeader}">
+                        <Button x:Name="RunResultSectionToggle" Content="本次运行" Style="{StaticResource Panel.SectionToggle}" />
+                    </DockPanel>
+                    <StackPanel x:Name="RunResultSectionBody" Margin="6,0,6,12" TextElement.FontSize="14">
+                        <DockPanel MinHeight="30" Margin="10,0">
+                            <TextBlock x:Name="RunResultTime" DockPanel.Dock="Right" Margin="12,0,0,0"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource Brush.Text.Muted}" />
+                            <TextBlock x:Name="RunResultCount" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </DockPanel>
+                        <ItemsControl x:Name="RunResultMeter" Margin="9,4,9,6" Focusable="False">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Rows="1" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Panel.RunSegment}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ItemsControl x:Name="RunResultOutcomes" Focusable="False">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel MinHeight="30" Margin="10,0">
+                                        <!-- The square sits in the 16 wide icon slot the other panel rows use. -->
+                                        <Border Style="{StaticResource Panel.RunMark}" Width="10" Height="10"
+                                                CornerRadius="3" Margin="3,1,14,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource Brush.Text.Secondary}" />
+                                        <TextBlock Text="{Binding Value}" Margin="12,0,0,0" TextAlignment="Right"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                   ToolTip="{Binding Value}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button x:Name="RunResultAllToggle" Style="{StaticResource Panel.QuietButton}" MinHeight="30"
+                                Padding="10,0" FontSize="14" Cursor="Hand" HorizontalContentAlignment="Stretch"
+                                Click="RunResultAllToggle_Click" AutomationProperties.Name="展开全部任务">
+                            <DockPanel>
+                                <ui:SymbolIcon x:Name="RunResultAllChevron" Symbol="ChevronRight16" Width="16"
+                                               FontSize="12" Margin="0,0,11,0" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource Brush.Text.Muted}" />
+                                <TextBlock x:Name="RunResultAllCount" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Brush.Text.Muted}" />
+                                <TextBlock Text="全部任务" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Brush.Text.Secondary}" />
+                            </DockPanel>
+                        </Button>
+                        <!-- A longer plan scrolls here; code fits the height to the panel. -->
+                        <ScrollViewer x:Name="RunResultAllScroll" Visibility="Collapsed"
+                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl x:Name="RunResultAllItems" Focusable="False"
+                                          AutomationProperties.Name="全部任务">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <!-- Rows start where the 全部任务 text does. -->
+                                        <Grid MinHeight="28" Margin="37,0,10,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="TaskName" Text="{Binding Name}" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"
+                                                       Foreground="{DynamicResource Brush.Text.Secondary}" />
+                                            <TextBlock x:Name="TaskStatus" Grid.Column="1" Text="{Binding Status}"
+                                                       Margin="12,0,0,0" VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource Brush.Text.Muted}" />
+                                        </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding State}" Value="Running">
+                                                <Setter TargetName="TaskStatus" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Primary.Foreground}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding State}" Value="Failed">
+                                                <Setter TargetName="TaskStatus" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Error.Foreground}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding State}" Value="Pending">
+                                                <Setter TargetName="TaskName" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Text.Disabled}" />
+                                                <Setter TargetName="TaskStatus" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Text.Disabled}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding State}" Value="NotRun">
+                                                <Setter TargetName="TaskName" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Text.Disabled}" />
+                                                <Setter TargetName="TaskStatus" Property="Foreground"
+                                                        Value="{DynamicResource Brush.Text.Disabled}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border x:Name="ScheduleSection" Grid.Row="2" Style="{StaticResource Panel.Section}"
                     KeyboardNavigation.TabNavigation="Local">
                 <StackPanel>
                     <DockPanel Style="{StaticResource Panel.SectionHeader}">
@@ -347,7 +445,7 @@
                     </Grid>
                 </StackPanel>
             </Border>
-            <Border x:Name="ActivitySection" Grid.Row="2" Style="{StaticResource Panel.Section}"
+            <Border x:Name="ActivitySection" Grid.Row="3" Style="{StaticResource Panel.Section}"
                     KeyboardNavigation.TabNavigation="Local">
                 <Grid>
                     <Grid.RowDefinitions>

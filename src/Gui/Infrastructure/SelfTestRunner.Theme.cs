@@ -146,9 +146,11 @@ internal static partial class SelfTestRunner
         InvokeOnboarding(window, "RefreshRuntimeControls");
         window.UpdateLayout();
         RoundTrip(palette => {
-            Require(window.RuntimeSidebar.RunProgressCaption.IsVisible, "首页应已显示运行摘要。");
-            RequireThemeBrush(window.RuntimeSidebar.RunProgressCaption.Foreground, palette, "Brush.Text.Muted", "运行中摘要文字");
-            RequireThemeBrush(window.RuntimeSidebar.RunProgressBar.Background, palette, "Brush.Progress.Track", "运行进度条轨道");
+            Require(window.RuntimeSidebar.RunResultTime.IsVisible, "首页应已显示运行结果。");
+            RequireThemeBrush(window.RuntimeSidebar.RunResultTime.Foreground, palette, "Brush.Text.Muted", "运行结果用时");
+            var segment = SettingsVisualDescendants(window.RuntimeSidebar.RunResultMeter
+                .ItemContainerGenerator.ContainerFromIndex(0)).OfType<Border>().First();
+            RequireThemeBrush(segment.Background, palette, "Brush.Primary", "进行中的分段");
         });
 
         ClickOnboarding(window, "HelpNavigationItem");

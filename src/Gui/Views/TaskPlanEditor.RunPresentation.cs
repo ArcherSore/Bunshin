@@ -264,9 +264,6 @@ public sealed partial class TaskPlanEditor
     private static string RunItemStatusText(PlanItemProgress state, TimeSpan? elapsed)
     {
         var duration = elapsed is { } time ? RunProgress.FormatDuration(time) : string.Empty;
-        if (duration.StartsWith('0')) {
-            duration = duration[1..];
-        }
         return state switch {
             PlanItemProgress.Succeeded => duration.Length == 0 ? "已完成" : duration,
             PlanItemProgress.Pending => string.Empty,

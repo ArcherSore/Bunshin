@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using Gui.Views;
+using Protocol;
 using Point = System.Windows.Point;
 
 namespace Gui.Infrastructure;
@@ -61,8 +62,41 @@ internal static partial class SelfTestRunner
             Require(log.IsVisible, "用户应能再次展开运行动态。");
         });
 
+        // A layout saved before the result section existed gets it right after 桌面分身, wherever the user put that.
+        var upgraded = Path.Combine(testDirectory, "runtime-panel-upgrade");
+        RunOnboardingScenario(logger, upgraded, (window, _) => {
+            EndTour(window);
+            Require(!Named<FrameworkElement>(window, "RunResultSection").IsVisible,
+                "没有可显示的记录时应隐藏整个运行结果分区。");
+            ObserveRuns(window, ResultRun(RunState.Running, ("RealTask", PlanItemState.Running, 5)));
+            RequireUpgradedOrder(window);
+            ClickOnboarding(window, "RunResultSectionToggle");
+            Require(!Named<FrameworkElement>(window, "RunResultSectionBody").IsVisible
+                && Named<FrameworkElement>(window, "RunResultSectionToggle").IsVisible, "运行结果分区应可收起。");
+        }, project => {
+            Directory.CreateDirectory(Path.Combine(project, "config"));
+            File.WriteAllText(Path.Combine(project, "config", "runtime-panel-sections.json"),
+                """[{"Id":1,"Collapsed":false},{"Id":0,"Collapsed":false},{"Id":2,"Collapsed":false}]""");
+        });
+        RunOnboardingScenario(logger, upgraded, (window, _) => {
+            EndTour(window);
+            ObserveRuns(window, ResultRun(RunState.Running, ("RealTask", PlanItemState.Running, 5)));
+            RequireUpgradedOrder(window);
+            Require(!Named<FrameworkElement>(window, "RunResultSectionBody").IsVisible, "重启后应保持运行结果分区收起。");
+        });
+
         static double Top(FrameworkElement element, FrameworkElement parent) =>
             element.TransformToAncestor(parent).Transform(new Point()).Y;
+
+        static void RequireUpgradedOrder(MainWindow window)
+        {
+            var panel = Named<FrameworkElement>(window, "RuntimeSidebar");
+            var tops = new[] { "ScheduleSection", "DesktopSection", "RunResultSection", "ActivitySection" }
+                .Select(name => Named<FrameworkElement>(window, name)).ToArray();
+            Require(tops.All(section => section.IsVisible)
+                && tops.Zip(tops.Skip(1)).All(pair => Top(pair.First, panel) < Top(pair.Second, panel)),
+                "已有布局升级后，运行结果分区应紧随桌面分身，其他分区保持用户顺序。");
+        }
     }
 
     private static void VerifyRuntimeSidebarResize(AppLogger logger, string testDirectory)
