@@ -95,6 +95,26 @@ internal static partial class SelfTestRunner
                 && item.Program!.Arguments.Count == 0)
             && attempt.Plan.Items[2].Kind == PlanItemKind.MaaTask,
             "重新打开应保留拖动顺序，运行和进度仍按 PI 顺序先执行前置任务。");
+        // 继续运行 runs the end of the same plan with the same parameters, and refuses a sequence that is not its end.
+        var tail = project.CreateRunStartAttempt(project.ActiveConfigurationId,
+            tail: [(PlanItemKind.Pretask, "Second"), (PlanItemKind.MaaTask, "RealTask")]).Plan;
+        Require(tail.Items.Select(item => (item.Kind, item.TaskName))
+                .SequenceEqual([(PlanItemKind.Pretask, "Second"), (PlanItemKind.MaaTask, "RealTask")])
+            && tail.Items.Zip(attempt.Plan.Items.Skip(1)).All(pair => pair.First.Entry == pair.Second.Entry
+                && pair.First.Program?.Executable == pair.Second.Program?.Executable
+                && JsonElement.DeepEquals(pair.First.ResolvedOptions, pair.Second.ResolvedOptions)
+                && JsonElement.DeepEquals(pair.First.PipelineOverride, pair.Second.PipelineOverride))
+            && JsonElement.DeepEquals(tail.ResolvedGlobalOptions, attempt.Plan.ResolvedGlobalOptions),
+            "继续运行的计划应只含末尾一段，参数与完整计划相同。");
+        foreach (var mismatch in new (PlanItemKind, string)[][] {
+            [(PlanItemKind.Pretask, "First"), (PlanItemKind.Pretask, "Second")],
+            [(PlanItemKind.MaaTask, "Second"), (PlanItemKind.MaaTask, "RealTask")],
+            [(PlanItemKind.Pretask, "Missing"), (PlanItemKind.Pretask, "First"), (PlanItemKind.Pretask, "Second"),
+                (PlanItemKind.MaaTask, "RealTask")]
+        }) {
+            Require(Throws<InvalidOperationException>(() => project.CreateRunStartAttempt(
+                project.ActiveConfigurationId, tail: mismatch)), "任务序列不是当前计划的末尾一段时不得生成计划。");
+        }
 
         var baseline = attempt.Plan;
         var first = baseline.Items[0];

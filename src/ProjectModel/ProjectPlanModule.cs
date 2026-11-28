@@ -359,7 +359,8 @@ public sealed partial class ProjectPlanModule
         _project.Controller, _project.Resources, _project.Agent);
 
     public RunStartAttempt CreateRunStartAttempt(Guid configurationId,
-        IReadOnlyDictionary<(string Option, string Input), string>? inputErrors = null)
+        IReadOnlyDictionary<(string Option, string Input), string>? inputErrors = null,
+        IReadOnlyList<(PlanItemKind Kind, string Name)>? tail = null)
     {
         var config = ExecutionConfiguration(FindConfiguration(configurationId));
         ValidateActiveConfiguration(config);
@@ -389,6 +390,14 @@ public sealed partial class ProjectPlanModule
         var items = pretaskItems.Concat(resolvedItems.Select(item => new RunPlanItem(
             Guid.NewGuid(), item.Task.Name, item.Task.Label, item.Task.Entry,
             item.Resolved.ResolvedTaskOptions, item.Resolved.PipelineOverride))).ToArray();
+        // A continued Run takes the end of the plan; the sequence was read before preparation reloaded the project.
+        if (tail is not null) {
+            var offset = items.Length - tail.Count;
+            if (offset < 0 || !items.Skip(offset).Select(item => (item.Kind, item.TaskName)).SequenceEqual(tail)) {
+                throw new InvalidOperationException("执行计划已变化，请重新运行。");
+            }
+            items = items[offset..];
+        }
         var plan = new RunPlan(
             ProtocolConstants.PlanVersion, createdAtUtc,
             _project.Provenance, _project.RuntimeProfileDigest,

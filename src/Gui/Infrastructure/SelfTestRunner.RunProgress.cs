@@ -82,6 +82,47 @@ internal static partial class SelfTestRunner
         Require(RunProgress.Derive(Last(Run(RunState.Succeeded, (succeeded, true), (succeeded, true),
                 (succeeded, true))), MaaTasks("Task0", "Task2")) is null && RunProgress.Derive(idle, plan) is null,
             "Last Run 计划与当前配置的任务序列不一致或没有 Run 时不显示进度。");
+
+        // A continued Run covers the end of the plan; 继续运行 starts at its first unsuccessful item, never at the
+        // plan's first item, where it would be the same as 运行.
+        RunSnapshot Tail(RunState state, params (string Name, PlanItemState State, bool Started)[] items)
+        {
+            var run = Run(state, items.Select(item => (item.State, item.Started)).ToArray());
+            return run with {
+                Plan = run.Plan with {
+                    Items = run.Plan.Items.Select((item, index) => item with { TaskName = items[index].Name }).ToArray()
+                },
+                Items = run.Items.Select((item, index) => item with { TaskName = items[index].Name }).ToArray()
+            };
+        }
+        foreach (var (name, worker, from) in new (string, WorkerSnapshot, int?)[] {
+            ("中间项失败", Last(Run(RunState.Failed, (succeeded, true), (failed, true), (cancelled, false))), 1),
+            ("两项之间停止", Last(Run(RunState.Cancelled, (succeeded, true), (cancelled, false), (cancelled, false))), 1),
+            ("继续运行后首项再失败", Last(Tail(RunState.Failed, ("Task1", failed, true), ("Task2", cancelled, false))), 1),
+            ("继续运行后停在末项", Last(Tail(RunState.Cancelled, ("Task1", succeeded, true), ("Task2", cancelled, true))), 2),
+            ("整份计划首项失败", Last(Run(RunState.Failed, (failed, true), (cancelled, false), (cancelled, false))), null),
+            ("全部成功", Last(Run(RunState.Succeeded, (succeeded, true), (succeeded, true), (succeeded, true))), null),
+            ("各项成功但整次停止", Last(Run(RunState.Cancelled, (succeeded, true), (succeeded, true), (succeeded, true))),
+                null),
+            ("运行中", Active(Run(RunState.Running, (succeeded, true), (failed, true), (running, true))), null)
+        }) {
+            var progress = RunProgress.Derive(worker, plan);
+            Require(progress is not null && RunProgress.ContinueFrom(progress) == from,
+                $"继续运行场景“{name}”的起点应为 {from?.ToString() ?? "无"}，实际为 "
+                + $"{(progress is null ? "不显示记录" : RunProgress.ContinueFrom(progress)?.ToString() ?? "无")}。");
+        }
+        var continued = Last(Tail(RunState.Failed, ("Task1", failed, true), ("Task2", cancelled, false)));
+        Require(RunProgress.Derive(continued, plan) is { Total: 2 }
+            && RunProgress.Derive(continued, MaaTasks("Task1", "Task2")) is not null
+            && RunProgress.Derive(continued, MaaTasks("Task1", "Task2", "Task3")) is null
+            && RunProgress.Derive(continued, MaaTasks("Task0", "Task2")) is null
+            && RunProgress.Derive(continued, MaaTasks("Task2", "Task1")) is null
+            && RunProgress.Derive(continued, MaaTasks("Task2")) is null
+            && RunProgress.Derive(continued, [(PlanItemKind.Pretask, "Task0"), .. MaaTasks("Task1", "Task2")]) is not null
+            && RunProgress.Derive(continued, [(PlanItemKind.Pretask, "Task1"), (PlanItemKind.MaaTask, "Task2")]) is null,
+            "结束后的记录只在等于当前计划末尾一段时显示。");
+        Require(RunProgress.ContinueFrom(RunProgress.Derive(continued, MaaTasks("Task1", "Task2"))!) is null,
+            "记录覆盖整份当前计划且首项失败时，继续运行与运行相同，不应提供。");
         Require(RunProgress.FormatDuration(TimeSpan.FromSeconds(65.9)) == "1:05"
             && RunProgress.FormatDuration(TimeSpan.FromMinutes(61)) == "1:01:00", "用时格式不符。");
     }
@@ -171,6 +212,8 @@ internal static partial class SelfTestRunner
                 .Transform(new Point()).Y;
             Require(section.IsVisible && Top("DesktopSection") < Top("RunResultSection")
                 && Top("RunResultSection") < Top("ScheduleSection"), "运行结果分区默认应位于桌面分身下方。");
+            var continueRun = Named<System.Windows.Controls.Button>(window, "ContinueRunButton");
+            Require(!continueRun.IsVisible, "运行中不提供继续运行。");
             Require((string)toggle.Content == "本次运行" && count.Text == "1 / 4 项完成"
                 && time.Text.StartsWith("总用时 1:", StringComparison.Ordinal), "运行中应显示完成数和总用时。");
             RequireMeter("Brush.Success", "Brush.Primary", "Brush.Progress.Track", "Brush.Progress.Track");
@@ -205,6 +248,11 @@ internal static partial class SelfTestRunner
                 && !Named<FrameworkElement>(window, "RuntimeStatusDetail").IsVisible
                 && Named<System.Windows.Controls.Button>(window, "StartPlanButton") is { IsVisible: true, IsEnabled: true },
                 "运行失败后面板不提供重试开始任务，由“运行”重新开始。");
+            Require(continueRun.IsVisible && continueRun.IsEnabled
+                && Math.Abs(Top("RunResultSectionToggle") + toggle.ActualHeight / 2
+                    - Top("ContinueRunButton") - continueRun.ActualHeight / 2) <= PixelTolerance
+                && continueRun.TransformToAncestor(panel).Transform(new Point(continueRun.ActualWidth, 0)).X
+                    > section.ActualWidth / 2, "中间项失败后，分区标题行右侧应提供继续运行。");
             Capture("failed");
             ClickOnboarding(window, "RunResultAllToggle");
             RequireLines(all, "启动QQ大厅|0:18", "进入游戏|失败 · 1:00", "丰饶之间|未执行", "通缉任务|未执行");
@@ -240,6 +288,7 @@ internal static partial class SelfTestRunner
             ClickOnboarding(window, "RunResultAllToggle");
             RequireMeter("Brush.Success", "Brush.Warning", "Brush.Progress.Track", "Brush.Progress.Track");
             RequireLines(outcomes, "已停止|进入游戏", "成功|1", "未执行|2");
+            Require(continueRun.IsVisible && continueRun.IsEnabled, "停止后应可继续运行。");
             Capture("stopped");
 
             ObserveRuns(window, ResultRun(RunState.Succeeded, (names[0], succeeded, 18), (names[1], succeeded, 60),
@@ -247,7 +296,51 @@ internal static partial class SelfTestRunner
             Require(count.Text == "4 / 4 项成功", "全部成功时应显示成功数。");
             RequireMeter("Brush.Success", "Brush.Success", "Brush.Success", "Brush.Success");
             RequireLines(outcomes, "成功|4");
+            Require(!continueRun.IsVisible, "全部成功时不提供继续运行。");
             Capture("success");
+
+            ObserveRuns(window, ResultRun(RunState.Failed, (names[0], failed, 18), (names[1], cancelled, null),
+                (names[2], cancelled, null), (names[3], cancelled, null)));
+            Require(section.IsVisible && !continueRun.IsVisible, "整份计划首项失败时，继续运行与运行相同，不应提供。");
+
+            // A continued Run covers the end of the plan and stays shown; failing again offers to continue again.
+            var continued = ResultRun(RunState.Failed, (names[1], failed, 20), (names[2], cancelled, null),
+                (names[3], cancelled, null));
+            ObserveRuns(window, continued);
+            Require(section.IsVisible && count.Text == "0 / 3 项成功" && continueRun.IsVisible,
+                "继续运行的记录等于计划末尾一段时应显示，首项再次失败仍可继续。");
+            var startButton = Named<System.Windows.Controls.Button>(window, "StartPlanButton");
+            foreach (var blocked in new RuntimeControlState[] {
+                new(new RuntimeAction.Start(false, StartBlocker.ConfigurationInvalid), true, null, desktop, true),
+                new(new RuntimeAction.Prepare(false), true, null,
+                    desktop with { Enabled = false, Status = DesktopStatus.NotRunning }, false)
+            }) {
+                window.ApplyRuntimeControls(blocked);
+                window.UpdateLayout();
+                Require(continueRun.IsVisible && !continueRun.IsEnabled && !startButton.IsEnabled
+                    && continueRun.ToolTip is string reason && reason.Length > 0 && Equals(reason, startButton.ToolTip),
+                    $"{blocked.Action} 时继续运行应与运行一样不可用，并给出相同原因。");
+            }
+            var originalConfiguration = project.ActiveConfigurationId;
+            foreach (var (change, undo) in new (Action, Action)[] {
+                (() => project.RemoveItem(PlanItemKind.MaaTask, names[3]),
+                    () => project.AddItem(PlanItemKind.MaaTask, names[3])),
+                (() => project.AddItem(PlanItemKind.MaaTask, names[4]),
+                    () => project.RemoveItem(PlanItemKind.MaaTask, names[4])),
+                (() => project.SetItemEnabled(PlanItemKind.MaaTask, names[2], false),
+                    () => project.SetItemEnabled(PlanItemKind.MaaTask, names[2], true)),
+                (() => project.MoveTask(names[3], 1), () => project.MoveTask(names[3], 3)),
+                (() => project.CreateConfiguration(), () => project.ActivateConfiguration(originalConfiguration))
+            }) {
+                change();
+                InvokeEditor(window, "RenderTaskPlan");
+                ObserveRuns(window, continued);
+                Require(!section.IsVisible, "任务序列对不上计划末尾一段时应隐藏运行结果分区。");
+                undo();
+                InvokeEditor(window, "RenderTaskPlan");
+                ObserveRuns(window, continued);
+                Require(section.IsVisible, "恢复计划后记录应重新显示。");
+            }
 
             ObserveRuns(window, ResultRun(RunState.Succeeded, (names[0], succeeded, 18)));
             Require(!section.IsVisible, "上次运行与当前计划不一致时应隐藏分区。");
@@ -342,6 +435,131 @@ internal static partial class SelfTestRunner
             Require(actual.SequenceEqual(expected),
                 $"{list.Name} 应为 {string.Join("；", expected)}，实际为 {string.Join("；", actual)}。");
         }
+    }
+
+    // 继续运行 submits the end of the plan through the same start flow as 运行, preparing the environment first when
+    // needed. A plan that did not start is never picked up by the other button.
+    private static void VerifyContinueRunWiring(AppLogger logger, string directory)
+    {
+        var windowDirectory = Path.Combine(directory, "window");
+        var fixture = CreateProjectFixture(windowDirectory);
+        var digest = ProjectPlanModule.Open(fixture, Path.Combine(fixture, "plan.json")).RuntimeProfileDigest;
+        WithFakeWorker(logger, Path.Combine(directory, "worker"), (coordinator, record, pipeName) => {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var connect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var synchronised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var lastRun = new TaskCompletionSource<RunSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var requests = new System.Collections.Concurrent.ConcurrentQueue<RunStartRequest>();
+            // A new Worker without the old record; every start is refused before it begins, and the first refusal
+            // also brings back a failed record so both buttons can be tried on a ready environment.
+            var worker = Task.Run(async () => {
+                try {
+                    await connect.Task.WaitAsync(timeout.Token);
+                    await using var pipe = await WorkerCoordinatorSelfTest.OpenConnectionAsync(
+                        pipeName, record, 0, timeout.Token);
+                    opened.TrySetResult();
+                    var current = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with { StateRevision = 1 };
+                    while (true) {
+                        var request = await WorkerCoordinatorSelfTest.ReadRequestAsync(
+                            pipe, ProtocolOperations.RunStart, timeout.Token, current);
+                        requests.Enqueue(ProtocolJson.Deserialize<RunStartRequest>(request.Data));
+                        await pipe.WriteAsync(WireEnvelope.Failure(request.Operation, request.RequestId!.Value,
+                            "worker_busy", "模拟 Worker 忙"), timeout.Token);
+                        if (current.LastRun is null) {
+                            current = current with { StateRevision = 2, LastRun = await lastRun.Task };
+                            await pipe.WriteAsync(StateEvent(current), timeout.Token);
+                        }
+                    }
+                } catch (OperationCanceledException) when (timeout.IsCancellationRequested) {
+                }
+            });
+            var wts = new SimulatedWts();
+            using var session = wts.CreateManager(logger);
+            var environment = CreateEnvironment(logger, session, coordinator);
+            var probe = new PresentationProbe();
+            MainWindow? shown = null;
+            try {
+                WithRuntimeControlWindow(logger, windowDirectory, window => {
+                    shown = window;
+                    var interfacePath = Path.Combine(windowDirectory, "project", "interface.json");
+                    var definition = JsonNode.Parse(File.ReadAllText(interfacePath))!;
+                    foreach (var name in new[] { "SecondTask", "ThirdTask" }) {
+                        var task = definition["task"]![0]!.DeepClone();
+                        task["name"] = name;
+                        task["label"] = name;
+                        definition["task"]!.AsArray().Add(task);
+                    }
+                    File.WriteAllText(interfacePath, definition.ToJsonString());
+                    InvokeOnboarding(window, "LoadProject");
+                    var first = ProjectOf(window).SelectedItems.Single().Name;
+                    ProjectOf(window).AddItem(PlanItemKind.MaaTask, "SecondTask");
+                    ProjectOf(window).AddItem(PlanItemKind.MaaTask, "ThirdTask");
+                    InvokeEditor(window, "RenderTaskPlan");
+                    var failed = ResultRun(RunState.Failed, (first, PlanItemState.Succeeded, 10),
+                        ("SecondTask", PlanItemState.Failed, 5), ("ThirdTask", PlanItemState.Cancelled, null));
+                    lastRun.SetResult(failed);
+                    string[] whole = [first, "SecondTask", "ThirdTask"], tail = ["SecondTask", "ThirdTask"];
+                    var continueRun = Named<System.Windows.Controls.Button>(window, "ContinueRunButton");
+
+                    // The desktop clone has ended, but its record is still on screen.
+                    SetOnboardingField(window, "_workerSnapshot", new WorkerCoordinatorSnapshot(
+                        WorkerObservation.ChildSessionEnded, false,
+                        WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with { LastRun = failed }, "ended"));
+                    InvokeOnboarding(window, "RefreshRuntimeControls");
+                    PumpUntil(() => continueRun.IsVisible && continueRun.IsEnabled, "桌面分身已关闭但记录还在时应可继续运行。");
+                    RunStartRequest Next(string action, int count)
+                    {
+                        PumpUntil(() => requests.Count == count && window.CurrentOperation is PendingOperation.None
+                            && probe.Dialogs.Count == count, $"{action}应提交一次并结束。", failure => new InvalidOperationException(
+                                $"{failure} 提交 {requests.Count}，操作 {window.CurrentOperation}，"                                + $"提示 {string.Join("；", probe.Dialogs.Select(dialog => $"{dialog.Operation}:{dialog.Message}"))}"));
+                        return requests.ToArray()[^1];
+                    }
+                    string[] Tasks(RunStartRequest request) => request.Plan.Items.Select(item => item.TaskName).ToArray();
+
+                    Click(window, "ContinueRunButton");
+                    PumpUntil(() => coordinator.Snapshot.SnapshotFresh, "准备时新 Worker 应完成同步。");
+                    synchronised.TrySetResult();
+                    var prepared = Next("准备后继续运行", 1);
+                    Require(Tasks(prepared).SequenceEqual(tail), "准备运行环境后，继续运行应只执行起点及之后各项。");
+
+                    SetOnboardingField(window, "_sessionSnapshot", session.Snapshot);
+                    InvokeOnboarding(window, "RefreshRuntimeControls");
+                    PumpUntil(() => continueRun.IsVisible && continueRun.IsEnabled, "环境就绪后记录仍在时应可继续运行。");
+                    Click(window, "StartPlanButton");
+                    var run = Next("运行", 2);
+                    Require(Tasks(run).SequenceEqual(whole) && run.RunId != prepared.RunId,
+                        "继续运行没有开始后，运行应执行完整计划，不复用继续运行的计划。");
+                    Click(window, "StartPlanButton");
+                    var again = Next("再次运行", 3);
+                    Require(again.RunId == run.RunId, "没有开始的运行，再次运行时应复用同一份计划。");
+                    Click(window, "ContinueRunButton");
+                    var continued = Next("继续运行", 4);
+                    Require(Tasks(continued).SequenceEqual(tail) && continued.RunId != run.RunId
+                        && continued.RunId != prepared.RunId, "运行没有开始后，继续运行不复用完整计划，也不复用此前的继续运行。");
+                    Click(window, "StartPlanButton");
+                    var rerun = Next("继续运行后运行", 5);
+                    Require(Tasks(rerun).SequenceEqual(whole) && rerun.RunId != continued.RunId,
+                        "继续运行没有开始后，运行应另起完整计划。");
+                    Click(window, "ContinueRunButton");
+                    var continuedAgain = Next("再次继续运行", 6);
+                    Require(Tasks(continuedAgain).SequenceEqual(tail) && continuedAgain.RunId != continued.RunId
+                        && continuedAgain.RunId != rerun.RunId, "继续运行每次都应另起计划。");
+                }, session: session, coordinator: coordinator, environment: environment, presentation: probe.Presentation,
+                    prepareEnvironment: async (_, _, _) => {
+                        // A new Worker clears the old record before the Run starts.
+                        SetOnboardingField(shown!, "_workerSnapshot", new WorkerCoordinatorSnapshot(
+                            WorkerObservation.WorkerNotStarted, false, null, "preparing"));
+                        connect.TrySetResult();
+                        await opened.Task.WaitAsync(timeout.Token);
+                        await synchronised.Task.WaitAsync(timeout.Token);
+                        ConnectTestDesktop(session, record.ChildSessionId);
+                    });
+            } finally {
+                timeout.Cancel();
+                worker.GetAwaiter().GetResult();
+            }
+        }, runtimeProfileDigest: digest);
     }
 
     // The task the result section names as 进行中.
