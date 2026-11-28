@@ -117,7 +117,6 @@
     <SolidColorBrush x:Key="Brush.Plan.Button.Hover" Color="#37FFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Tag" Color="#0DFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Plan.Check" Color="#FFFFFFFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="Brush.Plan.Progress" Color="#FF6AABF1" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Warning" Color="#FBB315" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Timeline.Now" Color="#257DE0" po:Freeze="True" />
     <SolidColorBrush x:Key="Brush.Schedule.Card" Color="#09FFFFFF" po:Freeze="True" />

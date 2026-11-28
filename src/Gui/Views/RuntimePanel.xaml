@@ -272,10 +272,9 @@
                         <TextBlock x:Name="RuntimeStatusDetail" Margin="37,3,10,0" TextWrapping="Wrap" FontSize="12"
                                    Foreground="{DynamicResource Brush.Text.Secondary}" />
                         <Grid Margin="10,0">
-                            <Button x:Name="RetryEnvironmentButton" Visibility="Collapsed"
-                                    Style="{StaticResource Panel.Action}" ToolTipService.ShowOnDisabled="True">
-                                <TextBlock x:Name="RetryEnvironmentText" />
-                            </Button>
+                            <Button x:Name="RetryEnvironmentButton" Visibility="Collapsed" Content="重试准备运行环境"
+                                    Style="{StaticResource Panel.Action}"
+                                    AutomationProperties.Name="重试准备运行环境" />
                             <Button x:Name="RecoverEnvironmentButton" Visibility="Collapsed" Content="结束桌面分身"
                                     Style="{StaticResource Panel.Recover}" ToolTipService.ShowOnDisabled="True"
                                     AutomationProperties.Name="结束桌面分身" />

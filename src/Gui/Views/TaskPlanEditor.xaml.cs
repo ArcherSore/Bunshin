@@ -653,7 +653,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         var items = project.SelectedItems;
         EmptyPlanPanel.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateAddTaskButton();
-        UpdateIdlePlanCount(project);
+        UpdatePlanCount(project);
         EmptyPlanText.Text = $"从 {project.Tasks.Count + project.Pretasks.Count} 个可用任务中选择要执行的任务，"
             + "添加后按顺序依次执行，也可以拖动调整顺序。";
 
@@ -663,6 +663,10 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
             PlanItemsPanel.Children.Add(container);
         }
     }
+
+    private void UpdatePlanCount(ProjectPlanModule project) => PlanCountText.Text =
+        $"{project.SelectedItems.Count(task => project.IsItemEnabled(task.Kind, task.Name))}"
+            + $" / {project.SelectedItems.Count} 项";
 
     private bool IsExpanded(ProjectTaskChoice task) => _expandedTask == (task.Kind, task.Name);
 
@@ -758,6 +762,27 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
         }
         container.Child = layout;
         return container;
+    }
+
+    private static DockPanel CreatePlanRowTitle(string label, PlanItemKind kind, bool expanded)
+    {
+        var title = new DockPanel { LastChildFill = false };
+        var name = new TextBlock {
+            Text = label, MaxWidth = 260, FontWeight = expanded ? FontWeights.Medium : FontWeights.Normal,
+            FontSize = 14, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        title.Children.Add(name);
+        if (kind == PlanItemKind.Pretask) {
+            var tag = new TextBlock { Text = "前置", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            tag.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            var badge = new Border {
+                Height = 18, CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 0, 6, 0),
+                Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Child = tag
+            };
+            badge.SetResourceReference(Border.BackgroundProperty, "Brush.Plan.Tag");
+            title.Children.Add(badge);
+        }
+        return title;
     }
 
     private Grid CreatePlanItemHeader(ProjectTaskChoice task, bool expanded, bool canExpand,
@@ -875,7 +900,7 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
                 HandleProjectEditError("保存任务勾选状态失败", exception);
                 return;
             }
-            UpdateIdlePlanCount(RequireProject());
+            UpdatePlanCount(RequireProject());
             PlanEdited?.Invoke(this, EventArgs.Empty);
             RefreshConfigurationValidity(RequireProject());
         };
