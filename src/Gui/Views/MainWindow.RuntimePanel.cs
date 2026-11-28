@@ -68,11 +68,11 @@ public partial class MainWindow
             PlanStartBlocker(action) is { } blocker ? StartBlockerText(blocker) : null);
         // 继续运行 is offered beside the result and can be used exactly when 运行 can, for the same reason.
         var continueRun = RuntimeSidebar.ContinueRunButton;
-        var from = ContinuationStart(progress);
-        continueRun.Visibility = Visible(from is not null);
+        var continuation = Continuation(progress);
+        continueRun.Visibility = Visible(continuation is not null);
         continueRun.IsEnabled = TaskPlanEditor.StartPlanButton.IsEnabled;
-        continueRun.ToolTip = continueRun.IsEnabled && from is { } start
-            ? $"从「{start.TaskLabel}」开始" : TaskPlanEditor.StartPlanButton.ToolTip;
+        continueRun.ToolTip = continueRun.IsEnabled && continuation is { From: var from }
+            ? $"从「{from.TaskLabel}」开始" : TaskPlanEditor.StartPlanButton.ToolTip;
         ApplyConfigurationLockToShell(state.ConfigurationEditable, state.ConfigurationLock);
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
@@ -162,32 +162,23 @@ public partial class MainWindow
     private RunProgressView? CurrentRunProgress => _projectPlan is { } project
         ? RunProgress.Derive(_workerSnapshot.WorkerSnapshot, _runRecords.For(project.ActiveConfigurationId)) : null;
 
-    private static (PlanItemKind Kind, string Name)[] PlanSequence(ProjectPlanModule project) =>
-        project.EnabledItems.Select(item => (item.Kind, item.Name)).ToArray();
-
-    // The record's item 继续运行 starts from, as it was named in that Run.
-    private PlanItemProgressView? ContinuationStart(RunProgressView? progress)
+    // The part of the current plan 继续运行 covers, and the record's item it starts from, as it was named in that Run.
+    private ((PlanItemKind Kind, string Name)[] Tail, PlanItemProgressView From)? Continuation(
+        RunProgressView? progress)
     {
-        if (_projectPlan is not { } project || progress is null
-            || RunProgress.ContinueFrom(progress, PlanSequence(project)) is not { } from) {
+        if (_projectPlan is not { } project || progress is null) {
             return null;
         }
-        var (kind, name) = PlanSequence(project)[from];
-        return progress.Items.First(item => item.Kind == kind && item.Name == name);
+        var plan = project.EnabledItems.Select(item => (item.Kind, item.Name)).ToArray();
+        return RunProgress.ContinueFrom(progress, plan) is { } start ? (plan[start.Index..], start.Item) : null;
     }
-
-    // The part of the plan 继续运行 covers, read on the click, before preparation reloads the project.
-    private IReadOnlyList<(PlanItemKind Kind, string Name)>? CurrentContinuation() =>
-        _projectPlan is { } project && CurrentRunProgress is { } progress
-        && RunProgress.ContinueFrom(progress, PlanSequence(project)) is { } from ? PlanSequence(project)[from..] : null;
 
     // Admission and results reach the records from the Worker's snapshot and from the lifecycle, which also keeps an
     // ended result a later Run has pushed out of the snapshot.
     private void ObserveRunRecords()
     {
         foreach (var run in _lifecycle.Orchestration.Lifecycle.Runs.Values) {
-            if (run.Conclusion is StartConclusion.Accepted or StartConclusion.EndUnconfirmed || run.SeenActive
-                || run.Terminal is not null) {
+            if (run.Admitted) {
                 _runRecords.Observe(run.Key.RunId, run.Terminal);
             }
         }

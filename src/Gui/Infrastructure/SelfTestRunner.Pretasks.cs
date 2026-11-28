@@ -206,7 +206,7 @@ internal static partial class SelfTestRunner
             Require(plan.Items[0] is { Kind: PlanItemKind.Pretask, TaskName: "RealTask" }
                 && plan.Items[2] is { Kind: PlanItemKind.MaaTask, TaskName: "RealTask" }
                 && RunProgress.ContinueFrom(failedPretask, [(PlanItemKind.MaaTask, "RealTask"),
-                    (PlanItemKind.Pretask, "RealTask")]) == 1
+                    (PlanItemKind.Pretask, "RealTask")])?.Index == 1
                 && RunProgress.ContinueFrom(failedPretask, [(PlanItemKind.MaaTask, "RealTask")]) is null,
                 "继续运行按记录匹配起点时必须包含种类，不能只看任务名称。");
 

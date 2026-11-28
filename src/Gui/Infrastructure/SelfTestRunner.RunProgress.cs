@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
@@ -91,7 +91,8 @@ internal static partial class SelfTestRunner
         foreach (var (plan, from) in new (string, string?)[] {
             ("ABCD", "B"), ("ACD", "C"), ("ACBD", "C"), ("BACD", "B"), ("A", null), ("AEC", "C"), ("EA", null)
         }) {
-            var actual = RunProgress.ContinueFrom(abcdRecord, MaaTasks(plan.Select(name => name.ToString()).ToArray()));
+            var actual = RunProgress
+                .ContinueFrom(abcdRecord, MaaTasks(plan.Select(name => name.ToString()).ToArray()))?.Index;
             Require((actual is { } index ? plan[index].ToString() : null) == from,
                 $"计划 {plan} 继续运行应从 {from ?? "无"} 开始，实际为 {(actual is { } at ? plan[at].ToString() : "无")}。");
         }
@@ -103,7 +104,8 @@ internal static partial class SelfTestRunner
             "ABCDE".Where((_, bit) => (mask & (1 << bit)) != 0).ToArray()))).ToArray();
         Require(plans.Length == 325, "排序与勾选组合应全部覆盖。");
         foreach (var plan in plans) {
-            var actual = RunProgress.ContinueFrom(abcdRecord, MaaTasks(plan.Select(name => name.ToString()).ToArray()));
+            var actual = RunProgress
+                .ContinueFrom(abcdRecord, MaaTasks(plan.Select(name => name.ToString()).ToArray()))?.Index;
             var expected = plan.IndexOfAny(['B', 'C', 'D']);
             Require(actual == (expected < 0 ? null : expected),
                 $"计划 {plan} 继续运行起点应为 {expected}，实际为 {actual?.ToString() ?? "无"}。");
@@ -120,9 +122,9 @@ internal static partial class SelfTestRunner
             ("运行中", RunProgress.Derive(Active(Run(RunState.Running, (succeeded, true), (failed, true),
                 (running, true))), null)!, MaaTasks("Task0", "Task1", "Task2"), null)
         }) {
-            Require(RunProgress.ContinueFrom(view, plan) == from,
-                $"继续运行场景“{name}”的起点应为 {from?.ToString() ?? "无"}，实际为 "
-                + $"{RunProgress.ContinueFrom(view, plan)?.ToString() ?? "无"}。");
+            var actual = RunProgress.ContinueFrom(view, plan)?.Index;
+            Require(actual == from,
+                $"继续运行场景“{name}”的起点应为 {from?.ToString() ?? "无"}，实际为 {actual?.ToString() ?? "无"}。");
         }
         Require(RunProgress.FormatDuration(TimeSpan.FromSeconds(65.9)) == "1:05"
             && RunProgress.FormatDuration(TimeSpan.FromMinutes(61)) == "1:01:00", "用时格式不符。");
@@ -367,24 +369,17 @@ internal static partial class SelfTestRunner
                 "Worker 不再报告该 Run（新 Worker 或桌面分身已结束）后记录仍应显示。");
 
             // Each configuration shows only its own record, even with the same tasks; a copy starts without one.
-            void Activate(Guid id)
-            {
-                project.ActivateConfiguration(id);
-                InvokeEditor(window, "RenderTaskPlan");
-                InvokeOnboarding(window, "RefreshRuntimeControls");
-                window.UpdateLayout();
-            }
             var copy = project.DuplicateConfiguration(originalConfiguration);
-            Activate(copy);
+            ShowConfiguration(window, copy);
             Require(!section.IsVisible, "复制出来的配置不应带记录。");
             ObserveRuns(window, ResultRun(RunState.Succeeded, (names[0], succeeded, 18)));
             Require(section.IsVisible && count.Text == "1 / 1 项成功" && !continueRun.IsVisible,
                 "记录与当前计划的任务不同也应显示；全部成功时不提供继续运行。");
-            Activate(originalConfiguration);
+            ShowConfiguration(window, originalConfiguration);
             Require(section.IsVisible && count.Text == "0 / 3 项成功", "切换配置后应显示该配置自己的记录。");
-            Activate(copy);
+            ShowConfiguration(window, copy);
             Require(section.IsVisible && count.Text == "1 / 1 项成功", "切回副本应显示副本的记录。");
-            Activate(originalConfiguration);
+            ShowConfiguration(window, originalConfiguration);
 
             // A start that was never admitted keeps the record; one that was admitted retires it, and an earlier
             // Run's late snapshot does not bring it back.
@@ -398,9 +393,9 @@ internal static partial class SelfTestRunner
             Require(!section.IsVisible, "新的 Run 被接纳后，没有收到结束结果时不应再显示旧记录。");
             ObserveRuns(window, continued, claim: false);
             Require(!section.IsVisible, "更早 Run 的迟到快照不得复活记录。");
-            Activate(copy);
+            ShowConfiguration(window, copy);
             Require(section.IsVisible && count.Text == "1 / 1 项成功", "其他配置的记录不受影响。");
-            Activate(originalConfiguration);
+            ShowConfiguration(window, originalConfiguration);
             ObserveRuns(window, replacing with { State = RunState.Cancelled, EndedAtUtc = DateTime.UtcNow },
                 claim: false);
             Require(section.IsVisible && (string)toggle.Content == "上次运行" && count.Text == "0 / 2 项成功",

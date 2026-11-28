@@ -36,17 +36,22 @@ internal static class RunProgress
     internal static RunProgressView? Derive(WorkerSnapshot? worker, RunRecord? record) =>
         worker?.ActiveRun is { } active ? Create(active, true) : record?.View;
 
-    // Where 继续运行 starts in the current plan: its first item the record has and did not finish successfully. Items
-    // the record does not have never start it.
-    internal static int? ContinueFrom(RunProgressView view, IReadOnlyList<(PlanItemKind Kind, string Name)> plan)
+    // Where 继续运行 starts in the current plan: its first item the record has and did not finish successfully, with
+    // the record's item for it. Items the record does not have never start it.
+    internal static (int Index, PlanItemProgressView Item)? ContinueFrom(
+        RunProgressView view, IReadOnlyList<(PlanItemKind Kind, string Name)> plan)
     {
         if (view.Active) {
             return null;
         }
         var unsuccessful = view.Items.Where(item => item.State != PlanItemProgress.Succeeded)
-            .Select(item => (item.Kind, item.Name)).ToHashSet();
-        var index = plan.ToList().FindIndex(unsuccessful.Contains);
-        return index >= 0 ? index : null;
+            .ToLookup(item => (item.Kind, item.Name));
+        for (var index = 0; index < plan.Count; index++) {
+            if (unsuccessful[plan[index]].FirstOrDefault() is { } item) {
+                return (index, item);
+            }
+        }
+        return null;
     }
 
     internal static PlanItemProgress Map(PlanItemSnapshot item) => item.State switch {
