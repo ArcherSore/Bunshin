@@ -20,6 +20,8 @@ public partial class MainWindow
             return;
         }
         _scheduleTimer.Tick += (_, _) => _ = CheckScheduledRunsAsync();
+        // A result left on screen past midnight ended yesterday.
+        _scheduleTimer.Tick += (_, _) => RuntimeSidebar.UpdateRunTiming();
         _scheduleTimer.Start();
         _ = Dispatcher.InvokeAsync(CheckScheduledRunsAsync);
     }
