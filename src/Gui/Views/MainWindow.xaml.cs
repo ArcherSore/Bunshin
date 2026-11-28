@@ -46,7 +46,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private WorkerCoordinatorSnapshot _workerSnapshot = WorkerCoordinatorSnapshot.Empty;
     private ProjectPlanModule? _projectPlan;
     private RunKey? _lastStartKey;
-    private readonly RunRecords _runRecords = new();
+    private readonly RunRecords _runRecords;
     private long _projectVersion;
     private long _editVersion;
     private readonly RunLifecycleHost _lifecycle;
@@ -85,6 +85,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         DataContext = this;
         _logger = logger;
         _applicationDirectory = applicationDirectory ?? AppContext.BaseDirectory;
+        _runRecords = new(Path.Combine(_applicationDirectory, "state"), logger);
         _checkForUpdate = checkForUpdate ?? CheckWithEngineAsync;
         _prepareUpdate = prepareUpdate ?? PrepareWithEngineAsync;
         _settings = new ApplicationSettings(_applicationDirectory, logger,

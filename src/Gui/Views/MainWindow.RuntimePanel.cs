@@ -15,7 +15,7 @@ public partial class MainWindow
 {
     private void InitializeRuntimePanel()
     {
-        RuntimeSidebar.Attach(_settings);
+        RuntimeSidebar.Attach(_settings, _scheduleClock);
         RuntimeSidebar.StartSessionMenuItem.Click += PrepareEnvironmentButton_Click;
         RuntimeSidebar.RetryEnvironmentButton.Click += RetryRuntimeHeaderButton_Click;
         RuntimeSidebar.ContinueRunButton.Click += ContinueRunButton_Click;
