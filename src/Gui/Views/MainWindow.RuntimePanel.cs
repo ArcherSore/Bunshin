@@ -160,7 +160,8 @@ public partial class MainWindow
 
     // The running Run, or else the 运行记录 of the configuration on screen.
     private RunProgressView? CurrentRunProgress => _projectPlan is { } project
-        ? RunProgress.Derive(_workerSnapshot.WorkerSnapshot, _runRecords.For(project.ActiveConfigurationId)) : null;
+        ? RunProgress.Derive(_workerSnapshot.CurrentWorkerSnapshot, _runRecords.For(project.ActiveConfigurationId))
+        : null;
 
     // The part of the current plan 继续运行 covers, and the record's item it starts from, as it was named in that Run.
     private ((PlanItemKind Kind, string Name)[] Tail, PlanItemProgressView From)? Continuation(

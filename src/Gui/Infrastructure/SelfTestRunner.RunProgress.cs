@@ -389,6 +389,21 @@ internal static partial class SelfTestRunner
             var replacing = ResultRun(RunState.Running, (names[0], running, 3), (names[1], pending, null));
             ObserveRuns(window, replacing);
             Require((string)toggle.Content == "本次运行" && count.Text == "0 / 2 项完成", "运行中应显示本次运行。");
+            // A Worker that has gone keeps its last snapshot, but the Run in it no longer owns the panel.
+            var stopButton = Named<System.Windows.Controls.Button>(window, "StopPlanButton");
+            var live = (WorkerCoordinatorSnapshot)typeof(MainWindow)
+                .GetField("_workerSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            foreach (var gone in new[] { WorkerObservation.WorkerExited, WorkerObservation.ChildSessionEnded }) {
+                SetOnboardingField(window, "_workerSnapshot", live with { Observation = gone, SnapshotFresh = false });
+                InvokeOnboarding(window, "RefreshRuntimeControls");
+                window.UpdateLayout();
+                Require(!section.IsVisible && startButton.IsVisible && !stopButton.IsVisible,
+                    $"{gone} 后旧快照里的 Run 不应继续显示为本次运行。");
+                ShowConfiguration(window, copy);
+                Require(section.IsVisible && (string)toggle.Content == "上次运行" && count.Text == "1 / 1 项成功",
+                    $"{gone} 后其他配置应显示自己的记录。");
+                ShowConfiguration(window, originalConfiguration);
+            }
             ObserveRuns(window, null);
             Require(!section.IsVisible, "新的 Run 被接纳后，没有收到结束结果时不应再显示旧记录。");
             ObserveRuns(window, continued, claim: false);
