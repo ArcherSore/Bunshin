@@ -772,6 +772,7 @@ internal static partial class SelfTestRunner
             var idleEditors = Editors().Length;
             Require(idleEditors > 0 && Editors().All(editor => editor.IsEnabled), "空闲时任务行应可编辑。");
 
+            ClaimRun(window, run.RunId); // As if this configuration had started it.
             Observe(idle with { RunState = RunState.Running, ActiveRun = run });
             Require(items.IsVisible && CardText() == idleCardText && count.Text == idleCount,
                 $"运行中任务行和计数应与空闲时一致：{count.Text}；{CardText()}");
