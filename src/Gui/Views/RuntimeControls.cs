@@ -13,9 +13,7 @@ internal static class RuntimeControls
         var commandsAvailable = pending == PendingOperation.None && !exiting && !ending
             && session.State is not (ChildSessionState.Connecting or ChildSessionState.Disconnecting);
         var sessionConnected = session.State == ChildSessionState.Connected;
-        // A confirmed ended runtime keeps its last snapshot for diagnostics, but that snapshot cannot own controls.
-        var worker = observed.Observation is WorkerObservation.ChildSessionEnded or WorkerObservation.WorkerExited
-            ? null : observed.WorkerSnapshot;
+        var worker = observed.CurrentWorkerSnapshot;
         var active = worker?.ActiveRun;
         var environmentReady = sessionConnected && project.Loaded && observed.Fresh && worker?.WorkerState == WorkerState.Ready
             && worker.RuntimeProfileDigest == project.RuntimeProfileDigest;

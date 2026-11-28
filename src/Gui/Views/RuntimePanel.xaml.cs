@@ -18,6 +18,7 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
 
     private readonly Dictionary<RuntimePanelSection, Section> _sections;
     private ApplicationSettings _settings = null!;
+    private TimeProvider _clock = null!;
     private IReadOnlyList<RuntimePanelSectionState> _layout = [];
     private bool _revealDesktop;
     private Guid? _configurationId;
@@ -52,9 +53,11 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
 
     internal event Action<Guid, Guid, bool>? SchedulePolicyToggleRequested;
 
-    internal void Attach(ApplicationSettings settings)
+    // The clock is the window's own; it decides which day a result ended on.
+    internal void Attach(ApplicationSettings settings, TimeProvider clock)
     {
         _settings = settings;
+        _clock = clock;
         _layout = settings.ReadRuntimePanelSections();
         ApplyLayout();
     }

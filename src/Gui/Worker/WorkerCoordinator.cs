@@ -32,6 +32,11 @@ internal sealed record WorkerCoordinatorSnapshot(
     internal bool Fresh => Observation == WorkerObservation.Connected && SnapshotFresh;
     internal bool Resynchronising => Observation == WorkerObservation.Connected && !SnapshotFresh;
 
+    // A confirmed ended runtime keeps its last snapshot for diagnostics, but that snapshot no longer says what is
+    // running.
+    internal WorkerSnapshot? CurrentWorkerSnapshot => Observation is WorkerObservation.ChildSessionEnded
+        or WorkerObservation.WorkerExited ? null : WorkerSnapshot;
+
     // A Worker may still be running across a disconnect or GUI restart.
     internal bool LiveAdmissionWithoutFreshSnapshot => !NoLiveAdmission && !SnapshotFresh;
 

@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using Gui.ChildSession;
+using Gui.Runtime;
 using Gui.Worker;
 using ProjectModel;
 using Protocol;
@@ -14,7 +15,7 @@ public partial class MainWindow
 {
     private void InitializeRuntimePanel()
     {
-        RuntimeSidebar.Attach(_settings);
+        RuntimeSidebar.Attach(_settings, _scheduleClock);
         RuntimeSidebar.StartSessionMenuItem.Click += PrepareEnvironmentButton_Click;
         RuntimeSidebar.RetryEnvironmentButton.Click += RetryRuntimeHeaderButton_Click;
         RuntimeSidebar.ContinueRunButton.Click += ContinueRunButton_Click;
@@ -67,9 +68,11 @@ public partial class MainWindow
             PlanStartBlocker(action) is { } blocker ? StartBlockerText(blocker) : null);
         // 继续运行 is offered beside the result and can be used exactly when 运行 can, for the same reason.
         var continueRun = RuntimeSidebar.ContinueRunButton;
-        continueRun.Visibility = Visible(progress is { } shown && RunProgress.ContinueFrom(shown) is not null);
+        var continuation = Continuation(progress);
+        continueRun.Visibility = Visible(continuation is not null);
         continueRun.IsEnabled = TaskPlanEditor.StartPlanButton.IsEnabled;
-        continueRun.ToolTip = TaskPlanEditor.StartPlanButton.ToolTip;
+        continueRun.ToolTip = continueRun.IsEnabled && continuation is { From: var from }
+            ? $"从「{from.TaskLabel}」开始" : TaskPlanEditor.StartPlanButton.ToolTip;
         ApplyConfigurationLockToShell(state.ConfigurationEditable, state.ConfigurationLock);
 
         static Visibility Visible(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
@@ -155,17 +158,40 @@ public partial class MainWindow
         RuntimeSidebar.EndEnvironmentMenuItem.ToolTip = endBlocker ?? "注销分身，游戏随之关闭";
     }
 
-    // RunProgress already hides a Last Run that is not the end of the plan on screen.
+    // The running Run, or else the 运行记录 of the configuration on screen.
     private RunProgressView? CurrentRunProgress => _projectPlan is { } project
-        ? RunProgress.Derive(_workerSnapshot.WorkerSnapshot, PlanSequence(project)) : null;
+        ? RunProgress.Derive(_workerSnapshot.CurrentWorkerSnapshot, _runRecords.For(project.ActiveConfigurationId))
+        : null;
 
-    private static (PlanItemKind Kind, string Name)[] PlanSequence(ProjectPlanModule project) =>
-        project.EnabledItems.Select(item => (item.Kind, item.Name)).ToArray();
+    // The part of the current plan 继续运行 covers, and the record's item it starts from, as it was named in that Run.
+    private ((PlanItemKind Kind, string Name)[] Tail, PlanItemProgressView From)? Continuation(
+        RunProgressView? progress)
+    {
+        if (_projectPlan is not { } project || progress is null) {
+            return null;
+        }
+        var plan = project.EnabledItems.Select(item => (item.Kind, item.Name)).ToArray();
+        return RunProgress.ContinueFrom(progress, plan) is { } start ? (plan[start.Index..], start.Item) : null;
+    }
 
-    // The part of the plan 继续运行 covers, read now: preparing a new Worker clears the record it starts from.
-    private IReadOnlyList<(PlanItemKind Kind, string Name)>? CurrentContinuation() =>
-        _projectPlan is { } project && CurrentRunProgress is { } progress
-        && RunProgress.ContinueFrom(progress) is { } from ? PlanSequence(project)[from..] : null;
+    // Admission and results reach the records from the Worker's snapshot and from the lifecycle, which also keeps an
+    // ended result a later Run has pushed out of the snapshot.
+    private void ObserveRunRecords()
+    {
+        foreach (var run in _lifecycle.Orchestration.Lifecycle.Runs.Values) {
+            if (run.Admitted) {
+                _runRecords.Observe(run.Key.RunId, run.Terminal);
+            }
+        }
+        if (_workerSnapshot.WorkerSnapshot is { } worker) {
+            if (worker.ActiveRun is { } active) {
+                _runRecords.Observe(active.RunId);
+            }
+            if (worker.LastRun is { } last) {
+                _runRecords.Observe(last.RunId, last);
+            }
+        }
+    }
 
     private enum StatusTone { Idle, Busy, Ok, Run, Bad }
 

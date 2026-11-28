@@ -61,10 +61,23 @@ public partial class RuntimePanel
         var now = DateTime.UtcNow;
         var total = RunProgress.FormatDuration(
             RunProgress.Elapsed(run.StartedAtUtc, run.EndedAtUtc, now) ?? TimeSpan.Zero);
-        RunResultTime.Text = run.Active ? $"总用时 {total}" : $"{run.EndedAtUtc?.ToLocalTime():HH:mm} · 用时 {total}";
+        RunResultTime.Text = run.Active ? $"总用时 {total}" : $"{EndedLabel(run.EndedAtUtc)} · 用时 {total}";
         foreach (var row in _runRows) {
             row.Tick(now);
         }
+    }
+
+    // The local time a Run ended, with its day once that is no longer today.
+    private string EndedLabel(DateTime? endedAtUtc)
+    {
+        if (endedAtUtc is not { } utc) {
+            return "";
+        }
+        var ended = TimeZoneInfo.ConvertTimeFromUtc(utc, _clock.LocalTimeZone);
+        var daysAgo = (_clock.GetLocalNow().Date - ended.Date).Days;
+        return daysAgo switch {
+            0 => $"{ended:HH:mm}", 1 => $"昨天 {ended:HH:mm}", _ => $"{ended:MM-dd HH:mm}"
+        };
     }
 
     // About seven rows, fewer in a short panel, so the activity log below 全部任务 stays in view.

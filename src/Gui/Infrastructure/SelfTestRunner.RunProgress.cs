@@ -42,32 +42,29 @@ internal static partial class SelfTestRunner
             DateTime.UtcNow);
         var idle = WorkerCoordinatorSelfTest.CreateSnapshot(record, 0);
         WorkerSnapshot Active(RunSnapshot run) => idle with { RunState = run.State, ActiveRun = run };
-        WorkerSnapshot Last(RunSnapshot run) => idle with { LastRun = run };
         const PlanItemState pending = PlanItemState.Pending, running = PlanItemState.Running;
         const PlanItemState succeeded = PlanItemState.Succeeded, failed = PlanItemState.Failed;
         const PlanItemState cancelled = PlanItemState.Cancelled;
         (PlanItemKind, string)[] MaaTasks(params string[] names) =>
             names.Select(name => (PlanItemKind.MaaTask, name)).ToArray();
-        var plan = MaaTasks("Task0", "Task1", "Task2");
+        RunRecord Record(RunSnapshot run) => RunRecord.From(run);
 
-        foreach (var (name, worker, tasks, states, current) in new (string, WorkerSnapshot,
-            (PlanItemKind, string)[], string, int?)[] {
-            ("运行中首项", Active(Run(RunState.Running, (PlanItemState.Starting, true), (pending, false),
-                (pending, false))), plan, "Running,Pending,Pending", 0),
-            ("运行中中间项", Active(Run(RunState.Running, (succeeded, true), (running, true), (pending, false))),
-                plan, "Succeeded,Running,Pending", 1),
-            ("失败后", Active(Run(RunState.Running, (failed, true), (cancelled, false), (cancelled, false))),
-                plan, "Failed,NotRun,NotRun", null),
-            ("用户停止", Last(Run(RunState.Cancelled, (succeeded, true), (cancelled, true), (cancelled, false))),
-                plan, "Succeeded,Stopped,NotRun", null),
-            ("首项启动前停止", Last(Run(RunState.Cancelled, (cancelled, false), (cancelled, false), (cancelled, false))),
-                plan, "NotRun,NotRun,NotRun", null),
-            ("因失败中止", Last(Run(RunState.Failed, (succeeded, true), (failed, true), (cancelled, false))),
-                plan, "Succeeded,Failed,NotRun", null),
-            ("全部成功", Last(Run(RunState.Succeeded, (succeeded, true), (succeeded, true), (succeeded, true))),
-                plan, "Succeeded,Succeeded,Succeeded", null)
+        foreach (var (name, progress, states, current) in new (string, RunProgressView?, string, int?)[] {
+            ("运行中首项", RunProgress.Derive(Active(Run(RunState.Running, (PlanItemState.Starting, true),
+                (pending, false), (pending, false))), null), "Running,Pending,Pending", 0),
+            ("运行中中间项", RunProgress.Derive(Active(Run(RunState.Running, (succeeded, true), (running, true),
+                (pending, false))), null), "Succeeded,Running,Pending", 1),
+            ("失败后", RunProgress.Derive(Active(Run(RunState.Running, (failed, true), (cancelled, false),
+                (cancelled, false))), null), "Failed,NotRun,NotRun", null),
+            ("用户停止", RunProgress.Derive(idle, Record(Run(RunState.Cancelled, (succeeded, true), (cancelled, true),
+                (cancelled, false)))), "Succeeded,Stopped,NotRun", null),
+            ("首项启动前停止", RunProgress.Derive(idle, Record(Run(RunState.Cancelled, (cancelled, false),
+                (cancelled, false), (cancelled, false)))), "NotRun,NotRun,NotRun", null),
+            ("因失败中止", RunProgress.Derive(idle, Record(Run(RunState.Failed, (succeeded, true), (failed, true),
+                (cancelled, false)))), "Succeeded,Failed,NotRun", null),
+            ("全部成功", RunProgress.Derive(idle, Record(Run(RunState.Succeeded, (succeeded, true), (succeeded, true),
+                (succeeded, true)))), "Succeeded,Succeeded,Succeeded", null)
         }) {
-            var progress = RunProgress.Derive(worker, tasks);
             Require(progress is not null && string.Join(",", progress.Items.Select(item => item.State)) == states
                 && progress.CurrentIndex == current
                 && progress.Processed == progress.Items.Count(item => item.State is PlanItemProgress.Succeeded
@@ -76,53 +73,59 @@ internal static partial class SelfTestRunner
                 $"Run 进度场景“{name}”不符。");
         }
 
-        var stopped = RunProgress.Derive(Last(Run(RunState.Cancelled, (succeeded, true), (cancelled, true),
-            (cancelled, false))), plan)!;
+        var stopped = RunProgress.Derive(idle, Record(Run(RunState.Cancelled, (succeeded, true), (cancelled, true),
+            (cancelled, false))))!;
         Require(stopped.Processed == 1 && stopped.Stopped == 1 && stopped.NotRun == 1, "已停止和未执行不计入已处理。");
-        Require(RunProgress.Derive(Last(Run(RunState.Succeeded, (succeeded, true), (succeeded, true),
-                (succeeded, true))), MaaTasks("Task0", "Task2")) is null && RunProgress.Derive(idle, plan) is null,
-            "Last Run 计划与当前配置的任务序列不一致或没有 Run 时不显示进度。");
+        var running0 = Run(RunState.Running, (running, true), (pending, false), (pending, false));
+        Require(RunProgress.Derive(idle, null) is null
+            && RunProgress.Derive(Active(running0), Record(Run(RunState.Failed, (failed, true), (cancelled, false),
+                (cancelled, false)))) is { Active: true, CurrentIndex: 0 },
+            "没有 Run 和记录时不显示进度；运行中总是显示本次运行。");
 
-        // A continued Run covers the end of the plan; 继续运行 starts at its first unsuccessful item, never at the
-        // plan's first item, where it would be the same as 运行.
-        RunSnapshot Tail(RunState state, params (string Name, PlanItemState State, bool Started)[] items)
-        {
-            var run = Run(state, items.Select(item => (item.State, item.Started)).ToArray());
-            return run with {
-                Plan = run.Plan with {
-                    Items = run.Plan.Items.Select((item, index) => item with { TaskName = items[index].Name }).ToArray()
-                },
-                Items = run.Items.Select((item, index) => item with { TaskName = items[index].Name }).ToArray()
-            };
-        }
-        foreach (var (name, worker, from) in new (string, WorkerSnapshot, int?)[] {
-            ("中间项失败", Last(Run(RunState.Failed, (succeeded, true), (failed, true), (cancelled, false))), 1),
-            ("两项之间停止", Last(Run(RunState.Cancelled, (succeeded, true), (cancelled, false), (cancelled, false))), 1),
-            ("继续运行后首项再失败", Last(Tail(RunState.Failed, ("Task1", failed, true), ("Task2", cancelled, false))), 1),
-            ("继续运行后停在末项", Last(Tail(RunState.Cancelled, ("Task1", succeeded, true), ("Task2", cancelled, true))), 2),
-            ("整份计划首项失败", Last(Run(RunState.Failed, (failed, true), (cancelled, false), (cancelled, false))), null),
-            ("全部成功", Last(Run(RunState.Succeeded, (succeeded, true), (succeeded, true), (succeeded, true))), null),
-            ("各项成功但整次停止", Last(Run(RunState.Cancelled, (succeeded, true), (succeeded, true), (succeeded, true))),
-                null),
-            ("运行中", Active(Run(RunState.Running, (succeeded, true), (failed, true), (running, true))), null)
+        // 继续运行 starts at the current plan's first item that the record did not finish successfully, wherever it
+        // now stands; an item the record does not have never starts it. Record: A succeeded, B failed, C and D not run.
+        var abcd = Run(RunState.Failed, (succeeded, true), (failed, true), (cancelled, false), (cancelled, false));
+        var abcdRecord = RunProgress.Derive(idle, Record(abcd with {
+            Items = abcd.Items.Select((item, index) => item with { TaskName = "ABCD"[index].ToString() }).ToArray()
+        }))!;
+        foreach (var (plan, from) in new (string, string?)[] {
+            ("ABCD", "B"), ("ACD", "C"), ("ACBD", "C"), ("BACD", "B"), ("A", null), ("AEC", "C"), ("EA", null)
         }) {
-            var progress = RunProgress.Derive(worker, plan);
-            Require(progress is not null && RunProgress.ContinueFrom(progress) == from,
-                $"继续运行场景“{name}”的起点应为 {from?.ToString() ?? "无"}，实际为 "
-                + $"{(progress is null ? "不显示记录" : RunProgress.ContinueFrom(progress)?.ToString() ?? "无")}。");
+            var actual = RunProgress
+                .ContinueFrom(abcdRecord, MaaTasks(plan.Select(name => name.ToString()).ToArray()))?.Index;
+            Require((actual is { } index ? plan[index].ToString() : null) == from,
+                $"计划 {plan} 继续运行应从 {from ?? "无"} 开始，实际为 {(actual is { } at ? plan[at].ToString() : "无")}。");
         }
-        var continued = Last(Tail(RunState.Failed, ("Task1", failed, true), ("Task2", cancelled, false)));
-        Require(RunProgress.Derive(continued, plan) is { Total: 2 }
-            && RunProgress.Derive(continued, MaaTasks("Task1", "Task2")) is not null
-            && RunProgress.Derive(continued, MaaTasks("Task1", "Task2", "Task3")) is null
-            && RunProgress.Derive(continued, MaaTasks("Task0", "Task2")) is null
-            && RunProgress.Derive(continued, MaaTasks("Task2", "Task1")) is null
-            && RunProgress.Derive(continued, MaaTasks("Task2")) is null
-            && RunProgress.Derive(continued, [(PlanItemKind.Pretask, "Task0"), .. MaaTasks("Task1", "Task2")]) is not null
-            && RunProgress.Derive(continued, [(PlanItemKind.Pretask, "Task1"), (PlanItemKind.MaaTask, "Task2")]) is null,
-            "结束后的记录只在等于当前计划末尾一段时显示。");
-        Require(RunProgress.ContinueFrom(RunProgress.Derive(continued, MaaTasks("Task1", "Task2"))!) is null,
-            "记录覆盖整份当前计划且首项失败时，继续运行与运行相同，不应提供。");
+        // Every order of every selection: the start is the first item other than A or the new E, and only A, E or
+        // both leave nothing to continue.
+        IEnumerable<string> Orders(string items) => items.Length == 0 ? [""]
+            : items.SelectMany((item, index) => Orders(items.Remove(index, 1)).Select(rest => item + rest));
+        var plans = Enumerable.Range(1, 31).SelectMany(mask => Orders(new string(
+            "ABCDE".Where((_, bit) => (mask & (1 << bit)) != 0).ToArray()))).ToArray();
+        Require(plans.Length == 325, "排序与勾选组合应全部覆盖。");
+        foreach (var plan in plans) {
+            var actual = RunProgress
+                .ContinueFrom(abcdRecord, MaaTasks(plan.Select(name => name.ToString()).ToArray()))?.Index;
+            var expected = plan.IndexOfAny(['B', 'C', 'D']);
+            Require(actual == (expected < 0 ? null : expected),
+                $"计划 {plan} 继续运行起点应为 {expected}，实际为 {actual?.ToString() ?? "无"}。");
+        }
+        foreach (var (name, view, plan, from) in new (string, RunProgressView, (PlanItemKind, string)[], int?)[] {
+            ("全部成功", RunProgress.Derive(idle, Record(Run(RunState.Succeeded, (succeeded, true), (succeeded, true),
+                (succeeded, true))))!, MaaTasks("Task0", "Task1", "Task2"), null),
+            ("整份计划首项失败", RunProgress.Derive(idle, Record(Run(RunState.Failed, (failed, true), (cancelled, false),
+                (cancelled, false))))!, MaaTasks("Task0", "Task1", "Task2"), 0),
+            ("首项启动前停止", RunProgress.Derive(idle, Record(Run(RunState.Cancelled, (cancelled, false),
+                (cancelled, false), (cancelled, false))))!, MaaTasks("Task2", "Task0"), 0),
+            ("类别不同不算同一项", RunProgress.Derive(idle, Record(Run(RunState.Failed, (succeeded, true), (failed, true),
+                (cancelled, false))))!, [(PlanItemKind.Pretask, "Task1"), (PlanItemKind.Pretask, "Task2")], null),
+            ("运行中", RunProgress.Derive(Active(Run(RunState.Running, (succeeded, true), (failed, true),
+                (running, true))), null)!, MaaTasks("Task0", "Task1", "Task2"), null)
+        }) {
+            var actual = RunProgress.ContinueFrom(view, plan)?.Index;
+            Require(actual == from,
+                $"继续运行场景“{name}”的起点应为 {from?.ToString() ?? "无"}，实际为 {actual?.ToString() ?? "无"}。");
+        }
         Require(RunProgress.FormatDuration(TimeSpan.FromSeconds(65.9)) == "1:05"
             && RunProgress.FormatDuration(TimeSpan.FromMinutes(61)) == "1:01:00", "用时格式不符。");
     }
@@ -154,9 +157,13 @@ internal static partial class SelfTestRunner
             null, null);
     }
 
-    // Shows the window one ready environment: an unfinished Run is the active one, a finished one the Last Run.
-    private static void ObserveRuns(MainWindow window, RunSnapshot? run)
+    // Shows the window one ready environment: an unfinished Run is the active one, a finished one the Last Run. The Run
+    // belongs to the active configuration, as if it had been started there, unless it is left unclaimed.
+    private static void ObserveRuns(MainWindow window, RunSnapshot? run, bool claim = true)
     {
+        if (run is not null && claim) {
+            ClaimRun(window, run.RunId);
+        }
         var active = run is { EndedAtUtc: null };
         var idle = ScenarioWorker(ProjectOf(window).RuntimeProfileDigest);
         SetOnboardingField(window, "_sessionSnapshot",
@@ -169,6 +176,11 @@ internal static partial class SelfTestRunner
         InvokeOnboarding(window, "RefreshRuntimeControls");
         window.UpdateLayout();
     }
+
+    // What submitting a start for the active configuration records before the request leaves.
+    private static void ClaimRun(MainWindow window, Guid runId) =>
+        ((RunRecords)typeof(MainWindow).GetField("_runRecords", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!).Claim(runId, ProjectOf(window).ActiveConfigurationId);
 
     // The result section says how far the Run got, with one segment per item, one line per outcome and every item
     // on demand. It gives way when there is no Run to describe or the environment needs recovery.
@@ -253,6 +265,7 @@ internal static partial class SelfTestRunner
                     - Top("ContinueRunButton") - continueRun.ActualHeight / 2) <= PixelTolerance
                 && continueRun.TransformToAncestor(panel).Transform(new Point(continueRun.ActualWidth, 0)).X
                     > section.ActualWidth / 2, "中间项失败后，分区标题行右侧应提供继续运行。");
+            Require(Equals(continueRun.ToolTip, "从「进入游戏」开始"), $"继续运行的提示应只说明起点：{continueRun.ToolTip}。");
             Capture("failed");
             ClickOnboarding(window, "RunResultAllToggle");
             RequireLines(all, "启动QQ大厅|0:18", "进入游戏|失败 · 1:00", "丰饶之间|未执行", "通缉任务|未执行");
@@ -301,14 +314,15 @@ internal static partial class SelfTestRunner
 
             ObserveRuns(window, ResultRun(RunState.Failed, (names[0], failed, 18), (names[1], cancelled, null),
                 (names[2], cancelled, null), (names[3], cancelled, null)));
-            Require(section.IsVisible && !continueRun.IsVisible, "整份计划首项失败时，继续运行与运行相同，不应提供。");
+            Require(section.IsVisible && continueRun.IsVisible && Equals(continueRun.ToolTip, $"从「{names[0]}」开始"),
+                "整份计划首项失败时也应提供继续运行，从首项开始。");
 
-            // A continued Run covers the end of the plan and stays shown; failing again offers to continue again.
+            // A continued Run's record has only the items it ran; failing again offers to continue again.
             var continued = ResultRun(RunState.Failed, (names[1], failed, 20), (names[2], cancelled, null),
                 (names[3], cancelled, null));
             ObserveRuns(window, continued);
             Require(section.IsVisible && count.Text == "0 / 3 项成功" && continueRun.IsVisible,
-                "继续运行的记录等于计划末尾一段时应显示，首项再次失败仍可继续。");
+                "继续运行的记录应显示，首项再次失败仍可继续。");
             var startButton = Named<System.Windows.Controls.Button>(window, "StartPlanButton");
             foreach (var blocked in new RuntimeControlState[] {
                 new(new RuntimeAction.Start(false, StartBlocker.ConfigurationInvalid), true, null, desktop, true),
@@ -321,29 +335,86 @@ internal static partial class SelfTestRunner
                     && continueRun.ToolTip is string reason && reason.Length > 0 && Equals(reason, startButton.ToolTip),
                     $"{blocked.Action} 时继续运行应与运行一样不可用，并给出相同原因。");
             }
+            // The record belongs to the configuration: editing its plan changes neither whether it shows nor what it
+            // says, and 继续运行 starts from the first checked item it did not finish, in the current order.
             var originalConfiguration = project.ActiveConfigurationId;
-            foreach (var (change, undo) in new (Action, Action)[] {
-                (() => project.RemoveItem(PlanItemKind.MaaTask, names[3]),
-                    () => project.AddItem(PlanItemKind.MaaTask, names[3])),
-                (() => project.AddItem(PlanItemKind.MaaTask, names[4]),
-                    () => project.RemoveItem(PlanItemKind.MaaTask, names[4])),
-                (() => project.SetItemEnabled(PlanItemKind.MaaTask, names[2], false),
-                    () => project.SetItemEnabled(PlanItemKind.MaaTask, names[2], true)),
-                (() => project.MoveTask(names[3], 1), () => project.MoveTask(names[3], 3)),
-                (() => project.CreateConfiguration(), () => project.ActivateConfiguration(originalConfiguration))
-            }) {
+            var recorded = Lines(outcomes);
+            void Edit(Action change, string? from, string what)
+            {
                 change();
                 InvokeEditor(window, "RenderTaskPlan");
-                ObserveRuns(window, continued);
-                Require(!section.IsVisible, "任务序列对不上计划末尾一段时应隐藏运行结果分区。");
-                undo();
-                InvokeEditor(window, "RenderTaskPlan");
-                ObserveRuns(window, continued);
-                Require(section.IsVisible, "恢复计划后记录应重新显示。");
+                InvokeOnboarding(window, "RefreshRuntimeControls");
+                window.UpdateLayout();
+                Require(section.IsVisible && count.Text == "0 / 3 项成功" && Lines(outcomes).SequenceEqual(recorded),
+                    $"{what}后记录应仍显示且内容不变。");
+                Require(from is null ? !continueRun.IsVisible
+                    : continueRun.IsVisible && Equals(continueRun.ToolTip, $"从「{from}」开始"),
+                    $"{what}后继续运行应{(from is null ? "隐藏" : $"从{from}开始")}，实际提示 {continueRun.ToolTip}。");
             }
+            Edit(() => project.AddItem(PlanItemKind.MaaTask, names[4]), names[1], "新增任务");
+            Edit(() => project.MoveTask(names[3], 0), names[3], "把未执行的任务挪到最前");
+            Edit(() => project.SetItemEnabled(PlanItemKind.MaaTask, names[3], false), names[1], "取消勾选该任务");
+            Edit(() => project.SetItemEnabled(PlanItemKind.MaaTask, names[1], false), names[2], "取消勾选失败的任务");
+            Edit(() => project.RemoveItem(PlanItemKind.MaaTask, names[2]), null, "移除最后一个未成功的已勾选任务");
+            Edit(() => {
+                project.AddItem(PlanItemKind.MaaTask, names[2]);
+                project.SetItemEnabled(PlanItemKind.MaaTask, names[1], true);
+                project.SetItemEnabled(PlanItemKind.MaaTask, names[3], true);
+                project.MoveTask(names[3], 3);
+                project.RemoveItem(PlanItemKind.MaaTask, names[4]);
+            }, names[1], "恢复计划");
+            Edit(() => project.RenameConfiguration(originalConfiguration, "改名后的配置"), names[1], "重命名配置");
+            ObserveRuns(window, null);
+            Require(section.IsVisible && count.Text == "0 / 3 项成功",
+                "Worker 不再报告该 Run（新 Worker 或桌面分身已结束）后记录仍应显示。");
 
+            // Each configuration shows only its own record, even with the same tasks; a copy starts without one.
+            var copy = project.DuplicateConfiguration(originalConfiguration);
+            ShowConfiguration(window, copy);
+            Require(!section.IsVisible, "复制出来的配置不应带记录。");
             ObserveRuns(window, ResultRun(RunState.Succeeded, (names[0], succeeded, 18)));
-            Require(!section.IsVisible, "上次运行与当前计划不一致时应隐藏分区。");
+            Require(section.IsVisible && count.Text == "1 / 1 项成功" && !continueRun.IsVisible,
+                "记录与当前计划的任务不同也应显示；全部成功时不提供继续运行。");
+            ShowConfiguration(window, originalConfiguration);
+            Require(section.IsVisible && count.Text == "0 / 3 项成功", "切换配置后应显示该配置自己的记录。");
+            ShowConfiguration(window, copy);
+            Require(section.IsVisible && count.Text == "1 / 1 项成功", "切回副本应显示副本的记录。");
+            ShowConfiguration(window, originalConfiguration);
+
+            // A start that was never admitted keeps the record; one that was admitted retires it, and an earlier
+            // Run's late snapshot does not bring it back.
+            ClaimRun(window, Guid.NewGuid());
+            ObserveRuns(window, null);
+            Require(section.IsVisible && count.Text == "0 / 3 项成功", "启动没有被接纳时旧记录应保留。");
+            var replacing = ResultRun(RunState.Running, (names[0], running, 3), (names[1], pending, null));
+            ObserveRuns(window, replacing);
+            Require((string)toggle.Content == "本次运行" && count.Text == "0 / 2 项完成", "运行中应显示本次运行。");
+            // A Worker that has gone keeps its last snapshot, but the Run in it no longer owns the panel.
+            var stopButton = Named<System.Windows.Controls.Button>(window, "StopPlanButton");
+            var live = (WorkerCoordinatorSnapshot)typeof(MainWindow)
+                .GetField("_workerSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            foreach (var gone in new[] { WorkerObservation.WorkerExited, WorkerObservation.ChildSessionEnded }) {
+                SetOnboardingField(window, "_workerSnapshot", live with { Observation = gone, SnapshotFresh = false });
+                InvokeOnboarding(window, "RefreshRuntimeControls");
+                window.UpdateLayout();
+                Require(!section.IsVisible && startButton.IsVisible && !stopButton.IsVisible,
+                    $"{gone} 后旧快照里的 Run 不应继续显示为本次运行。");
+                ShowConfiguration(window, copy);
+                Require(section.IsVisible && (string)toggle.Content == "上次运行" && count.Text == "1 / 1 项成功",
+                    $"{gone} 后其他配置应显示自己的记录。");
+                ShowConfiguration(window, originalConfiguration);
+            }
+            ObserveRuns(window, null);
+            Require(!section.IsVisible, "新的 Run 被接纳后，没有收到结束结果时不应再显示旧记录。");
+            ObserveRuns(window, continued, claim: false);
+            Require(!section.IsVisible, "更早 Run 的迟到快照不得复活记录。");
+            ShowConfiguration(window, copy);
+            Require(section.IsVisible && count.Text == "1 / 1 项成功", "其他配置的记录不受影响。");
+            ShowConfiguration(window, originalConfiguration);
+            ObserveRuns(window, replacing with { State = RunState.Cancelled, EndedAtUtc = DateTime.UtcNow },
+                claim: false);
+            Require(section.IsVisible && (string)toggle.Content == "上次运行" && count.Text == "0 / 2 项成功",
+                "被接纳的 Run 结束后应成为该配置的记录。");
 
             foreach (var name in names.Skip(4)) {
                 project.AddItem(PlanItemKind.MaaTask, name);
@@ -503,6 +574,7 @@ internal static partial class SelfTestRunner
                     var continueRun = Named<System.Windows.Controls.Button>(window, "ContinueRunButton");
 
                     // The desktop clone has ended, but its record is still on screen.
+                    ClaimRun(window, failed.RunId);
                     SetOnboardingField(window, "_workerSnapshot", new WorkerCoordinatorSnapshot(
                         WorkerObservation.ChildSessionEnded, false,
                         WorkerCoordinatorSelfTest.CreateSnapshot(record, 0) with { LastRun = failed }, "ended"));
@@ -545,6 +617,15 @@ internal static partial class SelfTestRunner
                     var continuedAgain = Next("再次继续运行", 6);
                     Require(Tasks(continuedAgain).SequenceEqual(tail) && continuedAgain.RunId != continued.RunId
                         && continuedAgain.RunId != rerun.RunId, "继续运行每次都应另起计划。");
+
+                    // The start is read from the current order: a not-run task moved ahead of the failed one leads.
+                    ProjectOf(window).MoveTask("ThirdTask", 1);
+                    InvokeEditor(window, "RenderTaskPlan");
+                    PumpUntil(() => continueRun.IsVisible && continueRun.IsEnabled, "调整顺序后记录仍在时应可继续运行。");
+                    Click(window, "ContinueRunButton");
+                    var reordered = Next("调整顺序后继续运行", 7);
+                    Require(Tasks(reordered).SequenceEqual(["ThirdTask", "SecondTask"]),
+                        $"调整顺序后继续运行应从当前顺序中第一个未成功项执行到末尾：{string.Join("，", Tasks(reordered))}。");
                 }, session: session, coordinator: coordinator, environment: environment, presentation: probe.Presentation,
                     prepareEnvironment: async (_, _, _) => {
                         // A new Worker clears the old record before the Run starts.
@@ -701,6 +782,7 @@ internal static partial class SelfTestRunner
             var idleEditors = Editors().Length;
             Require(idleEditors > 0 && Editors().All(editor => editor.IsEnabled), "空闲时任务行应可编辑。");
 
+            ClaimRun(window, run.RunId); // As if this configuration had started it.
             Observe(idle with { RunState = RunState.Running, ActiveRun = run });
             Require(items.IsVisible && CardText() == idleCardText && count.Text == idleCount,
                 $"运行中任务行和计数应与空闲时一致：{count.Text}；{CardText()}");
