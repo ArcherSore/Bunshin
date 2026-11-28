@@ -56,6 +56,7 @@ public sealed partial class TaskPlanEditor
         if (Project!.DeleteConfiguration(id)) {
             _logger.Info($"已删除配置{AppLogger.Field("name", name)}"
                 + AppLogger.Field("active", ConfigurationName(Project.ActiveConfigurationId)));
+            ConfigurationDeleted?.Invoke(this, id);
         }
     });
 

@@ -8,14 +8,15 @@ internal enum PlanItemProgress
     Pending, Running, Succeeded, Failed, Stopped, NotRun
 }
 
+// Kind and Name say which plan item it was, so a record still matches the plan after the plan has changed.
 internal sealed record PlanItemProgressView(
-    Guid PlanItemId, string TaskLabel, PlanItemProgress State, DateTime? StartedAtUtc, DateTime? EndedAtUtc);
+    PlanItemKind Kind, string Name, string TaskLabel, PlanItemProgress State, DateTime? StartedAtUtc,
+    DateTime? EndedAtUtc);
 
-// The progress of the active Run, or of the last Run while it still describes the plan on screen. PlanOffset is where
-// the last Run's items begin in that plan.
+// The progress of the active Run, or the 运行记录 of the configuration on screen.
 internal sealed record RunProgressView(
     bool Active, RunState State, IReadOnlyList<PlanItemProgressView> Items, int? CurrentIndex, DateTime? StartedAtUtc,
-    DateTime? EndedAtUtc, int PlanOffset = 0)
+    DateTime? EndedAtUtc)
 {
     internal int Total => Items.Count;
     internal int Succeeded => Count(PlanItemProgress.Succeeded);
@@ -31,30 +32,21 @@ internal sealed record RunProgressView(
 // Kept apart from RuntimeControls.Derive: progress is presentation, while that decides what may be done.
 internal static class RunProgress
 {
-    internal static RunProgressView? Derive(
-        WorkerSnapshot? worker, IReadOnlyList<(PlanItemKind Kind, string Name)> activeItems)
-    {
-        if (worker?.ActiveRun is { } active) {
-            return Create(active, true, 0);
-        }
-        // A finished record stays while it is the end of the plan, which is what a continued Run covers.
-        if (worker?.LastRun is not { } last) {
-            return null;
-        }
-        var offset = activeItems.Count - last.Plan.Items.Count;
-        return offset >= 0 && last.Plan.Items.Select(item => (item.Kind, item.TaskName))
-            .SequenceEqual(activeItems.Skip(offset)) ? Create(last, false, offset) : null;
-    }
+    // A running Run is always shown; otherwise the configuration's own record, whatever its plan looks like now.
+    internal static RunProgressView? Derive(WorkerSnapshot? worker, RunRecord? record) =>
+        worker?.ActiveRun is { } active ? Create(active, true) : record?.View;
 
-    // Where 继续运行 starts in the current plan: the record's first unsuccessful item. At the plan's first item it
-    // would be the same as 运行, so there is none.
-    internal static int? ContinueFrom(RunProgressView view)
+    // Where 继续运行 starts in the current plan: its first item the record has and did not finish successfully. Items
+    // the record does not have never start it.
+    internal static int? ContinueFrom(RunProgressView view, IReadOnlyList<(PlanItemKind Kind, string Name)> plan)
     {
         if (view.Active) {
             return null;
         }
-        var index = view.Items.ToList().FindIndex(item => item.State != PlanItemProgress.Succeeded);
-        return index >= 0 && view.PlanOffset + index > 0 ? view.PlanOffset + index : null;
+        var unsuccessful = view.Items.Where(item => item.State != PlanItemProgress.Succeeded)
+            .Select(item => (item.Kind, item.Name)).ToHashSet();
+        var index = plan.ToList().FindIndex(unsuccessful.Contains);
+        return index >= 0 ? index : null;
     }
 
     internal static PlanItemProgress Map(PlanItemSnapshot item) => item.State switch {
@@ -75,12 +67,12 @@ internal static class RunProgress
     internal static TimeSpan? Elapsed(DateTime? startedAtUtc, DateTime? endedAtUtc, DateTime nowUtc) =>
         startedAtUtc is { } start ? (endedAtUtc ?? nowUtc) - start : null;
 
-    private static RunProgressView Create(RunSnapshot run, bool active, int planOffset)
+    internal static RunProgressView Create(RunSnapshot run, bool active)
     {
         var items = run.Items.Select(item => new PlanItemProgressView(
-            item.PlanItemId, item.TaskLabel, Map(item), item.StartedAtUtc, item.EndedAtUtc)).ToArray();
+            item.Kind, item.TaskName, item.TaskLabel, Map(item), item.StartedAtUtc, item.EndedAtUtc)).ToArray();
         var current = active && run.CurrentPlanItemIndex is { } index && index >= 0 && index < items.Length
             ? (int?)index : null;
-        return new RunProgressView(active, run.State, items, current, run.StartedAtUtc, run.EndedAtUtc, planOffset);
+        return new RunProgressView(active, run.State, items, current, run.StartedAtUtc, run.EndedAtUtc);
     }
 }
