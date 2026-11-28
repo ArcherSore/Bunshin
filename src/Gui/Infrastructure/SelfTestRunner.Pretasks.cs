@@ -197,11 +197,18 @@ internal static partial class SelfTestRunner
                 && RunningResultTask(window) == "第二个前置"
                 && Named<Button>(window, "StopPlanButton").IsEnabled,
                 "运行期间勾选被锁定，控制面板显示当前前置任务并可停止。");
-            var lastWorker = idle with { LastRun = run with { State = RunState.Succeeded } };
-            var kinds = project.SelectedItems.Select(item => (item.Kind, item.Name)).ToArray();
-            Require(RunProgress.Derive(lastWorker, kinds) is not null
-                && RunProgress.Derive(lastWorker, kinds.Select(item => (PlanItemKind.MaaTask, item.Name))
-                    .ToArray()) is null, "Last Run 匹配必须包含种类，不能只看任务名称。");
+            // The pretask RealTask failed while the task of the same name succeeded.
+            var failedPretask = RunRecord.From(run with {
+                State = RunState.Failed,
+                Items = plan.Items.Select((item, index) => Snapshot(item,
+                    index == 0 ? PlanItemState.Failed : PlanItemState.Succeeded, started, started)).ToArray()
+            }).View;
+            Require(plan.Items[0] is { Kind: PlanItemKind.Pretask, TaskName: "RealTask" }
+                && plan.Items[2] is { Kind: PlanItemKind.MaaTask, TaskName: "RealTask" }
+                && RunProgress.ContinueFrom(failedPretask, [(PlanItemKind.MaaTask, "RealTask"),
+                    (PlanItemKind.Pretask, "RealTask")]) == 1
+                && RunProgress.ContinueFrom(failedPretask, [(PlanItemKind.MaaTask, "RealTask")]) is null,
+                "继续运行按记录匹配起点时必须包含种类，不能只看任务名称。");
 
             Observe(idle);
             Select(0, false);

@@ -73,6 +73,9 @@ public sealed partial class TaskPlanEditor : System.Windows.Controls.UserControl
     // Raised after configuration edits and project renders so the shell can present the saved configurations.
     internal event EventHandler<ProjectPlanModule>? ConfigurationsRendered;
 
+    // Raised after a configuration was deleted, with its ID.
+    internal event EventHandler<Guid>? ConfigurationDeleted;
+
     internal event RoutedEventHandler? StartRequested;
     internal event RoutedEventHandler? StopRequested;
 

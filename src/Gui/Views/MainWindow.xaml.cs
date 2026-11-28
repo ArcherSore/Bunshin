@@ -46,6 +46,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private WorkerCoordinatorSnapshot _workerSnapshot = WorkerCoordinatorSnapshot.Empty;
     private ProjectPlanModule? _projectPlan;
     private RunKey? _lastStartKey;
+    private readonly RunRecords _runRecords = new();
     private long _projectVersion;
     private long _editVersion;
     private readonly RunLifecycleHost _lifecycle;
@@ -112,6 +113,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
             _settings.UpdateAutoRunConfigurations(AutoRunTarget.Of(project), !project.ConfigurationsUnreadable);
             RefreshShellTitles();
         };
+        TaskPlanEditor.ConfigurationDeleted += (_, id) => _runRecords.Forget(id);
         TaskPlanEditor.StartRequested += StartPlanButton_Click;
         TaskPlanEditor.StopRequested += StopRunButton_Click;
         _savedRuntimeSidebarWidth = _preferredRuntimeSidebarWidth = LoadSidebarWidth(RuntimeSidebarWidthFile, "运行面板");
@@ -587,6 +589,8 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     {
         RunResultLog.WritePlan(_logger, attempt, intent.ConfigurationName);
         _telemetry.Register(attempt.RedactionValues);
+        // Claimed before the request leaves, so any evidence of this Run already knows its configuration.
+        _runRecords.Claim(key.RunId, intent.Input.ConfigurationId);
         return _lifecycle.SubmitAsync(intent, key, attempt);
     }
 
@@ -1088,6 +1092,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private void RefreshRuntimeControls()
     {
         ReevaluateOnboarding();
+        ObserveRunRecords();
         ApplyRuntimeControls(CurrentControls);
     }
 
