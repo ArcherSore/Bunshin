@@ -3,7 +3,8 @@ using Gui.Infrastructure;
 
 namespace Gui.Settings;
 
-internal enum RuntimePanelSection { Desktop, Schedule, Activity }
+// Saved layouts store these numbers, so a new section goes last here whatever its place on screen.
+internal enum RuntimePanelSection { Desktop, Schedule, Activity, RunResult }
 
 internal sealed record RuntimePanelSectionState(RuntimePanelSection Id, bool Collapsed);
 
@@ -21,10 +22,16 @@ internal sealed class RuntimePanelPreferences(string path, AppLogger logger)
             logger.Warn("读取运行面板区块设置失败，已使用默认值。", exception);
         }
 
-        // Keep valid saved entries in order. A new or missing section goes at the end with its default visibility.
-        return saved.Where(state => state is not null && Enum.IsDefined(state.Id)).DistinctBy(state => state.Id)
-            .Concat(Enum.GetValues<RuntimePanelSection>().Where(id => saved.All(state => state?.Id != id))
-                .Select(id => new RuntimePanelSectionState(id, false))).ToArray();
+        // Keep valid saved entries in order. A new or missing section goes at the end with its default visibility,
+        // except the run result, which goes right after the desktop: below the activity log it would be out of sight.
+        var layout = saved.Where(state => state is not null && Enum.IsDefined(state.Id)).DistinctBy(state => state.Id)
+            .ToList();
+        foreach (var id in Enum.GetValues<RuntimePanelSection>().Where(id => layout.All(state => state.Id != id))) {
+            var index = id == RuntimePanelSection.RunResult
+                ? layout.FindIndex(state => state.Id == RuntimePanelSection.Desktop) + 1 : layout.Count;
+            layout.Insert(index, new RuntimePanelSectionState(id, false));
+        }
+        return layout;
     }
 
     internal bool TrySave(IReadOnlyList<RuntimePanelSectionState> layout)

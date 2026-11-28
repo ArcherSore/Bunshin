@@ -3,6 +3,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Gui.Settings;
 using ProjectModel;
 using Button = System.Windows.Controls.Button;
@@ -33,16 +34,23 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
         ];
         _sections = new() {
             [RuntimePanelSection.Desktop] = new(DesktopSection, RuntimeControlCard, DesktopSectionToggle),
+            [RuntimePanelSection.RunResult] = new(RunResultSection, RunResultSectionBody, RunResultSectionToggle),
             [RuntimePanelSection.Schedule] = new(ScheduleSection, ScheduleSectionBody, ScheduleSectionToggle),
             [RuntimePanelSection.Activity] = new(ActivitySection, ActivitySectionBody, ActivitySectionToggle)
         };
         foreach (var (id, section) in _sections) {
             section.Toggle.Click += (_, _) => ToggleSection(id);
         }
+        foreach (var element in new FrameworkElement[] { Sections, DesktopSection, ScheduleSection, RunResultSection }) {
+            element.SizeChanged += (_, _) => FitRunList();
+        }
+        // What reappears can keep its old size and raise no SizeChanged; fit once layout has caught up.
+        foreach (var element in new FrameworkElement[] { ActivitySectionBody, RunResultAllScroll }) {
+            element.IsVisibleChanged += (_, _) => Dispatcher.InvokeAsync(FitRunList, DispatcherPriority.Loaded);
+        }
     }
 
     internal event Action<Guid, Guid, bool>? SchedulePolicyToggleRequested;
-    internal event EventHandler? RunProgressSizeChanged;
 
     internal void Attach(ApplicationSettings settings)
     {
@@ -95,9 +103,6 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
 
     private void RuntimeMoreButton_Click(object sender, RoutedEventArgs e) => RuntimeMoreMenu.IsOpen = true;
 
-    private void RunProgressBar_SizeChanged(object sender, SizeChangedEventArgs e) =>
-        RunProgressSizeChanged?.Invoke(this, EventArgs.Empty);
-
     private void ApplyLayout()
     {
         for (var index = 0; index < _layout.Count; index++) {
@@ -108,12 +113,15 @@ public partial class RuntimePanel : System.Windows.Controls.UserControl
             KeyboardNavigation.SetTabIndex(section.Container, index);
             section.Body.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
             section.Toggle.Tag = collapsed ? "Collapsed" : "Expanded";
-            AutomationProperties.SetName(section.Toggle, $"{(collapsed ? "展开" : "收起")}{section.Toggle.Content}");
+            NameToggle(section.Toggle);
             Sections.RowDefinitions[index].Height = state.Id == RuntimePanelSection.Activity && !collapsed
                 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
         }
         UpdateScheduleSectionSummary();
     }
+
+    private static void NameToggle(Button toggle) =>
+        AutomationProperties.SetName(toggle, $"{(toggle.Tag is "Collapsed" ? "展开" : "收起")}{toggle.Content}");
 
     private void UpdateScheduleSectionSummary() => AutomationProperties.SetHelpText(ScheduleSectionToggle,
         ScheduleSectionToggle.Tag is "Collapsed" ? $"{_policies?.Count(policy => policy.Enabled) ?? 0} 条启用" : "");

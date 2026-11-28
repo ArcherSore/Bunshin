@@ -194,7 +194,7 @@ internal static partial class SelfTestRunner
             Require(ConfigurationDescendants(planPanel).OfType<TextBlock>().Select(text => text.Text)
                 .SequenceEqual(planText), "任务配置区不能随运行状态展示进度、耗时或执行结果。");
             Require(!Selection(0).IsEnabled && !Selection(2).IsEnabled
-                && Named<TextBlock>(window, "RuntimeStatusTitle").Text == "第二个前置"
+                && RunningResultTask(window) == "第二个前置"
                 && Named<Button>(window, "StopPlanButton").IsEnabled,
                 "运行期间勾选被锁定，控制面板显示当前前置任务并可停止。");
             var lastWorker = idle with { LastRun = run with { State = RunState.Succeeded } };
@@ -213,8 +213,8 @@ internal static partial class SelfTestRunner
                     index == 0 ? started : null, null)).ToArray()
             };
             Observe(idle with { RunState = RunState.Running, ActiveRun = filteredRun });
-            Require(Named<TextBlock>(window, "RuntimeStatusTitle").Text == "第二个前置"
-                && Named<TextBlock>(window, "RunProgressCaption").Text == "1 / 2",
+            Require(RunningResultTask(window) == "第二个前置"
+                && Named<TextBlock>(window, "RunResultCount").Text == "0 / 2 项完成",
                 "跳过前置项后，控制面板应显示实际运行项和过滤后的进度。");
             Observe(idle);
             Select(0, true);

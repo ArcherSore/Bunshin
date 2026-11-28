@@ -84,6 +84,10 @@ _Avoid_: Active Configuration、Last Run
 Worker 最近一次已终结的 Run。
 _Avoid_: Active Run、持久化运行历史
 
+**继续运行**:
+从 Last Run 中第一个未成功（失败、停止或未执行）的 Plan Item 起，执行该项及其之后各项的一次新 Run。该项从头执行，之前成功的项（含前置程序）不再执行。
+_Avoid_: 重新运行、任务内断点续做
+
 **Run Plan**:
 一次 Run 使用的任务和参数计划，在开始执行后不随用户配置变化。
 _Avoid_: Configuration Set、Worker Launch Context
