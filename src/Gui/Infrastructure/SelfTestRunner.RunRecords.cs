@@ -29,7 +29,7 @@ internal static partial class SelfTestRunner
                 Items = run.Items.Select(item => item with { TaskLabel = $"当时的{item.TaskName}" }).ToArray()
             }));
             dailyShown = ShownRunRecord(window);
-            var stored = File.ReadAllText(Path.Combine(directory, "project", "state", "run-records.json"));
+            var stored = File.ReadAllText(Path.Combine(directory, "project", "config", "run-records.json"));
             Require(stored.Contains("RealTask") && !stored.Contains("secret", StringComparison.OrdinalIgnoreCase),
                 $"运行记录不应保存参数值、pipeline override、前置程序命令、结果和错误详情：{stored}");
 
@@ -93,8 +93,8 @@ internal static partial class SelfTestRunner
     // is logged while the window still shows the result; neither stops anything.
     private static void VerifyRunRecordFileFailures(AppLogger logger, string directory)
     {
-        var state = Path.Combine(directory, "project", "state");
-        var records = Path.Combine(state, "run-records.json");
+        var config = Path.Combine(directory, "project", "config");
+        var records = Path.Combine(config, "run-records.json");
         var warnings = 0;
         void Count(object? sender, LogEntry entry)
         {
@@ -147,7 +147,7 @@ internal static partial class SelfTestRunner
                 ObserveRuns(window, Succeeded("Unsaved"));
                 Require(ShownRunRecord(window).Contains("Unsaved") && warnings > 0,
                     "记录无法写入时应写日志，本次进程内仍显示结果。");
-                Require(Directory.GetFiles(state, "run-records.json*").Length == 0, "写入失败不应留下临时文件。");
+                Require(Directory.GetFiles(config, "run-records.json*").Length == 0, "写入失败不应留下临时文件。");
             });
         } finally {
             logger.EntryWritten -= Count;
@@ -159,7 +159,7 @@ internal static partial class SelfTestRunner
     private static void VerifyRunRecordOwnershipAfterReopen(AppLogger logger, string directory)
     {
         Guid daily = default, other = default;
-        var records = Path.Combine(directory, "project", "state", "run-records.json");
+        var records = Path.Combine(directory, "project", "config", "run-records.json");
         RunSnapshot Failed(string name) => ResultRun(RunState.Failed, (name, PlanItemState.Failed, 5));
         RunSnapshot kept = Failed("Kept"), earlier = Failed("Earlier"), later = Failed("Later");
         RunSnapshot others = Failed("Others"), pending = Failed("Pending");
@@ -215,7 +215,7 @@ internal static partial class SelfTestRunner
         var windowDirectory = Path.Combine(directory, "window");
         var fixture = CreateProjectFixture(windowDirectory);
         var digest = ProjectPlanModule.Open(fixture, Path.Combine(fixture, "plan.json")).RuntimeProfileDigest;
-        var records = Path.Combine(fixture, "state", "run-records.json");
+        var records = Path.Combine(fixture, "config", "run-records.json");
         Guid daily = default, other = default;
         RunSnapshot? ended = null;
         var storedOnArrival = "";

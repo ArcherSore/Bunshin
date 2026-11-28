@@ -85,7 +85,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
         DataContext = this;
         _logger = logger;
         _applicationDirectory = applicationDirectory ?? AppContext.BaseDirectory;
-        _runRecords = new(Path.Combine(_applicationDirectory, "state"), logger);
+        _runRecords = new(Path.Combine(_applicationDirectory, "config"), logger);
         _checkForUpdate = checkForUpdate ?? CheckWithEngineAsync;
         _prepareUpdate = prepareUpdate ?? PrepareWithEngineAsync;
         _settings = new ApplicationSettings(_applicationDirectory, logger,
@@ -447,7 +447,7 @@ public partial class MainWindow : FluentWindow, Themes.IThemeWindowBackground
     private bool TryReadContinuation(bool continueRun,
         out IReadOnlyList<(PlanItemKind Kind, string Name)>? tail)
     {
-        tail = continueRun ? CurrentContinuation() : null;
+        tail = continueRun ? Continuation(CurrentRunProgress)?.Tail : null;
         return !continueRun || tail is not null;
     }
 

@@ -40,9 +40,9 @@ internal sealed class RunRecords
     private readonly List<Claimed> _claims = [];
     private readonly Dictionary<Guid, RunRecord> _records = [];
 
-    internal RunRecords(string stateDirectory, AppLogger logger)
+    internal RunRecords(string configDirectory, AppLogger logger)
     {
-        _path = Path.Combine(stateDirectory, "run-records.json");
+        _path = Path.Combine(configDirectory, "run-records.json");
         _logger = logger;
         Load();
     }

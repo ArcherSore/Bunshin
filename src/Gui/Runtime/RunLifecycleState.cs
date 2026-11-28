@@ -31,6 +31,8 @@ internal sealed record TrackedRun(RunKey Key, string Digest)
     internal string? RejectionCode { get; init; }
     internal bool Settled => TerminalState != null || Conclusion is StartConclusion.NotStarted or StartConclusion.StartUnknown
         or StartConclusion.EndUnconfirmed;
+    internal bool Admitted => Conclusion is StartConclusion.Accepted or StartConclusion.EndUnconfirmed || SeenActive
+        || Terminal != null;
     internal bool SeenActive { get; init; }
     internal bool SeenFaulted { get; init; }
     internal bool NeedQuery { get; init; }
